@@ -1,0 +1,176 @@
+diff --git a/ps2xRuntime/include/runtime/ps2_pad.h b/ps2xRuntime/include/runtime/ps2_pad.h
+index 7755fe6..a0fcc8e 100644
+--- a/ps2xRuntime/include/runtime/ps2_pad.h
++++ b/ps2xRuntime/include/runtime/ps2_pad.h
+@@ -13,4 +13,8 @@ public:
+     bool readState(int port, int slot, uint8_t *data, size_t size);
+ };
+ 
++// GOW-Port: gamepad index currently feeding the pad (autodetect + hotplug, GOW_PAD_INDEX
++// override), or -1 when the keyboard fallback applies. Call once per frame/read.
++int ps2PadActiveGamepad();
++
+ #endif
+diff --git a/ps2xRuntime/include/runtime/ps2_pad_select.h b/ps2xRuntime/include/runtime/ps2_pad_select.h
+new file mode 100644
+index 0000000..1c657ae
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_pad_select.h
+@@ -0,0 +1,26 @@
++#ifndef PS2_PAD_SELECT_H
++#define PS2_PAD_SELECT_H
++
++// GOW-Port: pure gamepad selection logic (no window needed, unit-testable).
++
++// Picks which gamepad index feeds the PS2 pad.
++//   avail[i] : whether gamepad i is currently connected (i < count)
++//   forced   : GOW_PAD_INDEX override, or -1 for autodetect
++//   current  : index used on the previous frame, or -1
++// Returns the index to use, or -1 for "no gamepad" (keyboard fallback).
++// A forced index never falls back to another pad: if it is absent, use the keyboard.
++// Autodetect keeps the current pad while it stays connected (no flip-flopping when a
++// second pad is plugged in) and otherwise takes the first connected one.
++inline int ps2SelectGamepad(const bool *avail, int count, int forced, int current)
++{
++    if (forced >= 0)
++        return (forced < count && avail[forced]) ? forced : -1;
++    if (current >= 0 && current < count && avail[current])
++        return current;
++    for (int i = 0; i < count; ++i)
++        if (avail[i])
++            return i;
++    return -1;
++}
++
++#endif
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
+index b50a4cf..58323a5 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/Pad.cpp
+@@ -1,3 +1,4 @@
++#include "runtime/ps2_pad.h"
+ #include "Common.h"
+ #include "Pad.h"
+ 
+@@ -82,16 +83,9 @@ namespace ps2_stubs
+             }
+         }
+ 
+-        int findFirstGamepad()
++        int findFirstGamepad() // GOW-Port: now autodetect/hotplug/GOW_PAD_INDEX aware
+         {
+-            for (int i = 0; i < 4; ++i)
+-            {
+-                if (IsGamepadAvailable(i))
+-                {
+-                    return i;
+-                }
+-            }
+-            return -1;
++            return ps2PadActiveGamepad();
+         }
+ 
+         void applyGamepadState(PadInputState &state)
+diff --git a/ps2xRuntime/src/lib/ps2_pad.cpp b/ps2xRuntime/src/lib/ps2_pad.cpp
+index 8590f14..df6f248 100644
+--- a/ps2xRuntime/src/lib/ps2_pad.cpp
++++ b/ps2xRuntime/src/lib/ps2_pad.cpp
+@@ -1,5 +1,8 @@
+ #include "runtime/ps2_pad.h"
+ #include "ps2_host_backend.h"
++#include "runtime/ps2_pad_select.h"
++#include <atomic>
++#include <cstdlib>
+ #include <cstring>
+ 
+ namespace
+@@ -25,6 +28,24 @@ namespace
+     constexpr uint16_t PAD_L2 = 0x0100u;
+ }
+ 
++// GOW-Port: scan gamepads on every read so hotplug works; GOW_PAD_INDEX forces one index.
++int ps2PadActiveGamepad()
++{
++    constexpr int kMaxPads = 4;
++    static const int forced = []
++    {
++        const char *v = std::getenv("GOW_PAD_INDEX");
++        return (v && *v) ? std::atoi(v) : -1;
++    }();
++    static std::atomic<int> current{-1};
++    bool avail[kMaxPads];
++    for (int i = 0; i < kMaxPads; ++i)
++        avail[i] = IsGamepadAvailable(i);
++    const int pick = ps2SelectGamepad(avail, kMaxPads, forced, current.load());
++    current.store(pick);
++    return pick;
++}
++
+ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t size)
+ {
+     if (!data || size < 32)
+@@ -38,8 +59,8 @@ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t s
+     data[4] = data[5] = data[6] = data[7] = kPadStickCenter;
+ 
+     uint16_t btns = 0xFFFFu;
+-    constexpr int kGamepad = 0;
+-    const bool useGamepad = IsGamepadAvailable(kGamepad);
++    const int kGamepad = ps2PadActiveGamepad(); // GOW-Port: was fixed index 0
++    const bool useGamepad = kGamepad >= 0;
+     auto clearBit = [&btns](uint16_t mask)
+     { btns &= ~mask; };
+ 
+diff --git a/ps2xTest/src/pad_input_tests.cpp b/ps2xTest/src/pad_input_tests.cpp
+index 07f9b7a..359af7a 100644
+--- a/ps2xTest/src/pad_input_tests.cpp
++++ b/ps2xTest/src/pad_input_tests.cpp
+@@ -2,6 +2,7 @@
+ #include "ps2_stubs.h"
+ #include "ps2_syscalls.h"
+ #include "Stubs/Pad.h"
++#include "runtime/ps2_pad_select.h"
+ 
+ #include <vector>
+ #include <cstdint>
+@@ -66,6 +67,41 @@ namespace
+ 
+ void register_pad_input_tests()
+ {
++    // GOW-Port: gamepad selection (autodetect, hotplug, GOW_PAD_INDEX) without a window.
++    MiniTest::Case("PadSelect", [](TestCase &tc)
++                   {
++        tc.Run("picks first connected pad, not fixed index 0", [](TestCase &t)
++               {
++            const bool a[4] = {false, false, true, true};
++            t.Equals(ps2SelectGamepad(a, 4, -1, -1), 2, "first available");
++            const bool none[4] = {};
++            t.Equals(ps2SelectGamepad(none, 4, -1, -1), -1, "keyboard fallback");
++        });
++        tc.Run("hotplug: re-picks on disconnect and connect", [](TestCase &t)
++               {
++            bool a[4] = {false, true, false, false};
++            int cur = ps2SelectGamepad(a, 4, -1, -1);
++            t.Equals(cur, 1, "initial");
++            a[0] = true;
++            t.Equals(ps2SelectGamepad(a, 4, -1, cur), 1, "stays on current pad");
++            a[1] = false;
++            cur = ps2SelectGamepad(a, 4, -1, cur);
++            t.Equals(cur, 0, "moves to remaining pad");
++            a[0] = false;
++            cur = ps2SelectGamepad(a, 4, -1, cur);
++            t.Equals(cur, -1, "none left");
++            a[3] = true;
++            t.Equals(ps2SelectGamepad(a, 4, -1, cur), 3, "reconnect");
++        });
++        tc.Run("forced index never falls back", [](TestCase &t)
++               {
++            const bool a[4] = {true, false, true, false};
++            t.Equals(ps2SelectGamepad(a, 4, 2, 0), 2, "forced present");
++            t.Equals(ps2SelectGamepad(a, 4, 1, 0), -1, "forced absent -> keyboard");
++            t.Equals(ps2SelectGamepad(a, 4, 9, 0), -1, "forced out of range");
++        });
++    });
++
+     MiniTest::Case("PadInput", [](TestCase &tc)
+                    {
+         tc.Run("scePadRead uses override state", [](TestCase &t)

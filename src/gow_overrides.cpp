@@ -104,7 +104,7 @@ namespace
         uint8_t state[32]{};
         if (!buffer || !socket || socket->port != 0 || !runtime ||
             !runtime->padBackend().readState(0, 0, state, sizeof(state))) { padReturn(ctx, 0xffffffffu); return; }
-        if (!IsGamepadAvailable(0))
+        if (ps2PadActiveGamepad() < 0) // GOW-Port: autodetect/hotplug, was fixed index 0
         {
             state[6] = IsKeyDown(KEY_A) ? 0 : IsKeyDown(KEY_D) ? 255 : 128;
             state[7] = IsKeyDown(KEY_W) ? 0 : IsKeyDown(KEY_S) ? 255 : 128;

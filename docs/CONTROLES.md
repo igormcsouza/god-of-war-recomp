@@ -920,3 +920,23 @@ repetible y hardware con diferencias entre pasadas de ruta constante; no
 certifica paridad. Ambas imágenes revisadas muestran la pose elevada de la
 introducción del barco. Véase ESTADO.md para identidad, cantidades y límites;
 las matrices finitas y esa semejanza no resuelven el espasmo ni miden FPS.
+
+## Gamepad autodetect and hotplug (English)
+
+Patch `patches/ps2recomp-pad-autodetect.patch`. On every pad read the runtime scans gamepad indices 0-3
+(`ps2PadActiveGamepad()`), keeps the current pad while it stays connected and otherwise picks the first
+connected one, so plugging or unplugging a pad mid-game is picked up without restarting. With no pad
+connected, the keyboard mapping in the table above applies unchanged.
+
+`GOW_PAD_INDEX=<n>` forces gamepad index `n` (0-3). If that index is not connected the keyboard is used;
+there is no fallback to another pad. Unset it for autodetect.
+
+The selection rule is the pure function `ps2SelectGamepad()` (`ps2_pad_select.h`), covered by the
+`PadSelect` tests in `ps2xTest/src/pad_input_tests.cpp`. Not verified with a physical pad.
+
+## Linux runtime options
+
+- `GOW_DEBUG_UI=1`: show the ImGui debug panel (off by default on Linux).
+- `PS2X_GS_RASTER_THREADS=N`: CPU rasterizer threads (see `docs/ESTADO.md`, Linux M2).
+- `GOW_SCREENSHOT_AT=<s>[,<s>...]` / `GOW_SCREENSHOT_DIR`: save PNG screenshots of the window.
+- The window title shows the live FPS.

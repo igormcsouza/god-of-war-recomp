@@ -92,6 +92,7 @@ $vu1GeneratorDirPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-generator-dir
 $gsDiscardUncoveredPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-discard-uncovered.patch'
 $dmaIopTimersCachePatch = Join-Path $RepoRoot 'patches\ps2recomp-dma-iop-timers-cache.patch'
 $vif1EeTimersFastPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-ee-timers-fast.patch'
+$padAutodetectPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-autodetect.patch'
 $vu1ThreadPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-thread.patch'
 $gsFrontPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-front-thread.patch'
 $vif1UnpackFormatsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-unpack-formats.patch'
@@ -122,6 +123,7 @@ $gsZtePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-zte.patch'
 $gsCpuColclampPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-cpu-colclamp.patch'
 $gsTexaDepthPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-texa-depth.patch'
 $gsPcrtcBlendPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-pcrtc-blend.patch'
+$linuxPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-perf.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -238,6 +240,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1GeneratorDirPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsDiscardUncoveredPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $dmaIopTimersCachePatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1EeTimersFastPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $padAutodetectPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ThreadPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFrontPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1UnpackFormatsPatch)
@@ -268,6 +271,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsZtePatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCpuColclampPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTexaDepthPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPcrtcBlendPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxPerfPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
