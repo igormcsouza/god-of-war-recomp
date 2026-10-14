@@ -1,0 +1,443 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h b/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
+index af970e8..444aad7 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
+@@ -9,6 +9,9 @@
+ #include <mutex>
+ #include <vector>
+ 
++// GOW-Port: number of row-parallel raster threads for the CPU GS (1 = serial). Intended for tests.
++void GSCpuSetRasterThreads(int count);
++
+ class GSCpuBackend final : public GSRasterBackend, public GSBackendStateAccess
+ {
+ public:
+diff --git a/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp b/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
+index b2e49d3..3576c8e 100644
+--- a/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_cpu_backend.cpp
+@@ -8,8 +8,13 @@
+ #include "gs_triangle_rules.h"
+ #include "gs_sprite_rules.h"
+ #include "ps2_log.h"
++#include <array>
+ #include <atomic>
+ #include <chrono>
++#include <condition_variable>
++#include <functional>
++#include <mutex>
++#include <thread>
+ #include <cstdlib>
+ #include <map>
+ #include <string>
+@@ -45,6 +50,140 @@ namespace
+                 _mm_setcsr((_mm_getcsr() & ~_MM_ROUND_MASK) | rounding);
+         }
+     };
++    // GOW-Port: row-parallel rasterization (default on Linux; PS2X_GS_RASTER_THREADS=N, 0/1 = serial).
++    // Rows are split by (y >> 3) % N: GS blocks are at least 8 rows tall, so no two workers ever touch
++    // the same VRAM word. Each worker samples through its own page cache, so draws whose texture pages
++    // overlap the frame/Z pages (feedback, where the shared cache holds a deliberate snapshot) stay serial.
++    thread_local GSMem::TexturePageCache *t_gowTexCache = nullptr;
++
++    class GowRasterPool
++    {
++    public:
++        static GowRasterPool &Get()
++        {
++            static GowRasterPool *pool = new GowRasterPool(); // intentionally leaked: workers outlive statics
++            return *pool;
++        }
++        int Threads() const { return m_threads; }
++        void SetThreads(int count) // only from the thread that submits primitives
++        {
++            m_threads = std::clamp(count, 1, 16);
++            while (m_spawned < m_threads - 1)
++            {
++                ++m_spawned;
++                std::thread([this] { Worker(); }).detach();
++            }
++        }
++
++        // Runs fn(k) for k in [0, Threads()); the caller runs k = 0.
++        void Run(const std::function<void(int)> &fn)
++        {
++            std::lock_guard<std::mutex> serial(m_runMutex);
++            const unsigned csr = _mm_getcsr();
++            {
++                std::lock_guard<std::mutex> lock(m_mutex);
++                m_job = &fn;
++                m_csr = csr;
++                m_next = 1;
++                m_pending = m_threads - 1;
++                ++m_generation;
++            }
++            m_workCv.notify_all();
++            fn(0);
++            std::unique_lock<std::mutex> lock(m_mutex);
++            m_doneCv.wait(lock, [&] { return m_pending == 0; });
++            m_job = nullptr;
++        }
++
++    private:
++        GowRasterPool()
++        {
++            int wanted = 1;
++#if defined(__linux__)
++            wanted = static_cast<int>(std::thread::hardware_concurrency() / 4u);
++            wanted = std::clamp(wanted, 1, 4);
++#endif
++            if (const char *value = std::getenv("PS2X_GS_RASTER_THREADS"))
++                wanted = std::atoi(value);
++            SetThreads(wanted);
++        }
++
++        void Worker()
++        {
++            uint64_t seen = 0;
++            for (;;)
++            {
++                std::unique_lock<std::mutex> lock(m_mutex);
++                m_workCv.wait(lock, [&] { return m_generation != seen; });
++                seen = m_generation;
++                if (!m_job || m_next >= m_threads)
++                    continue;
++                const int index = m_next++;
++                const auto *job = m_job;
++                const unsigned csr = m_csr;
++                lock.unlock();
++                const unsigned previous = _mm_getcsr();
++                _mm_setcsr(csr);
++                (*job)(index);
++                _mm_setcsr(previous);
++                lock.lock();
++                if (--m_pending == 0)
++                    m_doneCv.notify_all();
++            }
++        }
++
++        int m_threads = 1, m_spawned = 0;
++        std::mutex m_runMutex, m_mutex;
++        std::condition_variable m_workCv, m_doneCv;
++        const std::function<void(int)> *m_job = nullptr;
++        unsigned m_csr = 0;
++        uint64_t m_generation = 0;
++        int m_next = 0, m_pending = 0;
++    };
++
++    // Texture pages (8 KB) read by the draw vs. frame/Z pages written by it. Over-estimates both ranges.
++    bool gowTextureAliasesTargets(const GSDrawState &state, int maxY)
++    {
++        if (!state.prim.tme)
++            return false;
++        const auto &ctx = state.context;
++        std::array<bool, 512> target{};
++        const uint32_t rows = static_cast<uint32_t>(std::max(maxY, 0) + 1 + 31) / 32u;
++        const uint32_t pagesPerBuffer = std::max<uint32_t>(ctx.frame.fbw, 1u) * rows;
++        for (const uint32_t base : {GSInternal::framePageBaseToBlock(ctx.frame.fbp) >> 5, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) >> 5})
++            for (uint32_t i = 0; i < pagesPerBuffer && i < 512u; ++i)
++                target[(base + i) & 511u] = true;
++        const uint32_t texRows = (static_cast<uint32_t>(state.textureHeight) + 31u) / 32u;
++        const uint32_t texPages = std::min<uint32_t>(std::max<uint32_t>(ctx.tex0.tbw, 1u) * texRows + 1u, 512u);
++        for (uint32_t i = 0; i < texPages; ++i)
++            if (target[((ctx.tex0.tbp0 >> 5) + i) & 511u])
++                return true;
++        return false;
++    }
++
++    // Calls row(y) for y in [y0, y1]; spreads large primitives over the pool when it is safe.
++    template <class RowFn>
++    void gowForRows(const GSDrawState &state, int y0, int y1, uint64_t area, RowFn &&row)
++    {
++        GowRasterPool &pool = GowRasterPool::Get();
++        const int n = pool.Threads();
++        if (n <= 1 || area < 8192u || y1 - y0 < 15 || t_gowTexCache || gowTextureAliasesTargets(state, y1))
++        {
++            for (int y = y0; y <= y1; ++y)
++                row(y);
++            return;
++        }
++        pool.Run([&](int k)
++                 {
++                     GSMem::TexturePageCache cache;
++                     t_gowTexCache = &cache;
++                     for (int y = y0; y <= y1; ++y)
++                         if (((y >> 3) % n) == k)
++                             row(y);
++                     t_gowTexCache = nullptr;
++                 });
++    }
++
+     float fabsQ(float q)
+     {
+         return (std::fabs(q) > 1.0e-8f) ? q : 1.0f;
+@@ -744,7 +883,8 @@ uint32_t GSCpuBackend::ReadTextureVramUnlocked(uint32_t psm, uint32_t base, uint
+     if (!m_vram)
+         return 0u;
+ 
+-    return GSMem::ReadTexture(m_texturePageCache, m_vram, psm, base, bw, x, y);
++    // GOW-Port: raster workers sample through their own page cache.
++    return GSMem::ReadTexture(t_gowTexCache ? *t_gowTexCache : m_texturePageCache, m_vram, psm, base, bw, x, y);
+ }
+ 
+ void GSCpuBackend::WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value)
+@@ -1438,7 +1578,7 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+             v1f = (v1.t / q1) * static_cast<float>(texH);
+         }
+ 
+-        for (int y = drawY0; y <= drawY1; ++y)
++        gowForRows(state, drawY0, drawY1, static_cast<uint64_t>(drawX1 - drawX0 + 1) * static_cast<uint64_t>(drawY1 - drawY0 + 1), [&](int y)
+         {
+             const float ty = gsSpriteParameter(axisY, y);
+             float texVf = v0f + (v1f - v0f) * ty;
+@@ -1469,13 +1609,15 @@ void GSCpuBackend::DrawSprite(const GSPrimitiveBatch &batch)
+                 const TextureCombineResult color = combineTexture(tex, r, g, b, a, tr, tg, tb, ta);
+                 WritePixel(state, x, y, z1, color.r, color.g, color.b, color.a, v1.fog);
+             }
+-        }
++        });
+     }
+     else
+     {
+-        for (int y = drawY0; y <= drawY1; ++y)
++        gowForRows(state, drawY0, drawY1, static_cast<uint64_t>(drawX1 - drawX0 + 1) * static_cast<uint64_t>(drawY1 - drawY0 + 1), [&](int y)
++        {
+             for (int x = drawX0; x <= drawX1; ++x)
+                 WritePixel(state, x, y, z1, r, g, b, a, v1.fog);
++        });
+     }
+ }
+ 
+@@ -1501,7 +1643,7 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
+     if (minX > maxX || minY > maxY)
+         return;
+ 
+-    for (int y = minY; y <= maxY; ++y)
++    gowForRows(state, minY, maxY, static_cast<uint64_t>(maxX - minX + 1) * static_cast<uint64_t>(maxY - minY + 1), [&](int y)
+     {
+         int64_t edge[3] = {gsTriangleEdge(triangle, 0, minX, y),
+                            gsTriangleEdge(triangle, 1, minX, y),
+@@ -1585,7 +1727,7 @@ void GSCpuBackend::DrawTriangle(const GSPrimitiveBatch &batch)
+             const uint8_t fog = clampU8(static_cast<int>(v0.fog + (v1.fog - v0.fog) * w1 + (v2.fog - v0.fog) * w2));
+             WritePixel(state, x, y, static_cast<u32>(z + 0.5), r, g, b, a, fog);
+         }
+-    }
++    });
+ }
+ 
+ void GSCpuBackend::DrawLine(const GSPrimitiveBatch &batch)
+@@ -2201,3 +2343,9 @@ PresentationFrame GSCpuBackend::PresentFromLocalMemory(const GSPresentationReque
+     result.sourceFbp = selected.fbp;
+     return result;
+ }
++
++// GOW-Port: see GowRasterPool.
++void GSCpuSetRasterThreads(int count)
++{
++    GowRasterPool::Get().SetThreads(count);
++}
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index a455177..5acfb49 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -19,6 +19,10 @@
+ #include <iostream>
+ #include <stdexcept>
+ #include <fstream>
++#include <filesystem>
++#include <string>
++#include <system_error>
++#include <vector>
+ #include <algorithm>
+ #include <array>
+ #include <cstring>
+@@ -100,8 +104,13 @@ namespace ps2_stubs
+ // cuadro (entrada a GOW_PERF_FRAME_PC, vid::Flip) suma el paso de tiempo del juego (float en 0x29C64C de
+ // SCUS-97399). Con GOW_DELTA_DIAG=1 se imprime cada segundo. Idea tomada de Tobiichi-Port (YYOzcan).
+ std::atomic<float> g_gowGameSpeed{0.0f};
++// GOW-Port: presented guest frames (vid::Flip) for the live FPS in the window title.
++std::atomic<uint64_t> g_gowGuestFlips{0};
++static std::string g_gowBaseTitle;
+ void gowCountGuestFrame(uint32_t pc, const uint8_t *rdram)
+ {
++    if (pc == 0x001837B8u)
++        g_gowGuestFlips.fetch_add(1, std::memory_order_relaxed);
+     static const uint32_t framePc = [] {
+         const char *value = std::getenv("GOW_PERF_FRAME_PC");
+         return value ? static_cast<uint32_t>(std::strtoul(value, nullptr, 0)) : 0u;
+@@ -782,6 +791,7 @@ bool PS2Runtime::initialize(const char *title)
+         SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
+ #endif
++        g_gowBaseTitle = title ? title : "";
+         m_hostWindowOwned = IsWindowReady();
+         if (!m_hostWindowOwned)
+         {
+@@ -2592,6 +2602,55 @@ void PS2Runtime::run()
+         if (ps2_perf::countFrames()) ps2_perf::hostFrames.fetch_add(1, std::memory_order_relaxed);
+         ps2_perf::report();
+ 
++        // GOW-Port: live FPS (guest vid::Flip per second) in the window title, plus optional
++        // screenshots: GOW_SCREENSHOT_AT=<s>[,<s>...] writes gow_screenshot_<s>.png into
++        // GOW_SCREENSHOT_DIR (default "logs").
++        {
++            static auto fpsStart = std::chrono::steady_clock::now();
++            static const auto runStart = fpsStart;
++            static uint64_t fpsFlips = 0;
++            static std::vector<int> shots = []
++            {
++                std::vector<int> out;
++                if (const char *list = std::getenv("GOW_SCREENSHOT_AT"))
++                    for (const char *p = list; *p;)
++                    {
++                        out.push_back(std::atoi(p));
++                        while (*p && *p != ',')
++                            ++p;
++                        if (*p == ',')
++                            ++p;
++                    }
++                std::sort(out.begin(), out.end());
++                return out;
++            }();
++            static size_t nextShot = 0;
++            const auto now = std::chrono::steady_clock::now();
++            const double wall = std::chrono::duration<double>(now - fpsStart).count();
++            if (wall >= 1.0)
++            {
++                const uint64_t flips = g_gowGuestFlips.load(std::memory_order_relaxed);
++                char fps[32];
++                std::snprintf(fps, sizeof(fps), " | %.1f FPS", static_cast<double>(flips - fpsFlips) / wall);
++                SetWindowTitle((g_gowBaseTitle + fps).c_str());
++                fpsFlips = flips;
++                fpsStart = now;
++            }
++            if (nextShot < shots.size() &&
++                std::chrono::duration<double>(now - runStart).count() >= shots[nextShot])
++            {
++                const char *dir = std::getenv("GOW_SCREENSHOT_DIR");
++                std::error_code ec;
++                std::filesystem::create_directories(dir ? dir : "logs", ec);
++                const std::string path = std::string(dir ? dir : "logs") + "/gow_screenshot_" + std::to_string(shots[nextShot]) + ".png";
++                Image image = LoadImageFromScreen();
++                ExportImage(image, path.c_str());
++                UnloadImage(image);
++                std::fprintf(stderr, "[gow-screenshot] %s\n", path.c_str());
++                ++nextShot;
++            }
++        }
++
+         if (WindowShouldClose())
+         {
+             RUNTIME_LOG("[run] window close requested, breaking out of loop");
+diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
+index 563bcbd..a6698c4 100644
+--- a/ps2xRuntime/src/main.cpp
++++ b/ps2xRuntime/src/main.cpp
+@@ -197,6 +197,10 @@ int main(int argc, char *argv[])
+ #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)
+         // This hook is to prevent leak rlimgui deps to recompiler etc
+         PS2DebugPanel debugPanel;
++        // GOW-Port: on Linux the ImGui panel is opt-in (GOW_DEBUG_UI=1); its per-frame cost matters at low FPS.
++#if defined(__linux__)
++        if (const char *debugUi = std::getenv("GOW_DEBUG_UI"); debugUi && debugUi[0] == '1')
++#endif
+         runtime.setDebugUiCallbacks(
+             [](PS2Runtime &rt, void *userData)
+             {
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 7c695bc..49a17f7 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -38,6 +38,7 @@ add_library(ps2_test_lib STATIC
+     src/ps2_gs_fog_math_tests.cpp # GOW-Port: RGB de referencia para la niebla.
+     src/ps2_gs_zte_tests.cpp # GOW-Port: habilitacion de test y escritura Z.
+     src/ps2_gs_cpu_colclamp_tests.cpp # GOW-Port: wrap/clamp del RGB de mezcla en CPU.
++    src/ps2_gs_cpu_parallel_tests.cpp # GOW-Port: rasterizado CPU por filas en paralelo.
+     src/ps2_gs_texa_depth_tests.cpp # GOW-Port: TEXA en alias de profundidad.
+     src/ps2_gs_pcrtc_blend_tests.cpp # GOW-Port: mezcla PCRTC contra circuitos/fondo.
+     src/ps2_gs_backend_tests.cpp # GOW-Port: cola, VRAM y comparación CPU/OpenGL.
+diff --git a/ps2xTest/src/main.cpp b/ps2xTest/src/main.cpp
+index 1fd16a9..26c2de7 100644
+--- a/ps2xTest/src/main.cpp
++++ b/ps2xTest/src/main.cpp
+@@ -19,6 +19,7 @@ void register_gs_fog_latch_tests(); // GOW-Port
+ void register_gs_fog_math_tests(); // GOW-Port
+ void register_gs_zte_tests(); // GOW-Port
+ void register_gs_cpu_colclamp_tests(); // GOW-Port
++void register_gs_cpu_parallel_tests(); // GOW-Port
+ void register_gs_texa_depth_tests(); // GOW-Port
+ void register_gs_pcrtc_blend_tests(); // GOW-Port
+ void register_ps2_gs_backend_tests(); // GOW-Port
+@@ -61,6 +62,7 @@ int main()
+     register_gs_fog_math_tests(); // GOW-Port
+     register_gs_zte_tests(); // GOW-Port
+     register_gs_cpu_colclamp_tests(); // GOW-Port
++    register_gs_cpu_parallel_tests(); // GOW-Port
+     register_gs_texa_depth_tests(); // GOW-Port
+     register_gs_pcrtc_blend_tests(); // GOW-Port
+     register_ps2_gs_backend_tests();
+diff --git a/ps2xTest/src/ps2_gs_cpu_parallel_tests.cpp b/ps2xTest/src/ps2_gs_cpu_parallel_tests.cpp
+new file mode 100644
+index 0000000..4379f66
+--- /dev/null
++++ b/ps2xTest/src/ps2_gs_cpu_parallel_tests.cpp
+@@ -0,0 +1,59 @@
++// GOW-Port: row-parallel CPU rasterization must give the same VRAM as the serial path (no game needed).
++#include "MiniTest.h"
++#include "runtime/gs/gs_cpu_backend.h"
++#include <vector>
++namespace {
++std::vector<uint8_t> render(int threads, bool feedback) {
++    std::vector<uint8_t> vram(4u << 20);
++    uint32_t seed = 12345u;
++    for (auto &b : vram) { seed = seed * 1664525u + 1013904223u; b = uint8_t(seed >> 24); }
++    GSCpuSetRasterThreads(threads);
++    GSCpuBackend backend;
++    backend.Initialize(vram.data(), uint32_t(vram.size()));
++    const uint32_t texBase = feedback ? 100u * 32u : 0u; // feedback: texture inside the frame pages
++    for (uint32_t y = 0; y < 64; ++y)
++        for (uint32_t x = 0; x < 64; ++x)
++            backend.WriteVram(GS_PSM_CT32, texBase, 1, x, y, 0x80000000u | (x * 4u) | (y * 4u << 8) | ((x ^ y) << 16));
++    auto state = [&](GSPrimitiveBatch &b, GSPrimType type, bool tex) {
++        b.vertexCount = type == GS_PRIM_SPRITE ? 2 : 3;
++        b.state.prim.type = type; b.state.prim.tme = tex; b.state.prim.fst = true; b.state.prim.iip = true;
++        b.state.prim.abe = true;
++        b.state.textureWidth = b.state.textureHeight = 64;
++        auto &c = b.state.context;
++        c.frame = {100, 10, GS_PSM_CT32, 0}; c.scissor = {0, 639, 0, 447};
++        c.zbuf = {200, GS_PSM_Z32, true}; c.test = 0;
++        c.alpha = (uint64_t(128) << 32) | 0x44u; // Cs*As + Cd*(1-As)... any fixed blend is fine
++        c.tex0.tbp0 = texBase; c.tex0.tbw = 1; c.tex0.psm = GS_PSM_CT32; c.tex0.tw = 6; c.tex0.th = 6; c.tex0.tcc = 1;
++    };
++    GSPrimitiveBatch sprite{}; state(sprite, GS_PRIM_SPRITE, true);
++    float sx[2] = {20.5f, 520.5f}, sy[2] = {10.5f, 300.5f};
++    for (unsigned i = 0; i < 2; ++i) { auto &v = sprite.vertices[i]; v.x = sx[i]; v.y = sy[i]; v.z = 7; v.u = uint16_t(i * 64u * 16u); v.v = uint16_t(i * 64u * 16u); v.r = v.g = v.b = 0x80; v.a = 0x70; }
++    backend.Submit(sprite);
++    GSPrimitiveBatch tri{}; state(tri, GS_PRIM_TRIANGLE, true);
++    float tx[3] = {30.0f, 600.0f, 100.0f}, ty[3] = {40.0f, 90.0f, 420.0f};
++    for (unsigned i = 0; i < 3; ++i) { auto &v = tri.vertices[i]; v.x = tx[i]; v.y = ty[i]; v.z = 9; v.u = uint16_t(i * 500u); v.v = uint16_t(i * 300u); v.r = uint8_t(60 + i * 70); v.g = uint8_t(200 - i * 60); v.b = uint8_t(10 + i * 90); v.a = 0x60; }
++    backend.Submit(tri);
++    GSPrimitiveBatch flat{}; state(flat, GS_PRIM_SPRITE, false);
++    for (unsigned i = 0; i < 2; ++i) { auto &v = flat.vertices[i]; v.x = 50.0f + i * 300.0f; v.y = 200.0f + i * 150.0f; v.z = 3; v.r = 200; v.g = 30; v.b = 90; v.a = 0x50; }
++    backend.Submit(flat);
++    backend.Flush();
++    GSCpuSetRasterThreads(1);
++    return vram;
++}
++}
++void register_gs_cpu_parallel_tests() {
++    MiniTest::Case("GS CPU parallel raster", [](TestCase &test) {
++        test.Run("Parallel rows equal serial rows", [](TestCase &t) {
++            const auto serial = render(1, false);
++            const auto parallel = render(4, false);
++            t.IsTrue(serial == parallel, "Textured sprite, triangle and flat sprite give identical VRAM");
++            std::vector<uint8_t> blank(4u << 20);
++            uint32_t seed = 12345u;
++            for (auto &b : blank) { seed = seed * 1664525u + 1013904223u; b = uint8_t(seed >> 24); }
++            t.IsTrue(serial != blank, "The draws changed VRAM");
++        });
++        test.Run("Texture feedback stays serial", [](TestCase &t) {
++            t.IsTrue(render(1, true) == render(4, true), "Feedback draw is identical with and without workers");
++        });
++    });
++}
