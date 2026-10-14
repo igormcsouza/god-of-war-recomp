@@ -11,10 +11,29 @@ Patch: `patches/ps2recomp-gs-vulkan.patch` (applied last). Code: `GSVulkanBacken
   (`GSGpuShaders::kCommon`: `locate`/`readPixel`/`writePixelRaw` plus the same swizzle page tables).
   Both GPU backends therefore share one swizzle implementation, and copies, aliasing and feedback
   between formats work as on the GS.
-- **Rasterization.** Each primitive is one compute dispatch over its scissored bounding box. Coverage
+- **Rasterization.** Each primitive is one compute dispatch over its scissored bounding box. Its state is
+  one 232-byte record in a host-visible ring (16384 records per GPU run, binding 3), and a push constant
+  holds the record index. Coverage
   uses the integer edge functions of `gs_triangle_rules.h` (64-bit, `shaderInt64`). Sprites use
   `gsSpriteAxis`. Gouraud weights are the correctly rounded `e/area`, and the colour sums are `precise`.
   The result is bit-exact against `GSCpuBackend`. A barrier between dispatches keeps GS draw order.
+- **Texturing (phase B).** The kernel ports `SampleTexture`/`LookupCLUT`/`combineTexture` of the CPU
+  backend: all PSMs (CT32/24/16/16S, Z aliases, T8/T8H/T4/T4HL/T4HH), CLUT CT32/24/16/16S with CSM1/CSM2
+  and CSA, TEXA, REPEAT/CLAMP/REGION_CLAMP/REGION_REPEAT, TCC/TFX, nearest and bilinear (16.16 then 4-bit
+  weights), FST UV and STQ. Per-vertex sprite texel coordinates are computed on the host with the CPU's
+  own expressions. All shader float math is `precise` (the CPU build is `-march=x86-64-v2`, no FMA), and
+  `1/Q` uses an exact integer division because GLSL division is not correctly rounded (2.5 ULP).
+- **CLUT.** Binding 2 holds `GSCpuBackend::m_clut` (the backend is a friend), copied when a GPU run opens.
+  A `LoadClut` that loads ends the run first, so the CLUT is constant within a run. A `LoadClut` that loads
+  nothing (CLD=0/6/7, or CLD=4/5 with an unchanged CBP) and `TextureFlush` (only drops the CPU page cache)
+  no longer end the run.
+- **Pixel pipeline.** Alpha test with all AFAIL modes, alpha blending (PABE, COLCLAMP wrap/clamp, CT24
+  destination alpha 0x80), Z test (NEVER/ALWAYS/GEQUAL/GREATER) and Z write on Z32/24/16/16S, FBMSK, FBA,
+  in `WritePixel` order (frame, then Z). Interpolated Z uses 2^-34 fixed point instead of the CPU's double
+  math (Intel Xe has no `shaderFloat64`): integer Z in [0, 2^32) and deltas below 2^28 are accepted, and the
+  result can only differ from the CPU when the exact Z lies within the CPU's own double error (~2^-21) of a
+  .5 boundary. Primitives that read texture pages they also write (frame or Z, same page test as
+  `gowTextureAliasesTargets`) stay on the CPU because one dispatch would race.
   The OpenGL backend also rasterizes in compute (`kRaster`). A graphics pipeline would not give GS
   coverage rules or read-modify-write blending without extra work, so it is left for later as an
   optimization.
@@ -46,10 +65,20 @@ Patch: `patches/ps2recomp-gs-vulkan.patch` (applied last). Code: `GSVulkanBacken
 - CMake: the option `PS2X_GS_VULKAN` is ON by default on Linux. It needs `find_package(Vulkan)` and
   `glslangValidator`. Without them, a status message is printed and the backend is not compiled.
 
+## Statistics
+
+`PS2X_GS_VULKAN_STATS=1` logs once per second
+`[gow-gs-vk] gpu=<n> cpu=<n>: <fallback reason>=<n>... | runs=<n> ended by: <cause>=<n>...`: primitives drawn
+on the GPU and on the CPU (with the reason from `gpuUnsupported`, e.g. `tex-feedback`, `line/point`, `fog`,
+`depth`/`z-range`, `dest-alpha-test`, `frame-psm`), and what ended each GPU run (the fallback reason, or the
+CPU call such as `BeginTransfer(command)`, `LoadClut`, `Flush()`, `Present(request)`, `record-ring`).
+
 ## Validation
 
 `GSCpuBackend` is the reference. `ps2x_tests` → "GS Vulkan backend" renders the same scene with both
-backends from the same noisy VRAM and requires identical bytes. The scene has a flat sprite with
+backends from the same noisy VRAM and requires identical bytes. "Textured Vulkan VRAM equals CPU VRAM"
+covers every texture PSM, CLUT loads (CSM1/CSM2, CSA, CLD=0 between GPU draws), wrap modes, TFX/TCC,
+bilinear, perspective STQ, alpha test and blending over textures. The scene has a flat sprite with
 fractional edges, a Gouraud triangle, a flat strip with XYOFFSET and scissor, FBMSK+FBA, a blended
 sprite (CPU fallback in the middle of a GPU run, overlapped later), and CT16 and CT24 targets. It skips
 when no device exists. It passes on Intel RPL-P (Mesa), NVIDIA RTX 5050 and llvmpipe. Running the whole
@@ -61,9 +90,10 @@ directly, without `Flush`, which is why the library default stays CPU.
 
 - **A (done):** device/scaffold, untextured sprites and triangles (flat/Gouraud) on CT32/24/16/16S with
   FBMSK/FBA, and CPU fallback for everything else.
-- **B:** textured sprites and triangles. Bring sampling, CLUT and TEXA over from `kRaster`, upload
-  CLUT to the GPU, and keep transfers on the GPU so runs are not split.
-- **C:** blending, alpha/destination/Z tests, fog, lines and points. Adopt the batching and tile binning
+- **B (done):** textured sprites and triangles, CLUT on the GPU, plus alpha test, blending and Z (pulled
+  forward from C because the stats showed almost every draw needs them).
+- **C:** destination alpha test, fog, lines and points; transfers (`BeginTransfer`/`UploadImage`) and
+  CLUT loads on the GPU so runs are not split. Adopt the batching and tile binning
   of the OpenGL backend (`kRaster`) instead of one dispatch per primitive. Track dirty pages instead of
   whole-VRAM copies, and add a GPU compositor/swizzle readback for `Present`. Validate each step
   against the CPU, both with the test scene and with in-game screenshots.
