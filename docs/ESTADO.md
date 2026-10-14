@@ -6589,3 +6589,31 @@ barrier per primitive (~10k/s) and 60-90 GPU runs per second (two 4 MiB copies e
 faster on this machine (`PS2X_GS_BACKEND=cpu`). Next (phase C): batch primitives per dispatch (tile binning like `kRaster`)
 instead of one barrier each; run CLUT loads and host-to-local transfers on the GPU so runs are not split; check whether the
 `tex-feedback` draws really overlap (exact texel rectangle instead of the page estimate); dirty-page copies.
+
+### Vulkan GS backend, phase C (2026-10-14)
+
+`patches/ps2recomp-gs-vulkan.patch` regenerated (still last; it now also touches `ps2_memory.cpp` to allocate GS VRAM
+4096-aligned). Details in [`docs/VULKAN.md`](VULKAN.md) ("Phase C"): zero-copy import of host VRAM, primitive batching (one
+dispatch over the union rectangle, per-pixel ordering inside the thread, page-set hazards between batches), exact page-level
+`tex-feedback`, new `z-alias`, and asynchronous partial submissions. In the test the Z buffer moved from page 200 to 480
+because it overlapped the frame (a real hazard the new check handles on the CPU).
+
+Verified: `ps2x_tests` 629/629 (both the copy path and a page-aligned, imported VRAM are byte-identical to the CPU;
+a batch bug showed up in the old scene and was fixed with the frame/Z page check). Title screenshots (`GOW_SCREENSHOT_AT=12,30`)
+show fire, logo, Kratos, "New Game". Intel RPL-P, title FPS (window title, 4 s samples over 40 s):
+
+| Step | GPU draws/s | CPU draws/s | GPU wait | FPS |
+|---|---|---|---|---|
+| CPU backend | 0 | ~55k | - | 3.0-4.0 (avg ~3.8) |
+| phase B | ~9.8k | ~21k `tex-feedback` | 2 copies x ~90 runs/s | 2.0-3.0 |
+| + zero-copy + exact feedback + batches (256) | ~43k | ~0.2k | ~500 ms/s | 2.0-3.0 |
+| + larger batches | ~56k | ~0.3k | ~410 ms/s | 3.0-4.0 |
+| + async partial submission | ~61k | ~0.3k | ~340 ms/s | 4.0-5.0 (avg ~4.2) |
+
+Result: the GPU draws practically everything now (CPU draws 55k/s -> 0.3k/s), and Vulkan matches or slightly beats the CPU
+backend (~4.2 vs ~3.8 FPS over 40 s in the intro/menu). It is not a large win: the GPU is busy ~35% of each second and
+the run still ends 100-160 times per second at `LoadClut`/`BeginTransfer` (the CPU waits for the GPU there), so GPU and
+EE time overlap only partly. Default: Vulkan stays the Linux default (`>=` CPU); `PS2X_GS_BACKEND=cpu` selects the CPU.
+Next: per-primitive CLUT snapshots and page-set checks so `LoadClut`/uploads/CPU draws that don't touch pending GPU pages don't
+wait, then fog, lines/points, destination alpha test and a GPU compositor for `Present`.
+

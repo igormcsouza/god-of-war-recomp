@@ -148,12 +148,12 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..aab3011
+index 0000000..51e684a
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,740 @@
-+// GOW-Port: Vulkan GS backend, phases A-B (untextured and textured sprites and triangles on the GPU,
-+// everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the God of War port repository.
+@@ -0,0 +1,1000 @@
++// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
++// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
 +#include "runtime/gs/gs_swizzle.h"
 +#include "runtime/gs/ps2_gs_common.h"
@@ -167,6 +167,7 @@ index 0000000..aab3011
 +
 +#include <algorithm>
 +#include <array>
++#include <bitset>
 +#include <cmath>
 +#include <chrono>
 +#include <cstdio>
@@ -218,6 +219,16 @@ index 0000000..aab3011
 +    constexpr uint32_t kColclamp = 0x40000u;
 +    // ponytail: fixed record ring per GPU run (~3.4 MB); a full ring ends the run.
 +    constexpr uint32_t kMaxPrims = 16384u;
++    constexpr uint32_t kMaxBatch = 1024u;
++    constexpr uint32_t kMaxCmds = 32u;      // command buffers per GPU run (partial submissions)
++    constexpr uint32_t kSubmitEvery = 512u; // primitives between partial submissions
++
++    struct Push
++    {
++        int32_t originX, originY;
++        uint32_t first, count;
++    };
++    using PageSet = std::bitset<512>;
 +
 +    struct VkShared
 +    {
@@ -230,6 +241,7 @@ index 0000000..aab3011
 +        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
 +        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 +        VkPipeline pipeline = VK_NULL_HANDLE;
++        PFN_vkGetMemoryHostPointerPropertiesEXT getHostPointerProps = nullptr; // VK_EXT_external_memory_host
 +        VkBuffer swizzle = VK_NULL_HANDLE;
 +        VkDeviceMemory swizzleMemory = VK_NULL_HANDLE;
 +        std::mutex queueMutex;
@@ -313,13 +325,27 @@ index 0000000..aab3011
 +        queueInfo.pQueuePriorities = &priority;
 +        VkPhysicalDeviceFeatures enabled{};
 +        enabled.shaderInt64 = VK_TRUE;
++        // GOW-Port: importing the host VRAM array avoids copying 4 MiB each way per GPU run.
++        const char *hostImport = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
++        uint32_t extensionCount = 0;
++        vkEnumerateDeviceExtensionProperties(s.phys, nullptr, &extensionCount, nullptr);
++        std::vector<VkExtensionProperties> extensions(extensionCount);
++        vkEnumerateDeviceExtensionProperties(s.phys, nullptr, &extensionCount, extensions.data());
++        bool canImport = false;
++        for (const auto &e : extensions)
++            canImport |= std::strcmp(e.extensionName, hostImport) == 0;
 +        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
 +        deviceInfo.queueCreateInfoCount = 1;
 +        deviceInfo.pQueueCreateInfos = &queueInfo;
 +        deviceInfo.pEnabledFeatures = &enabled;
++        deviceInfo.enabledExtensionCount = canImport ? 1u : 0u;
++        deviceInfo.ppEnabledExtensionNames = &hostImport;
 +        if (vkCreateDevice(s.phys, &deviceInfo, nullptr, &s.device) != VK_SUCCESS)
 +            return "vkCreateDevice failed";
 +        vkGetDeviceQueue(s.device, s.family, 0, &s.queue);
++        if (canImport)
++            s.getHostPointerProps = reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
++                vkGetDeviceProcAddr(s.device, "vkGetMemoryHostPointerPropertiesEXT"));
 +
 +        VkDescriptorSetLayoutBinding bindings[4]{};
 +        for (uint32_t i = 0; i < 4; ++i)
@@ -332,7 +358,7 @@ index 0000000..aab3011
 +        VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
 +        setInfo.bindingCount = 4;
 +        setInfo.pBindings = bindings;
-+        VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)};
++        VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
 +        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
 +        layoutInfo.setLayoutCount = 1;
 +        layoutInfo.pSetLayouts = &s.setLayout;
@@ -407,23 +433,43 @@ index 0000000..aab3011
 +        return (std::fabs(q) > 1.0e-8f) ? q : 1.0f; // gs_cpu_backend.cpp
 +    }
 +
-+    // gowTextureAliasesTargets of gs_cpu_backend.cpp: one dispatch reading pages it writes would race,
-+    // while the CPU draws them in row order.
-+    bool textureAliasesTargets(const GSDrawState &state, int maxY)
++    // Page geometry (width, height in pixels/texels) of the GS formats, for the hazard sets below.
++    void pageSize(uint32_t psm, uint32_t &w, uint32_t &h)
 +    {
-+        const GSContext &ctx = state.context;
-+        std::array<bool, 512> target{};
-+        const uint32_t rows = static_cast<uint32_t>(std::max(maxY, 0) + 1 + 31) / 32u;
-+        const uint32_t pages = std::max<uint32_t>(ctx.frame.fbw, 1u) * rows;
-+        for (const uint32_t base : {GSInternal::framePageBaseToBlock(ctx.frame.fbp) >> 5, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) >> 5})
-+            for (uint32_t i = 0; i < pages && i < 512u; ++i)
-+                target[(base + i) & 511u] = true;
-+        const uint32_t texRows = (static_cast<uint32_t>(state.textureHeight) + 31u) / 32u;
-+        const uint32_t texPages = std::min<uint32_t>(std::max<uint32_t>(ctx.tex0.tbw, 1u) * texRows + 1u, 512u);
-+        for (uint32_t i = 0; i < texPages; ++i)
-+            if (target[((ctx.tex0.tbp0 >> 5) + i) & 511u])
-+                return true;
-+        return false;
++        switch (psm)
++        {
++        case 0x13: case 0x1B: w = 128; h = 64; break;                      // T8, T8H
++        case 0x14: case 0x24: case 0x2C: w = 128; h = 128; break;          // T4, T4HL, T4HH
++        case 0x02: case 0x0A: case 0x32: case 0x3A: w = 64; h = 64; break; // 16 bit
++        default: w = 64; h = 32; break;                                    // 32/24 bit
++        }
++    }
++
++    // GS pages (8 KiB, 512 in VRAM) covered by pixels [x0,x1] x [y0,y1] of a buffer. Conservative.
++    void bufferPages(PageSet &out, uint32_t basePage, uint32_t bw, uint32_t psm, int x0, int y0, int x1, int y1)
++    {
++        uint32_t pw, ph;
++        pageSize(psm, pw, ph);
++        bw = std::max(bw, 1u);
++        for (uint32_t py = static_cast<uint32_t>(y0) / ph; py <= static_cast<uint32_t>(y1) / ph; ++py)
++            for (uint32_t px = static_cast<uint32_t>(x0) / pw; px <= static_cast<uint32_t>(x1) / pw; ++px)
++                out.set((basePage + py * bw + px) & 511u);
++    }
++
++    // Pages the sampler may read: the whole texture rectangle plus one page of slack for unaligned bases.
++    void texturePages(PageSet &out, const GSDrawState &state)
++    {
++        const GSTex0Reg &tex = state.context.tex0;
++        uint32_t pw, ph;
++        pageSize(tex.psm, pw, ph);
++        const uint32_t perRow = std::max(1u, (std::max<uint32_t>(tex.tbw, 1u) * 64u + pw - 1u) / pw);
++        const uint32_t cols = std::min(perRow, (static_cast<uint32_t>(state.textureWidth) + pw - 1u) / pw);
++        const uint32_t rows = (static_cast<uint32_t>(state.textureHeight) + ph - 1u) / ph;
++        const uint32_t base = tex.tbp0 >> 5;
++        for (uint32_t r = 0; r < rows; ++r)
++            for (uint32_t c = 0; c < cols; ++c)
++                out.set((base + r * perRow + c) & 511u);
++        out.set((base + rows * perRow) & 511u);
 +    }
 +
 +    // The state where GSCpuBackend::WritePixel reduces to "alpha test, blend, honour FBMSK/FBA, store color". Returns the
@@ -467,8 +513,6 @@ index 0000000..aab3011
 +            default:
 +                return "tex-psm";
 +            }
-+            if (textureAliasesTargets(state, ctx.scissor.y1))
-+                return "tex-feedback";
 +        }
 +        return nullptr;
 +    }
@@ -483,8 +527,10 @@ index 0000000..aab3011
 +    VkDescriptorPool pool = VK_NULL_HANDLE;
 +    VkDescriptorSet set = VK_NULL_HANDLE;
 +    VkCommandPool commandPool = VK_NULL_HANDLE;
-+    VkCommandBuffer cmd = VK_NULL_HANDLE;
-+    VkFence fence = VK_NULL_HANDLE;
++    VkCommandBuffer cmd = VK_NULL_HANDLE; // cmds[cmdIndex]
++    VkCommandBuffer cmds[kMaxCmds]{};
++    VkFence fences[kMaxCmds]{};
++    uint32_t cmdIndex = 0, primsAtSubmit = 0;
 +    VkBuffer prims = VK_NULL_HANDLE;
 +    VkDeviceMemory primsMemory = VK_NULL_HANDLE;
 +    PrimRecord *primsMapped = nullptr;
@@ -493,11 +539,24 @@ index 0000000..aab3011
 +    void *clutMapped = nullptr;
 +    uint32_t primCount = 0;
 +    bool open = false;
++    // Host-pointer import of the host VRAM array (no copies); else `vram`/`mapped` is a private copy.
++    VkBuffer importedVram = VK_NULL_HANDLE;
++    VkDeviceMemory importedMemory = VK_NULL_HANDLE;
++    const void *importedPtr = nullptr;
++    bool imported = false;
++    // The open batch: consecutive primitives with the same frame/Z targets whose texture reads and buffer
++    // writes don't touch each other's pages, so any workgroup order gives the same result.
++    uint32_t batchFirst = 0, batchCount = 0;
++    int batchRect[4] = {0, 0, 0, 0};
++    uint64_t batchPixels = 0;
++    uint32_t batchKey[3] = {0, 0, 0};
++    PageSet batchWrites, batchReads, batchFrames, batchDepths;
++    bool dispatched = false;
 +
 +    // PS2X_GS_VULKAN_STATS=1: once per second, GPU vs CPU draws with fallback reasons and what ended GPU runs.
 +    bool statsEnabled = [] { const char *v = std::getenv("PS2X_GS_VULKAN_STATS"); return v && *v && *v != '0'; }();
 +    std::chrono::steady_clock::time_point statsStart = std::chrono::steady_clock::now();
-+    uint64_t statsGpu = 0, statsCpu = 0, statsRuns = 0;
++    uint64_t statsGpu = 0, statsCpu = 0, statsRuns = 0, statsBatches = 0, statsFinishUs = 0, statsRecordUs = 0, statsCpuUs = 0;
 +    std::map<std::string, uint64_t> statsFallback, statsRunEnd;
 +
 +    void statsTick()
@@ -508,13 +567,15 @@ index 0000000..aab3011
 +        std::string line;
 +        for (const auto &[reason, count] : statsFallback)
 +            line += " " + reason + "=" + std::to_string(count);
-+        line += " | runs=" + std::to_string(statsRuns) + " ended by:";
++        line += " | batches=" + std::to_string(statsBatches) + " finish_ms=" + std::to_string(statsFinishUs / 1000u) + " record_ms=" + std::to_string(statsRecordUs / 1000u) +
++                " cpudraw_ms=" + std::to_string(statsCpuUs / 1000u) +
++                " runs=" + std::to_string(statsRuns) + " ended by:";
 +        for (const auto &[cause, count] : statsRunEnd)
 +            line += " " + cause + "=" + std::to_string(count);
 +        std::fprintf(stderr, "[gow-gs-vk] gpu=%llu cpu=%llu:%s\n", static_cast<unsigned long long>(statsGpu),
 +                     static_cast<unsigned long long>(statsCpu), line.c_str());
 +        statsStart = now;
-+        statsGpu = statsCpu = statsRuns = 0;
++        statsGpu = statsCpu = statsRuns = statsBatches = statsFinishUs = statsRecordUs = statsCpuUs = 0;
 +        statsFallback.clear();
 +        statsRunEnd.clear();
 +    }
@@ -561,19 +622,106 @@ index 0000000..aab3011
 +        poolCreate.queueFamilyIndex = s.family;
 +        VkCommandBufferAllocateInfo cmdInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
 +        cmdInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-+        cmdInfo.commandBufferCount = 1;
++        cmdInfo.commandBufferCount = kMaxCmds;
 +        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
 +        if (vkCreateCommandPool(s.device, &poolCreate, nullptr, &commandPool) != VK_SUCCESS)
 +            return false;
 +        cmdInfo.commandPool = commandPool;
-+        return vkAllocateCommandBuffers(s.device, &cmdInfo, &cmd) == VK_SUCCESS &&
-+               vkCreateFence(s.device, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
++        if (vkAllocateCommandBuffers(s.device, &cmdInfo, cmds) != VK_SUCCESS)
++            return false;
++        cmd = cmds[0];
++        for (VkFence &f : fences)
++            if (vkCreateFence(s.device, &fenceInfo, nullptr, &f) != VK_SUCCESS)
++                return false;
++        return true;
++    }
++
++    // Binds `buffer` as VRAM (binding 0). Nothing may be in flight.
++    void bindVram(VkBuffer buffer)
++    {
++        VkDescriptorBufferInfo info{buffer, 0, VK_WHOLE_SIZE};
++        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
++        write.dstSet = set;
++        write.dstBinding = 0;
++        write.descriptorCount = 1;
++        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++        write.pBufferInfo = &info;
++        vkUpdateDescriptorSets(s.device, 1, &write, 0, nullptr);
++    }
++
++    void dropImport()
++    {
++        if (importedVram)
++            vkDestroyBuffer(s.device, importedVram, nullptr);
++        if (importedMemory)
++            vkFreeMemory(s.device, importedMemory, nullptr);
++        importedVram = VK_NULL_HANDLE;
++        importedMemory = VK_NULL_HANDLE;
++        importedPtr = nullptr;
++        imported = false;
++    }
++
++    // Tries to make the host VRAM array itself the GPU buffer (page-aligned, host-coherent memory).
++    void importVram(void *ptr, size_t size)
++    {
++        if (imported && importedPtr == ptr)
++            return;
++        if (imported)
++        {
++            dropImport();
++            bindVram(vram);
++        }
++        const char *off = std::getenv("PS2X_VK_NO_IMPORT");
++        if (!s.getHostPointerProps || (off && *off && *off != '0') || size < GSSwizzle::kMemorySize ||
++            reinterpret_cast<uintptr_t>(ptr) % 4096u != 0u)
++            return;
++        VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO};
++        external.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
++        info.pNext = &external;
++        info.size = GSSwizzle::kMemorySize;
++        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
++        VkMemoryHostPointerPropertiesEXT props{VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
++        VkMemoryRequirements req{};
++        uint32_t type = UINT32_MAX;
++        const VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++        if (s.getHostPointerProps(s.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, ptr, &props) == VK_SUCCESS &&
++            vkCreateBuffer(s.device, &info, nullptr, &importedVram) == VK_SUCCESS)
++        {
++            vkGetBufferMemoryRequirements(s.device, importedVram, &req);
++            for (uint32_t i = 0; i < s.memory.memoryTypeCount && type == UINT32_MAX; ++i)
++                if ((req.memoryTypeBits & props.memoryTypeBits & (1u << i)) &&
++                    (s.memory.memoryTypes[i].propertyFlags & coherent) == coherent)
++                    type = i;
++        }
++        if (type != UINT32_MAX)
++        {
++            VkImportMemoryHostPointerInfoEXT import{VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT};
++            import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT;
++            import.pHostPointer = ptr;
++            VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++            alloc.pNext = &import;
++            alloc.allocationSize = (req.size + 4095u) & ~VkDeviceSize(4095);
++            alloc.memoryTypeIndex = type;
++            if (alloc.allocationSize <= size && vkAllocateMemory(s.device, &alloc, nullptr, &importedMemory) == VK_SUCCESS &&
++                vkBindBufferMemory(s.device, importedVram, importedMemory, 0) == VK_SUCCESS)
++            {
++                imported = true;
++                importedPtr = ptr;
++                bindVram(importedVram);
++                std::fprintf(stderr, "[gow-gs] Vulkan: host VRAM imported (zero-copy)\n");
++                return;
++            }
++        }
++        dropImport();
 +    }
 +
 +    ~Impl()
 +    {
-+        if (fence)
-+            vkDestroyFence(s.device, fence, nullptr);
++        dropImport();
++        for (VkFence f : fences)
++            if (f)
++                vkDestroyFence(s.device, f, nullptr);
 +        if (commandPool)
 +            vkDestroyCommandPool(s.device, commandPool, nullptr);
 +        if (pool)
@@ -588,6 +736,71 @@ index 0000000..aab3011
 +        for (VkDeviceMemory memory : {primsMemory, clutMemory})
 +            if (memory)
 +                vkFreeMemory(s.device, memory, nullptr);
++    }
++
++    void beginCmd()
++    {
++        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++        vkBeginCommandBuffer(cmd, &begin);
++        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.pipeline);
++        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.pipelineLayout, 0, 1, &set, 0, nullptr);
++    }
++
++    void submitCmd()
++    {
++        vkEndCommandBuffer(cmd);
++        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++        submit.commandBufferCount = 1;
++        submit.pCommandBuffers = &cmd;
++        std::lock_guard<std::mutex> queueLock(s.queueMutex);
++        vkQueueSubmit(s.queue, 1, &submit, fences[cmdIndex]);
++    }
++
++    // Starts the GPU on what is recorded so far, without waiting: it overlaps with the emulation until the
++    // next CPU access to VRAM. The barrier of the next dispatch orders it after the submitted work.
++    void submitPartial()
++    {
++        if (cmdIndex + 1 >= kMaxCmds)
++            return;
++        emitBatch();
++        submitCmd();
++        cmd = cmds[++cmdIndex];
++        beginCmd();
++        primsAtSubmit = primCount;
++    }
++
++    // Records the open batch as one dispatch over its union rectangle.
++    void emitBatch()
++    {
++        if (!batchCount)
++            return;
++        if (dispatched)
++            memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
++        const Push push{batchRect[0], batchRect[1], batchFirst, batchCount};
++        vkCmdPushConstants(cmd, s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
++        vkCmdDispatch(cmd, static_cast<uint32_t>(batchRect[2] - batchRect[0]) / 8u + 1u,
++                      static_cast<uint32_t>(batchRect[3] - batchRect[1]) / 8u + 1u, 1u);
++        dispatched = true;
++        ++statsBatches;
++        batchCount = 0;
++    }
++
++    // True if `rec` (touching `reads`/`writes` pages) can join the open batch.
++    bool canJoin(const PrimRecord &rec, const uint32_t key[3], const PageSet &reads, const PageSet &writes,
++                 const PageSet &frames, const PageSet &depths) const
++    {
++        if (!batchCount || batchCount >= kMaxBatch || std::memcmp(key, batchKey, sizeof(batchKey)) != 0)
++            return false;
++        if ((reads & batchWrites).any() || (writes & batchReads).any() || (frames & batchDepths).any() ||
++            (depths & batchFrames).any())
++            return false;
++        // Every thread of the union rectangle walks the whole batch: keep that near the useful work.
++        const int x0 = std::min(batchRect[0], rec.rect[0]), y0 = std::min(batchRect[1], rec.rect[1]);
++        const int x1 = std::max(batchRect[2], rec.rect[2]), y1 = std::max(batchRect[3], rec.rect[3]);
++        const uint64_t unionPixels = static_cast<uint64_t>(x1 - x0 + 1) * static_cast<uint64_t>(y1 - y0 + 1);
++        const uint64_t sum = batchPixels + static_cast<uint64_t>(rec.rect[2] - rec.rect[0] + 1) * (rec.rect[3] - rec.rect[1] + 1);
++        return (batchCount + 1u) * unionPixels <= 64u * sum + 1048576u;
 +    }
 +
 +    void memoryBarrier(VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
@@ -633,21 +846,19 @@ index 0000000..aab3011
 +        ++impl.statsRuns;
 +        ++impl.statsRunEnd[cause];
 +    }
++    impl.emitBatch();
 +    impl.memoryBarrier(VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
-+    vkEndCommandBuffer(impl.cmd);
-+    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-+    submit.commandBufferCount = 1;
-+    submit.pCommandBuffers = &impl.cmd;
-+    {
-+        std::lock_guard<std::mutex> queueLock(impl.s.queueMutex);
-+        vkQueueSubmit(impl.s.queue, 1, &submit, impl.fence);
-+    }
-+    vkWaitForFences(impl.s.device, 1, &impl.fence, VK_TRUE, UINT64_MAX);
-+    vkResetFences(impl.s.device, 1, &impl.fence);
-+    vkResetCommandBuffer(impl.cmd, 0);
++    impl.submitCmd();
++    const auto waitStart = std::chrono::steady_clock::now();
++    vkWaitForFences(impl.s.device, impl.cmdIndex + 1, impl.fences, VK_TRUE, UINT64_MAX);
++    vkResetFences(impl.s.device, impl.cmdIndex + 1, impl.fences);
++    for (uint32_t i = 0; i <= impl.cmdIndex; ++i)
++        vkResetCommandBuffer(impl.cmds[i], 0);
 +    impl.open = false;
-+    // ponytail: whole-VRAM copies per GPU run (~1 ms); track dirty pages when CPU/GPU interleave often.
-+    std::memcpy(m_vram, impl.mapped, std::min<size_t>(m_vramSize, GSSwizzle::kMemorySize));
++    if (!impl.imported)
++        std::memcpy(m_vram, impl.mapped, std::min<size_t>(m_vramSize, GSSwizzle::kMemorySize));
++    impl.statsFinishUs += static_cast<uint64_t>(
++        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waitStart).count());
 +}
 +
 +const char *GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
@@ -785,32 +996,72 @@ index 0000000..aab3011
 +        rec.clampHi = static_cast<uint32_t>(ctx.clamp >> 32u);
 +    }
 +
++    // Pages this primitive reads (texture) and writes (frame, and Z when written): a primitive that reads what it
++    // writes needs the CPU's row order; batch-mates must not read what an earlier one wrote, or the reverse.
++    // Frame and Z pages are tracked apart: a frame that overlaps Z memory is owned by other threads (pixel
++    // positions differ), which is only safe in the CPU's row order.
++    PageSet reads, writes, frames, depths;
++    bufferPages(frames, GSInternal::framePageBaseToBlock(ctx.frame.fbp) >> 5, ctx.frame.fbw, ctx.frame.psm, x0, y0, x1, y1);
++    if (((rec.zbuf >> 24) & 3u) >= 2u || (rec.zbuf & 0x4000000u))
++        bufferPages(depths, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) >> 5, ctx.frame.fbw, ctx.zbuf.psm, x0, y0, x1, y1);
++    if ((frames & depths).any())
++        return "z-alias";
++    writes = frames | depths;
++    if (state.prim.tme)
++    {
++        texturePages(reads, state);
++        if ((reads & writes).any())
++            return "tex-feedback";
++    }
++    const uint32_t key[3] = {rec.frame, rec.mode & 0xFFu, rec.zbuf & 0x00FFFFFFu};
++
 +    Impl &impl = *m_impl;
 +    if (impl.open && impl.primCount == kMaxPrims)
 +        Finish("record-ring");
 +    if (!impl.open)
 +    {
-+        std::memcpy(impl.mapped, m_vram, GSSwizzle::kMemorySize);
++        if (!impl.imported)
++            std::memcpy(impl.mapped, m_vram, GSSwizzle::kMemorySize);
 +        // CLUT loads end the run (LoadClut), so the CLUT is constant within one.
 +        std::memcpy(impl.clutMapped, m_cpu.m_clut.data(), 512u * sizeof(uint16_t));
 +        impl.primCount = 0;
-+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-+        vkBeginCommandBuffer(impl.cmd, &begin);
-+        vkCmdBindPipeline(impl.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, impl.s.pipeline);
-+        vkCmdBindDescriptorSets(impl.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, impl.s.pipelineLayout, 0, 1, &impl.set, 0, nullptr);
++        impl.batchCount = 0;
++        impl.dispatched = false;
++        impl.cmdIndex = 0;
++        impl.primsAtSubmit = 0;
++        impl.cmd = impl.cmds[0];
++        impl.beginCmd();
 +        impl.open = true;
 +    }
-+    else
++    if (!impl.canJoin(rec, key, reads, writes, frames, depths))
 +    {
-+        // ponytail: one dispatch per primitive with a full barrier keeps GS draw order; batch
-+        // non-overlapping primitives (or tile-bin like kRaster) when this becomes the bottleneck.
-+        impl.memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
++        if (impl.primCount - impl.primsAtSubmit >= kSubmitEvery)
++            impl.submitPartial();
++        else
++            impl.emitBatch(); // a barrier then separates it from the next one
++        impl.batchFirst = impl.primCount;
++        std::memcpy(impl.batchKey, key, sizeof(key));
++        impl.batchRect[0] = rec.rect[0];
++        impl.batchRect[1] = rec.rect[1];
++        impl.batchRect[2] = rec.rect[2];
++        impl.batchRect[3] = rec.rect[3];
++        impl.batchPixels = 0;
++        impl.batchWrites.reset();
++        impl.batchReads.reset();
++        impl.batchFrames.reset();
++        impl.batchDepths.reset();
 +    }
-+    const uint32_t index = impl.primCount++;
-+    impl.primsMapped[index] = rec;
-+    vkCmdPushConstants(impl.cmd, impl.s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(index), &index);
-+    vkCmdDispatch(impl.cmd, static_cast<uint32_t>(x1 - x0) / 8u + 1u, static_cast<uint32_t>(y1 - y0) / 8u + 1u, 1u);
++    impl.batchRect[0] = std::min(impl.batchRect[0], rec.rect[0]);
++    impl.batchRect[1] = std::min(impl.batchRect[1], rec.rect[1]);
++    impl.batchRect[2] = std::max(impl.batchRect[2], rec.rect[2]);
++    impl.batchRect[3] = std::max(impl.batchRect[3], rec.rect[3]);
++    impl.batchPixels += static_cast<uint64_t>(rec.rect[2] - rec.rect[0] + 1) * (rec.rect[3] - rec.rect[1] + 1);
++    impl.batchWrites |= writes;
++    impl.batchReads |= reads;
++    impl.batchFrames |= frames;
++    impl.batchDepths |= depths;
++    impl.primsMapped[impl.primCount++] = rec;
++    ++impl.batchCount;
 +    ++m_gpuPrimitives;
 +    return nullptr;
 +}
@@ -821,6 +1072,8 @@ index 0000000..aab3011
 +    Finish();
 +    m_vram = vram;
 +    m_vramSize = vramSize;
++    if (m_impl)
++        m_impl->importVram(vram, vramSize);
 +    m_cpu.Initialize(vram, vramSize);
 +}
 +
@@ -834,9 +1087,12 @@ index 0000000..aab3011
 +void GSVulkanBackend::Submit(const GSPrimitiveBatch &batch)
 +{
 +    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    const auto t0 = std::chrono::steady_clock::now();
 +    const char *reason = RecordGpu(batch);
 +    if (m_impl && m_impl->statsEnabled)
 +    {
++        m_impl->statsRecordUs += static_cast<uint64_t>(
++            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
 +        if (reason)
 +        {
 +            ++m_impl->statsCpu;
@@ -849,7 +1105,11 @@ index 0000000..aab3011
 +    if (!reason)
 +        return;
 +    Finish(reason);
++    const auto t1 = std::chrono::steady_clock::now();
 +    m_cpu.Submit(batch);
++    if (m_impl && m_impl->statsEnabled)
++        m_impl->statsCpuUs += static_cast<uint64_t>(
++            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t1).count());
 +}
 +
 +// Everything below is CPU work on host VRAM, after the GPU run (if any) has landed there.
@@ -894,10 +1154,10 @@ index 0000000..aab3011
 +#undef GOW_VK_CPU
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 new file mode 100644
-index 0000000..21137ad
+index 0000000..82d4bd6
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -0,0 +1,450 @@
+@@ -0,0 +1,462 @@
 +// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
 +// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
 +// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
@@ -922,7 +1182,7 @@ index 0000000..21137ad
 +#define TABLE_P4 917504u
 +)GLSL";
 +
-+    // One primitive per dispatch over its scissored bounding box. Coverage, Gouraud weights and texture
++    // One batch of primitives per dispatch over their union bounding box. Coverage, Gouraud weights and texture
 +    // sampling follow GSCpuBackend::DrawSprite/DrawTriangle/SampleTexture exactly (gs_triangle_rules.h);
 +    // the pixel write follows GSCpuBackend::WritePixel for the subset GSVulkanBackend accepts (no fog,
 +    // blend, tests or Z). Float math is `precise` (no FMA contraction, like -march=x86-64-v2 on the CPU)
@@ -957,8 +1217,12 @@ index 0000000..21137ad
 +    int zd[2];       // triangles: integer Z(v1) - Z(v0), Z(v2) - Z(v0), |d| < 2^28
 +};
 +layout(std430, binding = 3) readonly buffer PrimBuffer { Prim prims[]; };
-+layout(push_constant) uniform Push { uint index; } pc;
-+#define P prims[pc.index]
++// A dispatch covers the union rectangle (origin) of a batch of primitives [first, first + count) that may
++// run in any workgroup order against each other; each pixel is owned by one thread, which applies the
++// batch's primitives in order.
++layout(push_constant) uniform Push { int originX; int originY; uint first; uint count; } pc;
++uint curPrim;
++#define P prims[curPrim]
 +
 +const uint M_TRIANGLE = 0x100u;
 +const uint M_IIP = 0x200u;
@@ -1211,11 +1475,8 @@ index 0000000..21137ad
 +    return abs(q) > 1.0e-8 ? q : 1.0;
 +}
 +
-+void main()
++void shade(ivec2 xy)
 +{
-+    ivec2 xy = ivec2(P.rect[0], P.rect[1]) + ivec2(gl_GlobalInvocationID.xy);
-+    if (xy.x > P.rect[2] || xy.y > P.rect[3])
-+        return;
 +    uint mode = P.mode;
 +    uint pixel = P.color[0];
 +    uint z = P.z;
@@ -1336,6 +1597,17 @@ index 0000000..21137ad
 +    if (writeDepth && (P.zbuf & 0x4000000u) != 0u)
 +        writePixelRaw(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
 +}
++
++void main()
++{
++    ivec2 xy = ivec2(pc.originX, pc.originY) + ivec2(gl_GlobalInvocationID.xy);
++    for (uint i = pc.first; i < pc.first + pc.count; ++i)
++    {
++        curPrim = i;
++        if (xy.x >= P.rect[0] && xy.x <= P.rect[2] && xy.y >= P.rect[1] && xy.y <= P.rect[3])
++            shade(xy);
++    }
++}
 +)GLSL";
 +}
 +
@@ -1407,6 +1679,36 @@ index 6181965..9835c8c 100644
  void GSThreadedBackend::Enqueue(Op op, const void *payload, uint32_t size)
  {
      std::lock_guard<std::mutex> lock(m_producerMutex);
+diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -510,7 +510,7 @@ PS2Memory::~PS2Memory()
+ 
+     if (m_gsVRAM)
+     {
+-        delete[] m_gsVRAM;
++        ::operator delete[](m_gsVRAM, std::align_val_t(4096)); // GOW-Port: page-aligned for Vulkan host import
+         m_gsVRAM = nullptr;
+     }
+ 
+@@ -549,7 +549,7 @@ bool PS2Memory::initialize(size_t ramSize)
+         delete[] m_rdram;
+         delete[] m_scratchpad;
+         delete[] iop_ram;
+-        delete[] m_gsVRAM;
++        ::operator delete[](m_gsVRAM, std::align_val_t(4096)); // GOW-Port
+         delete[] m_vu0Code;
+         delete[] m_vu0Data;
+         delete[] m_vu1Code;
+@@ -619,7 +619,7 @@ bool PS2Memory::initialize(size_t ramSize)
+         gs_regs.display2 = gs_regs.display1;
+ 
+         // Allocate GS VRAM (4MB)
+-        m_gsVRAM = new uint8_t[PS2_GS_VRAM_SIZE];
++        m_gsVRAM = new (std::align_val_t(4096)) uint8_t[PS2_GS_VRAM_SIZE]; // GOW-Port: page-aligned for Vulkan host import
+         std::memset(m_gsVRAM, 0, PS2_GS_VRAM_SIZE);
+ 
+         m_vu0Code = new uint8_t[PS2_VU0_CODE_SIZE];
 diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
 index a6698c4..2a87b85 100644
 --- a/ps2xRuntime/src/main.cpp
@@ -1464,10 +1766,10 @@ index 26c2de7..85c1fb1 100644
      runGpuUploadRingTests();
 diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
 new file mode 100644
-index 0000000..61bf39b
+index 0000000..ed6f5b2
 --- /dev/null
 +++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
-@@ -0,0 +1,336 @@
+@@ -0,0 +1,356 @@
 +// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
 +#include "MiniTest.h"
 +#include "runtime/gs/gs_cpu_backend.h"
@@ -1477,6 +1779,8 @@ index 0000000..61bf39b
 +
 +#include <algorithm>
 +#include <cstdio>
++#include <cstdlib>
++#include <cstring>
 +#include <vector>
 +
 +#if defined(PS2X_GS_VULKAN)
@@ -1491,7 +1795,7 @@ index 0000000..61bf39b
 +        auto &c = b.state.context;
 +        c.frame = {100, 10, psm, 0};
 +        c.scissor = {0, 639, 0, 447};
-+        c.zbuf = {200, GS_PSM_Z32, true};
++        c.zbuf = {480, GS_PSM_Z32, true};
 +        return b;
 +    }
 +
@@ -1543,7 +1847,7 @@ index 0000000..61bf39b
 +        out.push_back(zv);
 +        auto zb = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // alpha fail ZB_ONLY: Z16 written, frame kept
 +        zb.state.context.test = 0x1u | (0u << 1) | (2u << 12) | 0x10000u | (3u << 17); // NEVER; Z GREATER
-+        zb.state.context.zbuf = {200, GS_PSM_Z16, false};
++        zb.state.context.zbuf = {480, GS_PSM_Z16, false};
 +        vertex(zb, 0, 30.0f, 300.0f, 0); vertex(zb, 1, 330.0f, 440.0f, 0x7F7F7F7Fu);
 +        zb.vertices[1].z = 0x8000;
 +        out.push_back(zb);
@@ -1733,6 +2037,22 @@ index 0000000..61bf39b
 +        return vram;
 +    }
 +
++    // Page-aligned VRAM: the Vulkan backend imports it as the GPU buffer (zero-copy) instead of copying.
++    std::vector<uint8_t> renderAligned(GSRasterBackend &backend)
++    {
++        const auto init = noise();
++        void *mem = std::aligned_alloc(4096, init.size());
++        std::memcpy(mem, init.data(), init.size());
++        backend.Initialize(static_cast<uint8_t *>(mem), uint32_t(init.size()));
++        for (const auto &b : scene())
++            backend.Submit(b);
++        backend.Flush();
++        std::vector<uint8_t> out(static_cast<uint8_t *>(mem), static_cast<uint8_t *>(mem) + init.size());
++        backend.Initialize(nullptr, 0); // release the import before freeing
++        std::free(mem);
++        return out;
++    }
++
 +    std::vector<uint8_t> renderTextured(GSRasterBackend &backend)
 +    {
 +        auto vram = noise();
@@ -1769,6 +2089,8 @@ index 0000000..61bf39b
 +                diff += reference[i] != gpu[i];
 +            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
 +            t.Equals(vulkan.GpuPrimitives(), uint64_t(12), "Primitives drawn on the GPU");
++            GSVulkanBackend imported;
++            t.IsTrue(renderAligned(imported) == reference, "Host-imported VRAM equals the CPU reference");
 +            t.IsTrue(reference != noise(), "The scene changed VRAM");
 +#else
 +            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
