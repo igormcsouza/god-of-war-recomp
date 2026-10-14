@@ -125,6 +125,19 @@ def find_elf(explicit: Path | None) -> Path:
     raise RuntimeError("SCUS_973.99 was not found. Use --elf PATH or set GOW_ELF (game files are not included).")
 
 
+def vu1_cmake_args() -> list[str]:
+    """Optional compiled VU1: GOW_VU1_MICROCODIGO is a local folder of microprogram dumps (*.bin) captured at
+    run time with GOW_VU1_CAPTURA=<folder>. The C++ is generated at build time and never committed. Without
+    it the runner only has the VU1 interpreter. Same contract as scripts/compilar.ps1."""
+    folder = os.environ.get("GOW_VU1_MICROCODIGO")
+    if not folder:
+        return []
+    path = Path(folder).expanduser().resolve()
+    if not any(path.glob("*.bin")):
+        raise RuntimeError(f"GOW_VU1_MICROCODIGO has no *.bin files: {path}")
+    return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generar_vu1.cpp'}"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--elf", type=Path, help="Path to the SCUS_973.99 ELF")
@@ -147,7 +160,7 @@ def main() -> int:
              "-DCMAKE_FIND_LIBRARY_SUFFIXES=.so", "-DPKG_CONFIG_USE_STATIC_LIBS=OFF", "-UFFMPEG_*",
              f"-DPS2X_ENABLE_RUNTIME_LOGS={logs}", f"-DPS2X_ENABLE_AGRESSIVE_LOGS={logs}",
              f"-DPS2X_ENABLE_IOP_RPC_TRACE={logs}", "-DPS2X_ENABLE_RUNNER_UNITY_BUILD=ON", "-DPS2X_ENABLE_RUNNER_PCH=ON",
-             "-DCMAKE_C_FLAGS=-march=x86-64-v2", "-DCMAKE_CXX_FLAGS=-march=x86-64-v2"])
+             "-DCMAKE_C_FLAGS=-march=x86-64-v2", "-DCMAKE_CXX_FLAGS=-march=x86-64-v2"] + vu1_cmake_args())
         if opts.runtime_only:
             run(["cmake", "--build", str(build), "--target", "ps2x_tests", "--parallel", str(opts.jobs)])
             print(f"Test suite built: {build / 'ps2xTest/ps2x_tests'}")
