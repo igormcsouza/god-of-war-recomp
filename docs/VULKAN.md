@@ -92,8 +92,30 @@ directly, without `Flush`, which is why the library default stays CPU.
   FBMSK/FBA, and CPU fallback for everything else.
 - **B (done):** textured sprites and triangles, CLUT on the GPU, plus alpha test, blending and Z (pulled
   forward from C because the stats showed almost every draw needs them).
-- **C:** destination alpha test, fog, lines and points; transfers (`BeginTransfer`/`UploadImage`) and
+- **C (partly done, see below):** destination alpha test, fog, lines and points; transfers (`BeginTransfer`/`UploadImage`) and
   CLUT loads on the GPU so runs are not split. Adopt the batching and tile binning
   of the OpenGL backend (`kRaster`) instead of one dispatch per primitive. Track dirty pages instead of
   whole-VRAM copies, and add a GPU compositor/swizzle readback for `Present`. Validate each step
   against the CPU, both with the test scene and with in-game screenshots.
+
+## Phase C: batching, zero-copy VRAM, exact feedback (2026-10-14)
+
+- **Zero-copy VRAM.** With `VK_EXT_external_memory_host` and a page-aligned host VRAM array, the backend imports the
+  array as the GPU buffer: a GPU run no longer copies 4 MiB each way, and the CPU and the GPU see the same
+  memory (host-coherent type required, else the copy path). The runtime allocates its VRAM 4096-aligned
+  (`ps2_memory.cpp`, in this patch). `PS2X_VK_NO_IMPORT=1` forces the copy path; the test covers both.
+- **Batches.** Consecutive primitives with the same frame/Z targets form one dispatch over their union rectangle. Each
+  thread owns one pixel and applies the batch's primitives in order, so overlapping draws keep GS order without
+  barriers. A batch ends (barrier before the next) when a primitive's texture pages overlap pages a batch-mate writes,
+  the reverse, or its frame pages overlap a batch-mate's Z pages (or the reverse). Limit: 1024 primitives and
+  `count * unionPixels <= 64 * sumPixels + 1M`, so threads don't walk long lists for tiny rectangles.
+- **Exact feedback.** `tex-feedback` is now a page-level overlap between the texture rectangle and the primitive's own
+  written pages (bounding box, not the whole scissor). `z-alias` (new) is a primitive whose frame pages overlap its own
+  Z pages, which needs the CPU's row order.
+- **Async submission.** A run is submitted every 512 primitives without waiting (up to 32 command buffers); the
+  CPU waits only when it needs VRAM (`Finish`). The next dispatch's barrier orders it after the submitted work.
+- Stats line now adds `batches`, `finish_ms` (time waiting for the GPU), `record_ms` and `cpudraw_ms`.
+
+Still open: CLUT versions per primitive and non-conflicting transfers (so `LoadClut`/`BeginTransfer`, ~100-160 run
+ends per second, don't wait for the GPU), page-level CPU/GPU overlap checks, fog, lines/points, destination alpha
+test, a GPU compositor for `Present`.
