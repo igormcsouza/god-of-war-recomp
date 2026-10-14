@@ -6443,3 +6443,102 @@ a la referencia SW privada de aspectos/ventanas. DLL antigua: error explícito
 de función ausente antes de crear GS. Resultados/binarios privados, sin assets
 publicados. Faltan CI del HEAD final y revisión final de esta extensión antes
 de fusionar; no se presenta como corrección ya validada de encuadre del juego.
+
+## Linux: state and 1 FPS finding (2026-10-14)
+
+Status as of today:
+
+- Works: the launcher (`tools/linux/gow_launcher.py`) reads the personal ISO, extracts the
+  game files into the private cache and validates the ELF hash. Synthetic tests cover the ISO
+  reader and launch preparation (`tests/test_gow_launcher.py`, run in CI on Ubuntu).
+- Partial: `scripts/compilar_linux.py` prepares PS2Recomp at the pinned commit and applies the
+  patches in order. CI builds only the runtime test targets (`--runtime-only`) without the ELF.
+  The full runner build has not been verified end to end on Linux.
+- Pending: Vulkan backend (CI installs `libvulkan-dev` and `mesa-vulkan-drivers`, but no port
+  backend uses them yet) and controllers on Linux (SIO2 pad path not verified).
+- CI for this section: `python3 -m unittest discover -s tests -p test_gow_launcher.py`,
+  `python3 -m py_compile scripts/compilar_linux.py tools/linux/*.py`, in the `overrides` job.
+
+Finding: the game runs at about 1 FPS on Linux. Three suspected causes, reported from the
+setup and not yet measured separately (the GS default is set in the runner, not in this repo):
+
+1. The GS defaults to the CPU software renderer.
+2. The runner is built with `-O1` (`scripts/compilar_linux.py` sets it for `ps2EntryRunner`
+   only, to keep the link time practical), so the generated code is slower than Release.
+3. The runtime debug panel is always on, so its per-frame cost is paid by default.
+
+Next steps: measure each factor alone (GS backend, `-O2` for the runner, panel hidden) on
+the same ISO and record the FPS before and after in this section. Remove the debug panel
+from the default path once it is confirmed as a cost.
+
+### Linux FPS baseline attempt (M1, 2026-10-14)
+
+| Config | FPS | Notes |
+|---|---|---|
+| (a) default | not measured | no `ps2EntryRunner` binary exists on this machine |
+| (b) `PS2X_GS_GPU=1` | not measured | same |
+| (c) `PS2X_GS_GPU=1 PS2X_GS_THREAD=1` | not measured | same |
+| (d) `+PS2X_GS_GPU_STATS=1 PS2X_GS_GPU_PROF=1` | not measured | same |
+
+- Launcher check: `tools/linux/gow_launcher.py --iso "<God of War (USA).iso>" --prepare-only` succeeded in 0.2 s;
+  the ELF and IRX files were extracted to the XDG cache (`~/.cache/gow-one-recomp/SCUS-97399/<id>/`). No launcher bug found.
+- Blocker: `find / -name 'ps2EntryRunner*'` finds nothing; `PS2Recomp/build` holds only the configured runtime targets and
+  `build-linux/generado` has the generated sources but no linked runner. cmake/X11 dev packages are missing, so the
+  runner cannot be built here. Also, per `docs/RENDERIZADO.md`, on Linux the OpenGL context is a stub that falls back
+  to the CPU renderer, so (b)/(c) would measure the CPU fallback anyway.
+- Next: install the dev packages, build with `scripts/compilar_linux.py`, then rerun configs (a)-(d) and `perf record -g`.
+
+### Linux FPS baseline, first runner build (2026-10-14)
+
+Built with `scripts/compilar_linux.py --elf <extracted SCUS_973.99>` (3m23s, 32 jobs; `src/gow_overrides.cpp`
+compiles; only a `fs::u8path` deprecation warning). `ps2x_tests` from `PS2Recomp/` as cwd: 625 pass, 0 fail,
+including the three `PadSelect` tests. (Run from another cwd, "VU0 macro mappings cover all S1/S2 enums" fails
+only because it cannot find `instructions.h`; CI runs it from the checkout root.)
+Run via `tools/linux/gow_launcher.py --runner PS2Recomp/build/ps2xRuntime/ps2EntryRunner`, 35 s, Intel RPL-P iGPU,
+Mesa 25.2, X11. FPS = `vid::Flip` calls per second from `GOW_PERF_FRAME_PC=0x001837B8 GOW_DELTA_DIAG=1`
+(steady state after the first ~3 s of boot; the intro starts at about 60 FPS for 1 s, then drops).
+
+| Config | FPS (vid::Flip/s) | Notes |
+|---|---|---|
+| (a) default | ~2.4 (3 frames / 1.2-1.3 s) | CPU GS |
+| (b) `PS2X_GS_GPU=1` | ~2.7 (3 frames / 1.1 s) | log: "GPU GS backend is only implemented for Windows"; same CPU path, difference is noise |
+
+Hotspots: `perf record` is unavailable (`perf_event_paranoid=4`, changing it needs sudo; gdb cannot attach either,
+`ptrace_scope=1`). Substitute: gdb sampling of all threads, 30 samples launched under gdb. Of the samples
+on running (non-waiting) threads, about 15 of 27 are in the CPU GS rasteriser (`GSCpuBackend::WritePixel`,
+`SampleTexture`, `DrawTriangle`, `GSMem::ReadTexture`), about 6 in `VU1Interpreter` (FMAC helpers) and 1 in ImGui;
+the other threads sit in futex/ppoll/nanosleep. Next: a Linux GPU GS backend (OpenGL/Vulkan) is the largest lever; `-O2`
+and the debug panel were not measured separately.
+
+### Linux CPU-side speedups (M2, 2026-10-14)
+
+New patch `patches/ps2recomp-linux-perf.patch` (registered last in `scripts/compilar.ps1`, because it is generated
+against the full series; it touches `gs_cpu_backend.cpp`, `main.cpp`, `ps2_runtime.cpp`). Changes:
+
+- ImGui debug panel is opt-in on Linux: `GOW_DEBUG_UI=1` (Windows unchanged).
+- Row-parallel CPU rasterizer: `PS2X_GS_RASTER_THREADS=N` (default on Linux: `hw_threads/4`, max 4; `1` = serial;
+  other platforms default to serial). Rows are split by `(y >> 3) % N` so no two workers share a VRAM word; workers
+  use private texture page caches and inherit the caller's MXCSR. Primitives under 8192 px, or whose texture pages
+  overlap the frame/Z pages (feedback), stay serial. Test: `ps2_gs_cpu_parallel_tests.cpp` (VRAM identical to the
+  serial path). `ps2x_tests`: 627 pass, 0 fail.
+- Window title shows live FPS (`... | 59.9 FPS`, guest `vid::Flip` per second, updated once per second).
+- `GOW_SCREENSHOT_AT=<s>[,<s>...]` saves `gow_screenshot_<s>.png` to `GOW_SCREENSHOT_DIR` (default `logs/`, relative to
+  the runner's working directory) from the main loop. Verified: the intro menu is rendered correctly.
+
+Measured (intro, steady state after 3 s, 30 s runs, Intel RPL-P, 16 threads; FPS = `vid::Flip`/s):
+
+| Config | FPS |
+|---|---|
+| before (panel on, serial CPU GS) | 2.3 |
+| `-` panel off, `PS2X_GS_RASTER_THREADS=1` | 3.0 |
+| panel off, 4 raster threads | 3.6 |
+| panel off, 8 raster threads | 3.7 |
+| panel off, 4 raster threads + `PS2X_GS_THREAD=1` | 4.3 |
+
+Findings: the runtime was already built `-O3 -DNDEBUG` Release with no sanitizers (only `ps2EntryRunner`, i.e. the
+generated EE code, is `-O1`); it did not show up in the gdb samples (about 55 of 71 busy samples are in the CPU GS,
+mostly `DrawTriangle`/`DrawSprite` -> `SampleTexture`/`WritePixel`, the rest VU1 interpreter), so `-O2` for the runner was not
+tried. The gain is small (about 1.9x total, still ~4 FPS): the per-pixel exact rasterizer and the VU1 interpreter
+dominate, and the intro draws many full-screen layers. `PS2X_GS_THREAD=1` is worth enabling together with the raster
+threads. A real fix still needs a GPU backend. Profiling tip: `perf`/attach are blocked here; launching under gdb with
+`handle SIGUSR2 stop print nopass` (not `noprint`, which implies nostop) and a `pkill -USR2` loop gives usable samples.

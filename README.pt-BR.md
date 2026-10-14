@@ -57,6 +57,8 @@ Este repositório contém tudo o que é específico de God of War:
 
 Detalhamento por biblioteca e por componente: [`docs/estado/detalle.pt-BR.md`](docs/estado/detalle.pt-BR.md). Regenerado a partir de `docs/estado/datos.toml` por `tools/estado/generar.py` (e automaticamente ao enviar para `main`).
 
+Linux (parcial): o lançador e a extração da ISO funcionam; o build é parcial, o backend Vulkan e os controles estão pendentes. Veja [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) e [`docs/ESTADO.md`](docs/ESTADO.md).
+
 Build nativo para Windows (renderizador OpenGL) em um Ryzen 7 5800XT com uma RX 5700 XT:
 
 <p align="center">
