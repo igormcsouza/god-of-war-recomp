@@ -6617,3 +6617,65 @@ EE time overlap only partly. Default: Vulkan stays the Linux default (`>=` CPU);
 Next: per-primitive CLUT snapshots and page-set checks so `LoadClut`/uploads/CPU draws that don't touch pending GPU pages don't
 wait, then fog, lines/points, destination alpha test and a GPU compositor for `Present`.
 
+
+### Whole-frame profile (Linux, Vulkan GS, 2026-10-14)
+
+Question: the Vulkan backend draws ~61k primitives/s on the GPU with ~0.3k CPU fallbacks, yet the intro/menu stays at
+~4 FPS. What limits it? Method (no `perf`): per-thread CPU time from `/proc/PID/task/*/stat` over 20 s, and 91 gdb
+samples (runner launched under gdb, `handle SIGUSR2 stop print nopass`, `pkill -USR2` every 0.7 s, `thread apply all bt 10`)
+on the title/intro, Intel RPL-P, `PS2X_GS_VULKAN_STATS=1 GOW_DELTA_DIAG=1`. gdb stops perturb timing a little; the
+percentages agree with the in-runtime counters (`finish_ms`, `cpudraw_ms`).
+
+**Threads (default Vulkan run).** One thread is the bottleneck: `GameThread` (the EE thread) is at 65% of a core. The
+other threads are idle: render/main thread 6% (it sleeps in `EndDrawing`, i.e. `SetTargetFPS(60)`, in 79 of 91 samples),
+the three remaining `GameThread`s (IOP/CD/disk workers: `gdrv0`, `disk$0`, `traceq0`, `sh0`) wait on condition variables
+with 0% CPU, audio (miniaudio/pulse) is in `ppoll`. The other ~35% of the EE thread's second is not CPU: it is blocked in
+`drmSyncobjWait` (GPU fence), matching `finish_ms` = 320-330 ms/s. There are no sleeps on the EE thread.
+
+**Ranking of the EE thread's wall time** (90 samples; `finish_ms`/`cpudraw_ms` from the stats line):
+
+| # | Cost | Share | Evidence |
+|---|---|---|---|
+| 1 | VU1 interpreter, run synchronously inside `PS2Memory::processVIF1Data` (`stepInterpreted`, `execUpper`, `normalizeFmacResult`, `applyFmacDest*`, `advanceOneCycle`, `xgkickCopy`) | ~41% (37/90) | ~100 ms per guest frame |
+| 2 | CPU waiting for the GPU (`vkWaitForFences` -> `drmSyncobjWait`; runs ended by `LoadClut` ~90/s, `BeginTransfer` ~28/s, `tex-feedback` ~30-40/s) | ~33% (30/90) | `finish_ms` 320-330 per second |
+| 3 | Remaining CPU raster fallbacks (`GSCpuBackend::DrawSprite` -> `SampleTexture`/`WritePixel`): only ~300 prims/s (`tex-feedback` ~250, `z-alias` ~50), but they are large sprites | ~21% (19/90) | `cpudraw_ms` 150-165 per second |
+| 4 | Vulkan `Submit` mutex / record, GIF packet parsing | ~4% | `record_ms` 1 |
+| 5 | Recompiled EE code (all `ps2_*`/generated functions) | ~0% (0/90) | no sample on an EE function |
+| 6 | VU0, DMA/VIF other than VU1, IOP/CD emulation | ~0% | no samples; IOP/CD threads idle |
+| 7 | Present: CPU compositor `PresentFromLocalMemory` + raylib upload + `EndDrawing` | ~6% of one core, on the render thread | not on the EE critical path; the EE thread only waits on the backend mutex occasionally (8 of 91 samples are the render thread on `latchHostPresentationFrame` lock) |
+
+**Is the EE throttled?** No. The guest vblank is driven by EE cycles (`EeScheduler` virtual time with host pacing that
+only sleeps when the EE is ahead), and the EE thread is ~98% busy or in a GPU wait. `SetTargetFPS(60)` only paces the
+render thread. **Game time is not real-time-locked:** `GOW_DELTA_DIAG` shows the guest delta is a constant 0.0167 s per
+frame, so the game runs in slow motion: speed (game seconds / wall seconds) is ~0.07 at ~4 FPS, i.e. about 15x slower than
+real time; animations are not skipping, frames are just slow to produce. The intro draws ~15k primitives per guest frame
+(62k/s / 4 FPS) and the VU1 programs that generate them dominate.
+
+**Comparison** (30-45 s steady state, frames = `vid::Flip`/s, 20 s thread CPU sample):
+
+| Config | FPS | Speed | EE thread CPU | Notes |
+|---|---|---|---|---|
+| Vulkan (default) | 4.05 | 0.070 | 65-66% | rest is GPU wait |
+| `PS2X_GS_BACKEND=cpu` | 3.65 | 0.061 | 96% + 3 raster workers at 11% | EE thread saturated by GS work |
+| Vulkan + `GOW_DEBUG_UI=1` | 3.99 | 0.068 | 65% | the panel is not a measurable cost here |
+| Vulkan + `PS2X_GS_THREAD=1` | 5.13 | 0.088 | 58% + GS thread 27% | GPU waits move to the GS thread and overlap VU1 |
+
+**Three most promising optimizations**
+
+1. **Take VU1 and GS submission off the critical path / speed up the interpreter** (largest item, ~41%). First, make
+   `PS2X_GS_THREAD=1` the Linux default (measured +27%, trivial, low risk; check the `Finish`-after-write cases). Then cut
+   per-instruction cost in `VU1Interpreter` (`normalizeFmacResult` and `applyFmacDest*` per lane, per-cycle
+   `advanceOneCycle`/pipeline bookkeeping; pre-decoded and specialised op handlers) or run VU1 on its own thread with the
+   VIF1 packet. Expected: 1.2-1.5x. Difficulty: low for the default, medium-high for the interpreter (must stay bit-exact).
+2. **Stop the CPU from waiting on the GPU** (~33%). Version the CLUT per primitive (snapshot ring) so `LoadClut` never ends a
+   run, and let `BeginTransfer`/uploads proceed when their pages do not overlap pending GPU pages (page-set check, already
+   needed for batching). Combined with the GS thread this turns 330 ms/s of blocking into overlap. Expected: up to ~1.3x
+   (to ~5.5-6 FPS alone). Difficulty: medium.
+3. **Draw the last fallbacks on the GPU** (`tex-feedback`, `z-alias`; ~21%): copy the source texture rectangle to a temporary
+   buffer before the draw (feedback), and give `z-alias` the CPU's row order inside the dispatch. Expected: up to ~1.25x.
+   Difficulty: medium. Together with 1 and 2 the ceiling is about 8-10 FPS; real-time speed needs ~15x, so the VU1 work
+   (a faster interpreter or a VU1 recompiler/JIT) is the long-term lever.
+
+Not measured: GPU-side time (no timestamp queries; `finish_ms` includes queue latency), per-VU1-program cost, and the
+inner EE rate. Reproduce: `PS2X_GS_VULKAN_STATS=1 GOW_PERF_FRAME_PC=0x001837B8 GOW_DELTA_DIAG=1` with the launcher and
+`--no-gui`; per-thread CPU from `/proc/PID/task/*/stat` (fields 14+15).
