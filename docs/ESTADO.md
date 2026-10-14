@@ -6679,3 +6679,35 @@ real time; animations are not skipping, frames are just slow to produce. The int
 Not measured: GPU-side time (no timestamp queries; `finish_ms` includes queue latency), per-VU1-program cost, and the
 inner EE rate. Reproduce: `PS2X_GS_VULKAN_STATS=1 GOW_PERF_FRAME_PC=0x001837B8 GOW_DELTA_DIAG=1` with the launcher and
 `--no-gui`; per-thread CPU from `/proc/PID/task/*/stat` (fields 14+15).
+
+### Linux: compiled VU1 and default GS thread (2026-10-14)
+
+**Why the VU1 interpreter ran.** The compiled VU1 path exists (`ps2recomp-vu1-compiled.patch` +
+`ps2recomp-vu1-runner.patch` + `tools/vu1/generar_vu1.cpp`) but is opt-in: CMake only generates and links
+`vu1_generado/programa*.cpp` when `PS2X_VU1_MICROCODE_DIR` points to a local folder of `*.bin` microprogram dumps.
+`scripts/compilar.ps1` forwards `GOW_VU1_MICROCODIGO` to it; `scripts/compilar_linux.py` did not, so the Linux runner had
+only the interpreter. The dumps are game data: capture them locally with `GOW_VU1_CAPTURA=<folder>` while playing (the
+runtime writes one `vu1_<hash>.bin` per distinct microprogram) and never commit them or the generated C++.
+
+**Change.** `compilar_linux.py` now reads `GOW_VU1_MICROCODIGO=<folder>` and passes the two CMake variables (error if the
+folder has no `*.bin`). Workflow: run once with `GOW_VU1_CAPTURA=~/vu1_micro`, then
+`GOW_VU1_MICROCODIGO=~/vu1_micro python3 scripts/compilar_linux.py`. `GOW_VU1_SIN_COMPILAR=1` forces the interpreter at
+run time. New `patches/ps2recomp-linux-vu1.patch` (last in `compilar.ps1`) makes `PS2X_GS_THREAD` default to 1 on Linux
+(`PS2X_GS_THREAD=0` opts out); it is a one-line change in `main()` with no unit test possible (the env default is read in
+`MakeDefault`, already covered).
+
+**Verification** (144 dumps captured in a 100 s run to the title screen; intro+title, Vulkan, GS thread on):
+gdb breakpoint counts over 60 s: compiled build `compiledProgramFor` 123,601 runs and 0 `stepInterpreted` calls (every
+program was compiled, no fallback); with `GOW_VU1_SIN_COMPILAR=1` 1,259,370 `stepInterpreted` calls. Title screenshots
+at 100 s look identical to the interpreter's (flames, logo, "New Game"). Suite: 629/629.
+
+| Config (`GOW_DELTA_DIAG`, ~108 s average) | FPS |
+|---|---|
+| Before: interpreter, GS thread off (earlier profile) | 4.05 |
+| Interpreter + GS thread on | 5.78 |
+| Compiled VU1 + GS thread on | 6.08 |
+
+Compiled VU1 is only ~5% faster than the interpreter here, so the 41% sample share of the interpreter was not removed:
+the compiled code still runs on the EE thread inside VIF1 processing. Next: `PS2X_VU1_HILO=1` (VU1 on its own thread,
+`ps2recomp-vu1-thread.patch`) and capturing more dumps from the intro/gameplay (an uncaptured program would fall back to the
+interpreter per pair).

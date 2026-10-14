@@ -1,0 +1,14 @@
+diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
+index 2a87b85..faa982a 100644
+--- a/ps2xRuntime/src/main.cpp
++++ b/ps2xRuntime/src/main.cpp
+@@ -197,6 +197,9 @@ int main(int argc, char *argv[])
+ #if defined(__linux__)
+         // GOW-Port: the Linux runner prefers the Vulkan GS (PS2X_GS_BACKEND=cpu opts out; CPU if no device).
+         GSThreadedBackend::SetVulkanByDefault(true);
++        // GOW-Port: the GS runs on its own thread by default on Linux (PS2X_GS_THREAD=0 opts out). It moves GPU fence
++        // waits off the EE thread and overlaps them with VU1 (measured 4.05 -> 5.13 FPS in the intro).
++        GSThreadedBackend::SetEnabledByDefault(true);
+ #endif
+         PS2Runtime runtime;
+ #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)

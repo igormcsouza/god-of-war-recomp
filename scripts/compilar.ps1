@@ -125,6 +125,7 @@ $gsTexaDepthPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-texa-depth.patch'
 $gsPcrtcBlendPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-pcrtc-blend.patch'
 $linuxPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-perf.patch'
 $gsVulkanPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan.patch'
+$linuxVu1Patch = Join-Path $RepoRoot 'patches\ps2recomp-linux-vu1.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -274,6 +275,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTexaDepthPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPcrtcBlendPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxPerfPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxVu1Patch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
