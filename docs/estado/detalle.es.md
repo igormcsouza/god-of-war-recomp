@@ -49,6 +49,6 @@ Generado por `tools/estado/generar.py` a partir de `docs/estado/datos.toml` y `c
 | IOP | CDVD: lectura de la ISO original | 2 | ✅ Funciona |  |
 | IOP | Mando DualShock 2 | 2 | 🔧 Parcial | libpad2 por HLE (primer puerto); en el SIO2 emulado los mandos se ven desconectados |
 | IOP | SIO2: memory card | 2 | 🔧 Parcial | SIO2 y tarjeta de 8 MB con ECC: cargar, guardar y recargar verificados en el juego sobre una copia PCSX2; faltan formateo y reapertura en PCSX2 |
-| Linux | Port nativo para Linux | 2 | 🔧 Parcial | Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); falta el backend Vulkan; mandos pendientes |
+| Linux | Port nativo para Linux | 2 | 🔧 Parcial | Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); backend Vulkan en fase A (primitivas sin textura en GPU); mandos pendientes |
 
 * Funciones de las librerías estáticas de Sony enlazadas en SCUS_973.99 (config/funcmap.csv). Hardware: ponderado por componente.
