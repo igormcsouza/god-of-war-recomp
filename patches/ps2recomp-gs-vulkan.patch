@@ -1,0 +1,1012 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 0b06f85..a3c2937 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -519,6 +519,34 @@ if(WIN32)
+     # GOW-Port: WGL propio del hilo GS.
+     target_link_libraries(ps2_runtime PRIVATE opengl32 gdi32)
+ endif()
++
++# GOW-Port: Vulkan GS backend (docs/VULKAN.md). On by default on Linux; needs Vulkan and glslangValidator.
++if(UNIX AND NOT APPLE AND NOT PS2X_IS_ANDROID)
++    set(PS2X_GS_VULKAN_DEFAULT ON)
++else()
++    set(PS2X_GS_VULKAN_DEFAULT OFF)
++endif()
++option(PS2X_GS_VULKAN "Build the Vulkan GS backend" ${PS2X_GS_VULKAN_DEFAULT})
++if(PS2X_GS_VULKAN)
++    find_package(Vulkan COMPONENTS glslangValidator)
++    if(Vulkan_FOUND AND Vulkan_GLSLANG_VALIDATOR_EXECUTABLE)
++        add_executable(gs_vulkan_shader_export src/lib/gs/gpu/gs_vulkan_shader_export.cpp src/lib/gs/gpu/gs_gpu_shaders.cpp)
++        set(PS2X_VK_GEN "${CMAKE_CURRENT_BINARY_DIR}/gs_vulkan")
++        add_custom_command(OUTPUT "${PS2X_VK_GEN}/gs_vulkan_raster_spv.h"
++            COMMAND ${CMAKE_COMMAND} -E make_directory "${PS2X_VK_GEN}"
++            COMMAND gs_vulkan_shader_export "${PS2X_VK_GEN}/gs_vulkan_raster.comp"
++            COMMAND ${Vulkan_GLSLANG_VALIDATOR_EXECUTABLE} -V --target-env vulkan1.1 -S comp --vn kGsVulkanRasterSpv
++                    -o "${PS2X_VK_GEN}/gs_vulkan_raster_spv.h" "${PS2X_VK_GEN}/gs_vulkan_raster.comp"
++            DEPENDS gs_vulkan_shader_export
++            VERBATIM)
++        target_sources(ps2_runtime PRIVATE src/lib/gs/gpu/gs_vulkan_backend.cpp "${PS2X_VK_GEN}/gs_vulkan_raster_spv.h")
++        target_include_directories(ps2_runtime PRIVATE "${PS2X_VK_GEN}")
++        target_compile_definitions(ps2_runtime PUBLIC PS2X_GS_VULKAN=1)
++        target_link_libraries(ps2_runtime PUBLIC Vulkan::Vulkan)
++    else()
++        message(STATUS "Vulkan GS backend disabled: Vulkan or glslangValidator not found")
++    endif()
++endif()
+ target_link_libraries(ps2EntryRunner
+     PRIVATE
+     ps2_runtime
+diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+index 41cd2f7..d4ae045 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+@@ -24,6 +24,8 @@ public:
+     static std::unique_ptr<GSRasterBackend> MakeDefault();
+     static void SetEnabledByDefault(bool enabled);
+     static void SetGpuByDefault(bool enabled);
++    // GOW-Port: default when PS2X_GS_BACKEND is unset; only effective in builds with PS2X_GS_VULKAN.
++    static void SetVulkanByDefault(bool enabled);
+ 
+     void Initialize(uint8_t *vram, uint32_t vramSize) override;
+     void Reset() override;
+diff --git a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+new file mode 100644
+index 0000000..f83e233
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+@@ -0,0 +1,63 @@
++// GOW-Port: Vulkan GS backend (phase A). See docs/VULKAN.md in the God of War port repository.
++#pragma once
++
++#include "runtime/gs/gs_backend.h"
++#include "runtime/gs/gs_backend_state.h"
++#include "runtime/gs/gs_cpu_backend.h"
++
++#include <cstdint>
++#include <memory>
++#include <mutex>
++#include <vector>
++
++// Host VRAM stays authoritative: the backend wraps GSCpuBackend and runs the primitives it supports
++// as Vulkan compute dispatches on a GPU copy of VRAM. Every other call first waits for the GPU and
++// copies VRAM back, then goes to the CPU backend (transfers, CLUT, readback, presentation).
++class GSVulkanBackend final : public GSRasterBackend, public GSBackendStateAccess
++{
++public:
++    GSVulkanBackend();
++    ~GSVulkanBackend() override;
++
++    // False when no usable Vulkan device exists; the caller then uses GSCpuBackend.
++    bool IsReady() const;
++    uint64_t GpuPrimitives() const { return m_gpuPrimitives; }
++
++    void Initialize(uint8_t *vram, uint32_t vramSize) override;
++    void Reset() override;
++
++    void Submit(const GSPrimitiveBatch &batch) override;
++    void LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut) override;
++
++    void BeginTransfer(const GSTransferCommand &command) override;
++    void UploadImage(const uint8_t *data, uint32_t sizeBytes) override;
++
++    void Flush() override;
++    void TextureFlush() override;
++    void Sync(GSSyncReason reason) override;
++    PresentationFrame Present(const GSPresentationRequest &request) override;
++
++    bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
++    uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
++
++    uint32_t ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const override;
++    void WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value) override;
++    void SnapshotVram(std::vector<uint8_t> &out) const override;
++    GSTransferSnapshot GetTransferSnapshot() const override;
++
++    bool ExportState(GSBackendState &out) override;
++    bool ImportState(const GSBackendState &state) override;
++
++private:
++    struct Impl;
++    // Waits for recorded GPU work and copies the GPU VRAM back to host VRAM.
++    void Finish() const;
++    bool RecordGpu(const GSPrimitiveBatch &batch);
++
++    std::unique_ptr<Impl> m_impl;
++    GSCpuBackend m_cpu;
++    uint8_t *m_vram = nullptr;
++    uint32_t m_vramSize = 0;
++    uint64_t m_gpuPrimitives = 0;
++    mutable std::recursive_mutex m_mutex;
++};
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+new file mode 100644
+index 0000000..d76ad17
+--- /dev/null
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -0,0 +1,506 @@
++// GOW-Port: Vulkan GS backend, phase A (untextured sprites and triangles on the GPU, everything else on
++// GSCpuBackend). Design notes: docs/VULKAN.md in the God of War port repository.
++#include "runtime/gs/gs_vulkan_backend.h"
++#include "runtime/gs/gs_swizzle.h"
++#include "runtime/gs/ps2_gs_common.h"
++#include "runtime/gs/ps2_gs_memory.h"
++#include "../gs_sprite_rules.h"
++#include "../gs_triangle_rules.h"
++#include "gs_vulkan_raster_spv.h" // generated by gs_vulkan_shader_export + glslangValidator
++
++#include <vulkan/vulkan.h>
++#include <xmmintrin.h>
++
++#include <algorithm>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++
++namespace
++{
++    // Must match the push_constant block of the kernel in gs_vulkan_shader_export.cpp.
++    struct PrimPush
++    {
++        int64_t ea[3];
++        int64_t eb[3];
++        int64_t ec[3];
++        int64_t area;
++        int32_t rect[4];
++        uint32_t frame;
++        uint32_t mode;
++        uint32_t fbmsk;
++        uint32_t color[3];
++    };
++    static_assert(sizeof(PrimPush) == 120, "push constant layout");
++
++    constexpr uint32_t kTriangle = 0x100u;
++    constexpr uint32_t kIip = 0x200u;
++    constexpr uint32_t kFba = 0x400u;
++    constexpr uint32_t kBias0 = 0x800u;
++
++    struct VkShared
++    {
++        VkInstance instance = VK_NULL_HANDLE;
++        VkPhysicalDevice phys = VK_NULL_HANDLE;
++        VkDevice device = VK_NULL_HANDLE;
++        VkQueue queue = VK_NULL_HANDLE;
++        uint32_t family = 0;
++        VkPhysicalDeviceMemoryProperties memory{};
++        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
++        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
++        VkPipeline pipeline = VK_NULL_HANDLE;
++        VkBuffer swizzle = VK_NULL_HANDLE;
++        VkDeviceMemory swizzleMemory = VK_NULL_HANDLE;
++        std::mutex queueMutex;
++    };
++
++    // Host-visible storage buffer; prefers cached memory so the VRAM readback memcpy stays fast.
++    bool makeHostBuffer(VkShared &s, VkDeviceSize size, VkBuffer &buffer, VkDeviceMemory &memory, void **mapped)
++    {
++        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
++        info.size = size;
++        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
++        if (vkCreateBuffer(s.device, &info, nullptr, &buffer) != VK_SUCCESS)
++            return false;
++        VkMemoryRequirements req{};
++        vkGetBufferMemoryRequirements(s.device, buffer, &req);
++        const VkMemoryPropertyFlags coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++        uint32_t type = UINT32_MAX;
++        for (VkMemoryPropertyFlags want : {coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT, coherent})
++            for (uint32_t i = 0; i < s.memory.memoryTypeCount && type == UINT32_MAX; ++i)
++                if ((req.memoryTypeBits & (1u << i)) && (s.memory.memoryTypes[i].propertyFlags & want) == want)
++                    type = i;
++        if (type == UINT32_MAX)
++            return false;
++        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
++        alloc.allocationSize = req.size;
++        alloc.memoryTypeIndex = type;
++        return vkAllocateMemory(s.device, &alloc, nullptr, &memory) == VK_SUCCESS &&
++               vkBindBufferMemory(s.device, buffer, memory, 0) == VK_SUCCESS &&
++               vkMapMemory(s.device, memory, 0, size, 0, mapped) == VK_SUCCESS;
++    }
++
++    const char *initShared(VkShared &s)
++    {
++        VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
++        app.pApplicationName = "ps2x-gs";
++        app.apiVersion = VK_API_VERSION_1_1;
++        VkInstanceCreateInfo instanceInfo{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
++        instanceInfo.pApplicationInfo = &app;
++        if (vkCreateInstance(&instanceInfo, nullptr, &s.instance) != VK_SUCCESS)
++            return "vkCreateInstance failed";
++
++        uint32_t count = 0;
++        vkEnumeratePhysicalDevices(s.instance, &count, nullptr);
++        std::vector<VkPhysicalDevice> devices(count);
++        vkEnumeratePhysicalDevices(s.instance, &count, devices.data());
++        // Integrated first: VRAM round-trips through host memory in phase A. PS2X_VK_DEVICE=<n> overrides.
++        const VkPhysicalDeviceType order[] = {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
++                                              VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, VK_PHYSICAL_DEVICE_TYPE_CPU};
++        const char *forced = std::getenv("PS2X_VK_DEVICE");
++        for (size_t pass = 0; pass < std::size(order) && !s.phys; ++pass)
++            for (uint32_t i = 0; i < count && !s.phys; ++i)
++            {
++                VkPhysicalDeviceProperties props{};
++                VkPhysicalDeviceFeatures features{};
++                vkGetPhysicalDeviceProperties(devices[i], &props);
++                vkGetPhysicalDeviceFeatures(devices[i], &features);
++                if (forced && *forced ? i != static_cast<uint32_t>(std::atoi(forced)) : props.deviceType != order[pass])
++                    continue;
++                if (!features.shaderInt64)
++                    continue;
++                uint32_t families = 0;
++                vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, nullptr);
++                std::vector<VkQueueFamilyProperties> familyProps(families);
++                vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, familyProps.data());
++                for (uint32_t f = 0; f < families && !s.phys; ++f)
++                    if (familyProps[f].queueFlags & VK_QUEUE_COMPUTE_BIT)
++                    {
++                        s.phys = devices[i];
++                        s.family = f;
++                        std::fprintf(stderr, "[gow-gs] Vulkan device: %s\n", props.deviceName);
++                    }
++            }
++        if (!s.phys)
++            return "no Vulkan device with compute and shaderInt64";
++        vkGetPhysicalDeviceMemoryProperties(s.phys, &s.memory);
++
++        const float priority = 1.0f;
++        VkDeviceQueueCreateInfo queueInfo{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
++        queueInfo.queueFamilyIndex = s.family;
++        queueInfo.queueCount = 1;
++        queueInfo.pQueuePriorities = &priority;
++        VkPhysicalDeviceFeatures enabled{};
++        enabled.shaderInt64 = VK_TRUE;
++        VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
++        deviceInfo.queueCreateInfoCount = 1;
++        deviceInfo.pQueueCreateInfos = &queueInfo;
++        deviceInfo.pEnabledFeatures = &enabled;
++        if (vkCreateDevice(s.phys, &deviceInfo, nullptr, &s.device) != VK_SUCCESS)
++            return "vkCreateDevice failed";
++        vkGetDeviceQueue(s.device, s.family, 0, &s.queue);
++
++        VkDescriptorSetLayoutBinding bindings[2]{};
++        for (uint32_t i = 0; i < 2; ++i)
++        {
++            bindings[i].binding = i; // 0 = VRAM, 1 = swizzle tables (kCommon)
++            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++            bindings[i].descriptorCount = 1;
++            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
++        }
++        VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
++        setInfo.bindingCount = 2;
++        setInfo.pBindings = bindings;
++        VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PrimPush)};
++        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
++        layoutInfo.setLayoutCount = 1;
++        layoutInfo.pSetLayouts = &s.setLayout;
++        layoutInfo.pushConstantRangeCount = 1;
++        layoutInfo.pPushConstantRanges = &range;
++        if (vkCreateDescriptorSetLayout(s.device, &setInfo, nullptr, &s.setLayout) != VK_SUCCESS ||
++            vkCreatePipelineLayout(s.device, &layoutInfo, nullptr, &s.pipelineLayout) != VK_SUCCESS)
++            return "pipeline layout creation failed";
++
++        VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
++        moduleInfo.codeSize = sizeof(kGsVulkanRasterSpv);
++        moduleInfo.pCode = kGsVulkanRasterSpv;
++        VkShaderModule module = VK_NULL_HANDLE;
++        if (vkCreateShaderModule(s.device, &moduleInfo, nullptr, &module) != VK_SUCCESS)
++            return "vkCreateShaderModule failed";
++        VkComputePipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
++        pipelineInfo.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
++        pipelineInfo.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
++        pipelineInfo.stage.module = module;
++        pipelineInfo.stage.pName = "main";
++        pipelineInfo.layout = s.pipelineLayout;
++        const VkResult pipelineResult = vkCreateComputePipelines(s.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &s.pipeline);
++        vkDestroyShaderModule(s.device, module, nullptr);
++        if (pipelineResult != VK_SUCCESS)
++            return "vkCreateComputePipelines failed";
++
++        // Same page tables and order as the OpenGL backend (TABLE_* defines in the exported shader).
++        GSSwizzle::GetFormat(0u);
++        using GSMem::PixelStorageMode;
++        const std::pair<PixelStorageMode, uint32_t> tables[] = {
++            {PixelStorageMode::C32, 65536u}, {PixelStorageMode::Z32, 65536u}, {PixelStorageMode::C16, 131072u},
++            {PixelStorageMode::C16S, 131072u}, {PixelStorageMode::Z16, 131072u}, {PixelStorageMode::Z16S, 131072u},
++            {PixelStorageMode::P8, 262144u}, {PixelStorageMode::P4, 524288u}};
++        std::vector<uint16_t> swizzle;
++        for (const auto &table : tables)
++        {
++            const uint16_t *data = GSMem::PageTableData(table.first);
++            swizzle.insert(swizzle.end(), data, data + table.second);
++        }
++        // ponytail: host-visible swizzle table; move to device-local memory if a discrete GPU needs it.
++        void *mapped = nullptr;
++        if (!makeHostBuffer(s, swizzle.size() * sizeof(uint16_t), s.swizzle, s.swizzleMemory, &mapped))
++            return "swizzle buffer allocation failed";
++        std::memcpy(mapped, swizzle.data(), swizzle.size() * sizeof(uint16_t));
++        return nullptr;
++    }
++
++    // ponytail: one process-wide device, never destroyed (avoids static destruction order issues).
++    VkShared *shared()
++    {
++        static VkShared *const instance = []() -> VkShared *
++        {
++            auto *s = new VkShared;
++            if (const char *error = initShared(*s))
++            {
++                std::fprintf(stderr, "[gow-gs] Vulkan unavailable: %s\n", error);
++                return nullptr;
++            }
++            return s;
++        }();
++        return instance;
++    }
++
++    uint32_t packColor(const GSVertex &v)
++    {
++        return static_cast<uint32_t>(v.r) | (static_cast<uint32_t>(v.g) << 8u) | (static_cast<uint32_t>(v.b) << 16u) |
++               (static_cast<uint32_t>(v.a) << 24u);
++    }
++
++    // Phase A subset: the state where GSCpuBackend::WritePixel reduces to "store color, honour FBMSK/FBA".
++    bool gpuSupports(const GSPrimitiveBatch &batch)
++    {
++        const GSDrawState &state = batch.state;
++        const GSContext &ctx = state.context;
++        const bool sprite = state.prim.type == GS_PRIM_SPRITE && batch.vertexCount >= 2u;
++        const bool triangle = (state.prim.type == GS_PRIM_TRIANGLE || state.prim.type == GS_PRIM_TRISTRIP ||
++                               state.prim.type == GS_PRIM_TRIFAN) && batch.vertexCount >= 3u;
++        const uint8_t psm = ctx.frame.psm;
++        const bool colorFormat = psm == GS_PSM_CT32 || psm == GS_PSM_CT24 || psm == GS_PSM_CT16 || psm == GS_PSM_CT16S;
++        const uint64_t test = ctx.test;
++        const bool noAlphaTests = (test & 0x1u) == 0u && (test & 0x4000u) == 0u;
++        // ZTE=0, or ZTST=ALWAYS without Z write.
++        const bool noDepth = (test & 0x10000u) == 0u || (((test >> 17) & 3u) == 1u && ctx.zbuf.zmask);
++        return (sprite || triangle) && colorFormat && noAlphaTests && noDepth && !state.prim.tme && !state.prim.fge &&
++               !state.prim.abe;
++    }
++}
++
++struct GSVulkanBackend::Impl
++{
++    VkShared &s;
++    VkBuffer vram = VK_NULL_HANDLE;
++    VkDeviceMemory vramMemory = VK_NULL_HANDLE;
++    void *mapped = nullptr;
++    VkDescriptorPool pool = VK_NULL_HANDLE;
++    VkDescriptorSet set = VK_NULL_HANDLE;
++    VkCommandPool commandPool = VK_NULL_HANDLE;
++    VkCommandBuffer cmd = VK_NULL_HANDLE;
++    VkFence fence = VK_NULL_HANDLE;
++    bool open = false;
++
++    explicit Impl(VkShared &shared) : s(shared) {}
++
++    bool create()
++    {
++        if (!makeHostBuffer(s, GSSwizzle::kMemorySize, vram, vramMemory, &mapped))
++            return false;
++        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
++        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
++        poolInfo.maxSets = 1;
++        poolInfo.poolSizeCount = 1;
++        poolInfo.pPoolSizes = &size;
++        if (vkCreateDescriptorPool(s.device, &poolInfo, nullptr, &pool) != VK_SUCCESS)
++            return false;
++        VkDescriptorSetAllocateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
++        setInfo.descriptorPool = pool;
++        setInfo.descriptorSetCount = 1;
++        setInfo.pSetLayouts = &s.setLayout;
++        if (vkAllocateDescriptorSets(s.device, &setInfo, &set) != VK_SUCCESS)
++            return false;
++        VkDescriptorBufferInfo buffers[2] = {{vram, 0, VK_WHOLE_SIZE}, {s.swizzle, 0, VK_WHOLE_SIZE}};
++        VkWriteDescriptorSet writes[2]{};
++        for (uint32_t i = 0; i < 2; ++i)
++        {
++            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
++            writes[i].dstSet = set;
++            writes[i].dstBinding = i;
++            writes[i].descriptorCount = 1;
++            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
++            writes[i].pBufferInfo = &buffers[i];
++        }
++        vkUpdateDescriptorSets(s.device, 2, writes, 0, nullptr);
++
++        VkCommandPoolCreateInfo poolCreate{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
++        poolCreate.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
++        poolCreate.queueFamilyIndex = s.family;
++        VkCommandBufferAllocateInfo cmdInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
++        cmdInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
++        cmdInfo.commandBufferCount = 1;
++        VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++        if (vkCreateCommandPool(s.device, &poolCreate, nullptr, &commandPool) != VK_SUCCESS)
++            return false;
++        cmdInfo.commandPool = commandPool;
++        return vkAllocateCommandBuffers(s.device, &cmdInfo, &cmd) == VK_SUCCESS &&
++               vkCreateFence(s.device, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
++    }
++
++    ~Impl()
++    {
++        if (fence)
++            vkDestroyFence(s.device, fence, nullptr);
++        if (commandPool)
++            vkDestroyCommandPool(s.device, commandPool, nullptr);
++        if (pool)
++            vkDestroyDescriptorPool(s.device, pool, nullptr);
++        if (vram)
++            vkDestroyBuffer(s.device, vram, nullptr);
++        if (vramMemory)
++            vkFreeMemory(s.device, vramMemory, nullptr);
++    }
++
++    void memoryBarrier(VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
++    {
++        VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
++        barrier.dstAccessMask = dstAccess;
++        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, dstStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
++    }
++};
++
++GSVulkanBackend::GSVulkanBackend()
++{
++    if (VkShared *s = shared())
++    {
++        m_impl = std::make_unique<Impl>(*s);
++        if (!m_impl->create())
++        {
++            std::fprintf(stderr, "[gow-gs] Vulkan GS resources could not be created\n");
++            m_impl.reset();
++        }
++    }
++}
++
++GSVulkanBackend::~GSVulkanBackend()
++{
++    Finish();
++}
++
++bool GSVulkanBackend::IsReady() const
++{
++    return m_impl != nullptr;
++}
++
++void GSVulkanBackend::Finish() const
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    if (!m_impl || !m_impl->open)
++        return;
++    Impl &impl = *m_impl;
++    impl.memoryBarrier(VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
++    vkEndCommandBuffer(impl.cmd);
++    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++    submit.commandBufferCount = 1;
++    submit.pCommandBuffers = &impl.cmd;
++    {
++        std::lock_guard<std::mutex> queueLock(impl.s.queueMutex);
++        vkQueueSubmit(impl.s.queue, 1, &submit, impl.fence);
++    }
++    vkWaitForFences(impl.s.device, 1, &impl.fence, VK_TRUE, UINT64_MAX);
++    vkResetFences(impl.s.device, 1, &impl.fence);
++    vkResetCommandBuffer(impl.cmd, 0);
++    impl.open = false;
++    // ponytail: whole-VRAM copies per GPU run (~1 ms); track dirty pages when CPU/GPU interleave often.
++    std::memcpy(m_vram, impl.mapped, std::min<size_t>(m_vramSize, GSSwizzle::kMemorySize));
++}
++
++bool GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
++{
++    if (!m_impl || !m_vram || m_vramSize < GSSwizzle::kMemorySize || !gpuSupports(batch))
++        return false;
++    const GSDrawState &state = batch.state;
++    const GSContext &ctx = state.context;
++    const GSVertex &v0 = batch.vertices[0];
++    const GSVertex &v1 = batch.vertices[1];
++    const GSVertex &v2 = batch.vertices[2];
++
++    // Same float rounding as GSCpuBackend::Submit (GSCpuRoundingScope).
++    const unsigned csr = _mm_getcsr();
++    _mm_setcsr(csr & ~_MM_ROUND_MASK);
++    PrimPush push{};
++    int x0, y0, x1, y1;
++    bool empty = false;
++    if (state.prim.type == GS_PRIM_SPRITE)
++    {
++        const GSSpriteAxis axisX = gsSpriteAxis(v0.x, v1.x, static_cast<float>(ctx.xyoffset.ofx) / 16.0f);
++        const GSSpriteAxis axisY = gsSpriteAxis(v0.y, v1.y, static_cast<float>(ctx.xyoffset.ofy) / 16.0f);
++        x0 = std::max(axisX.first, static_cast<int>(ctx.scissor.x0));
++        y0 = std::max(axisY.first, static_cast<int>(ctx.scissor.y0));
++        x1 = std::min(axisX.last, static_cast<int>(ctx.scissor.x1));
++        y1 = std::min(axisY.last, static_cast<int>(ctx.scissor.y1));
++        push.color[0] = packColor(v1);
++    }
++    else
++    {
++        GSTriangleRaster t;
++        empty = !gsTriangleSetup(v0.x, v0.y, v1.x, v1.y, v2.x, v2.y, ctx.xyoffset.ofx, ctx.xyoffset.ofy, t);
++        x0 = std::max(t.minX, static_cast<int>(ctx.scissor.x0));
++        y0 = std::max(t.minY, static_cast<int>(ctx.scissor.y0));
++        x1 = std::min(t.maxX, static_cast<int>(ctx.scissor.x1));
++        y1 = std::min(t.maxY, static_cast<int>(ctx.scissor.y1));
++        for (int i = 0; i < 3; ++i)
++        {
++            push.ea[i] = t.a[i];
++            push.eb[i] = t.b[i];
++            push.ec[i] = t.c[i];
++            push.mode |= t.bias[i] ? (kBias0 << i) : 0u;
++        }
++        push.area = t.area;
++        push.mode |= kTriangle;
++        if (state.prim.iip)
++        {
++            push.mode |= kIip;
++            push.color[0] = packColor(v0);
++            push.color[1] = packColor(v1);
++            push.color[2] = packColor(v2);
++        }
++        else
++            push.color[0] = packColor(v2);
++    }
++    _mm_setcsr(csr);
++    if (empty || x0 > x1 || y0 > y1)
++        return true; // the CPU backend draws nothing either
++
++    push.rect[0] = x0;
++    push.rect[1] = y0;
++    push.rect[2] = x1;
++    push.rect[3] = y1;
++    push.frame = GSInternal::framePageBaseToBlock(ctx.frame.fbp) | (std::max<uint32_t>(ctx.frame.fbw, 1u) << 16u);
++    push.mode |= ctx.frame.psm | ((ctx.fba & 1u) ? kFba : 0u);
++    push.fbmsk = ctx.frame.fbmsk;
++
++    Impl &impl = *m_impl;
++    if (!impl.open)
++    {
++        std::memcpy(impl.mapped, m_vram, GSSwizzle::kMemorySize);
++        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
++        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
++        vkBeginCommandBuffer(impl.cmd, &begin);
++        vkCmdBindPipeline(impl.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, impl.s.pipeline);
++        vkCmdBindDescriptorSets(impl.cmd, VK_PIPELINE_BIND_POINT_COMPUTE, impl.s.pipelineLayout, 0, 1, &impl.set, 0, nullptr);
++        impl.open = true;
++    }
++    else
++    {
++        // ponytail: one dispatch per primitive with a full barrier keeps GS draw order; batch
++        // non-overlapping primitives (or tile-bin like kRaster) when this becomes the bottleneck.
++        impl.memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
++    }
++    vkCmdPushConstants(impl.cmd, impl.s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
++    vkCmdDispatch(impl.cmd, static_cast<uint32_t>(x1 - x0) / 8u + 1u, static_cast<uint32_t>(y1 - y0) / 8u + 1u, 1u);
++    ++m_gpuPrimitives;
++    return true;
++}
++
++void GSVulkanBackend::Initialize(uint8_t *vram, uint32_t vramSize)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    Finish();
++    m_vram = vram;
++    m_vramSize = vramSize;
++    m_cpu.Initialize(vram, vramSize);
++}
++
++void GSVulkanBackend::Reset()
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    Finish();
++    m_cpu.Reset();
++}
++
++void GSVulkanBackend::Submit(const GSPrimitiveBatch &batch)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    if (RecordGpu(batch))
++        return;
++    Finish();
++    m_cpu.Submit(batch);
++}
++
++// Everything below is CPU work on host VRAM, after the GPU run (if any) has landed there.
++#define GOW_VK_CPU(call)                                \
++    std::lock_guard<std::recursive_mutex> lock(m_mutex); \
++    Finish();                                           \
++    return m_cpu.call
++
++void GSVulkanBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut) { GOW_VK_CPU(LoadClut(tex0, texclut)); }
++void GSVulkanBackend::BeginTransfer(const GSTransferCommand &command) { GOW_VK_CPU(BeginTransfer(command)); }
++void GSVulkanBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes) { GOW_VK_CPU(UploadImage(data, sizeBytes)); }
++void GSVulkanBackend::Flush() { GOW_VK_CPU(Flush()); }
++void GSVulkanBackend::TextureFlush() { GOW_VK_CPU(TextureFlush()); }
++void GSVulkanBackend::Sync(GSSyncReason reason) { GOW_VK_CPU(Sync(reason)); }
++PresentationFrame GSVulkanBackend::Present(const GSPresentationRequest &request) { GOW_VK_CPU(Present(request)); }
++bool GSVulkanBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba) { GOW_VK_CPU(ClearFramebuffer(context, rgba)); }
++uint32_t GSVulkanBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) { GOW_VK_CPU(ConsumeLocalToHostBytes(dst, maxBytes)); }
++uint32_t GSVulkanBackend::ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const { GOW_VK_CPU(ReadVram(psm, base, bw, x, y)); }
++void GSVulkanBackend::WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value) { GOW_VK_CPU(WriteVram(psm, base, bw, x, y, value)); }
++void GSVulkanBackend::SnapshotVram(std::vector<uint8_t> &out) const { GOW_VK_CPU(SnapshotVram(out)); }
++GSTransferSnapshot GSVulkanBackend::GetTransferSnapshot() const { GOW_VK_CPU(GetTransferSnapshot()); }
++bool GSVulkanBackend::ExportState(GSBackendState &out) { GOW_VK_CPU(ExportState(out)); }
++bool GSVulkanBackend::ImportState(const GSBackendState &state) { GOW_VK_CPU(ImportState(state)); }
++
++#undef GOW_VK_CPU
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+new file mode 100644
+index 0000000..9583297
+--- /dev/null
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+@@ -0,0 +1,130 @@
++// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
++// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
++// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
++// compiles the file to SPIR-V with glslangValidator.
++#include "gs_gpu_shaders.h"
++
++#include <cstdio>
++
++namespace
++{
++    // Offsets of each page table inside the swizzle buffer; same order and sizes as gs_gpu_backend.cpp
++    // and initShared() in gs_vulkan_backend.cpp.
++    const char *const kPrefix = R"GLSL(#version 460
++#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
++#define TABLE_C32 0u
++#define TABLE_Z32 65536u
++#define TABLE_C16 131072u
++#define TABLE_C16S 262144u
++#define TABLE_Z16 393216u
++#define TABLE_Z16S 524288u
++#define TABLE_P8 655360u
++#define TABLE_P4 917504u
++)GLSL";
++
++    // One primitive per dispatch over its scissored bounding box. Coverage and Gouraud weights follow
++    // GSCpuBackend::DrawSprite/DrawTriangle exactly (gs_triangle_rules.h); the pixel write follows
++    // GSCpuBackend::WritePixel for the subset GSVulkanBackend accepts (no texture, fog, blend, tests, Z).
++    const char *const kKernel = R"GLSL(
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(push_constant) uniform Prim
++{
++    int64_t ea[3];
++    int64_t eb[3];
++    int64_t ec[3];
++    int64_t area;
++    ivec4 rect;      // inclusive x0, y0, x1, y1
++    uint frame;      // frame base in blocks | fbw << 16
++    uint mode;       // psm | M_* flags
++    uint fbmsk;
++    uint color[3];   // sprite / flat: color[0]; Gouraud: v0, v1, v2
++} p;
++
++const uint M_TRIANGLE = 0x100u;
++const uint M_IIP = 0x200u;
++const uint M_FBA = 0x400u;
++const uint M_BIAS0 = 0x800u;
++
++// Correctly rounded float(n / d) for 0 <= n <= d, as float(double(n) * (1.0 / d)) on the CPU.
++float ratio(int64_t n, int64_t d)
++{
++    if (n <= 0l)
++        return 0.0;
++    if (n >= d)
++        return 1.0;
++    int s = 0;
++    while ((n << s) < d)
++        ++s;
++    int64_t num = n << (s + 23);
++    int64_t q = num / d;
++    int64_t r = num - q * d;
++    if (2l * r > d || (2l * r == d && (q & 1l) != 0l))
++        ++q;
++    return ldexp(float(q), -(s + 23));
++}
++
++uint channel(uint c0, uint c1, uint c2, uint shift, float w1, float w2)
++{
++    int a = int((c0 >> shift) & 0xFFu);
++    int b = int((c1 >> shift) & 0xFFu);
++    int c = int((c2 >> shift) & 0xFFu);
++    precise float v = float(a) + float(b - a) * w1;
++    precise float result = v + float(c - a) * w2;
++    return clampU8(int(result)) << shift;
++}
++
++void main()
++{
++    ivec2 xy = p.rect.xy + ivec2(gl_GlobalInvocationID.xy);
++    if (xy.x > p.rect.z || xy.y > p.rect.w)
++        return;
++    uint pixel = p.color[0];
++    if ((p.mode & M_TRIANGLE) != 0u)
++    {
++        int64_t e[3];
++        for (int i = 0; i < 3; ++i)
++        {
++            e[i] = p.ea[i] * int64_t(xy.x * 16) + p.eb[i] * int64_t(xy.y * 16) + p.ec[i];
++            int64_t bias = (p.mode & (M_BIAS0 << i)) != 0u ? 1l : 0l;
++            if (e[i] + bias <= 0l)
++                return;
++        }
++        if ((p.mode & M_IIP) != 0u)
++        {
++            float w1 = ratio(e[1], p.area);
++            float w2 = ratio(e[2], p.area);
++            pixel = 0u;
++            for (uint shift = 0u; shift < 32u; shift += 8u)
++                pixel |= channel(p.color[0], p.color[1], p.color[2], shift, w1, w2);
++        }
++    }
++
++    uint psm = p.mode & 0xFFu;
++    uint fbp = p.frame & 0xFFFFu;
++    uint fbw = p.frame >> 16u;
++    bool is16 = bitsPerPixel(psm) == 16u;
++    if ((p.mode & M_FBA) != 0u && psm != 1u)
++        pixel |= 0x80000000u;
++    if (p.fbmsk != 0u)
++    {
++        uint raw = readPixel(psm, fbp, fbw, uint(xy.x), uint(xy.y));
++        uint fb = is16 ? rgba5551To8888(raw) : (psm == 1u ? (raw | 0x80000000u) : raw);
++        pixel = (pixel & ~p.fbmsk) | (fb & p.fbmsk);
++    }
++    if (is16)
++        pixel = rgba8888To5551(pixel);
++    writePixelRaw(psm, fbp, fbw, uint(xy.x), uint(xy.y), pixel);
++}
++)GLSL";
++}
++
++int main(int argc, char **argv)
++{
++    if (argc != 2 || !std::freopen(argv[1], "w", stdout))
++        return 1;
++    std::fputs(kPrefix, stdout);
++    std::fputs(GSGpuShaders::kCommon, stdout);
++    std::fputs(kKernel, stdout);
++    return 0;
++}
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index 6181965..9835c8c 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -4,6 +4,9 @@
+ #include "runtime/gs/gs_cpu_backend.h"
+ #include "runtime/gs/gs_gpu_backend.h"
+ #include "runtime/gs/gs_shared_present.h"
++#if defined(PS2X_GS_VULKAN)
++#include "runtime/gs/gs_vulkan_backend.h" // GOW-Port
++#endif
+ #include "ThreadPriority.h"
+ #include "ThreadNaming.h"
+ 
+@@ -20,6 +23,7 @@ namespace
+     constexpr size_t kMaxPendingChunks = 256u;
+     std::atomic<bool> s_enabledByDefault{false};
+     std::atomic<bool> s_gpuByDefault{false};
++    std::atomic<bool> s_vulkanByDefault{false}; // GOW-Port
+ 
+     bool discardDraws()
+     {
+@@ -90,6 +94,24 @@ std::unique_ptr<GSRasterBackend> GSThreadedBackend::MakeDefault()
+     const bool useGpu = (gpu && *gpu) ? *gpu != '0' : s_gpuByDefault.load();
+     if (useGpu)
+         return std::make_unique<GSThreadedBackend>(std::make_unique<GSGpuBackend>());
++#if defined(PS2X_GS_VULKAN)
++    // GOW-Port: PS2X_GS_BACKEND=vulkan|cpu; unset uses SetVulkanByDefault (the Linux runner sets it).
++    const char *backend = std::getenv("PS2X_GS_BACKEND");
++    const bool wantVulkan = (backend && *backend) ? std::strcmp(backend, "vulkan") == 0 : s_vulkanByDefault.load();
++    if (wantVulkan)
++    {
++        auto vulkan = std::make_unique<GSVulkanBackend>();
++        if (vulkan->IsReady())
++        {
++            if (!enabled)
++                return vulkan;
++            return std::make_unique<GSThreadedBackend>(std::move(vulkan));
++        }
++        static std::atomic<bool> logged{false};
++        if (!logged.exchange(true))
++            std::fprintf(stderr, "[gow-gs] Vulkan GS backend not available; using CPU.\n");
++    }
++#endif
+     if (!enabled)
+         return std::make_unique<GSCpuBackend>();
+     return std::make_unique<GSThreadedBackend>(std::make_unique<GSCpuBackend>());
+@@ -105,6 +127,11 @@ void GSThreadedBackend::SetGpuByDefault(bool enabled)
+     s_gpuByDefault.store(enabled);
+ }
+ 
++void GSThreadedBackend::SetVulkanByDefault(bool enabled)
++{
++    s_vulkanByDefault.store(enabled);
++}
++
+ void GSThreadedBackend::Enqueue(Op op, const void *payload, uint32_t size)
+ {
+     std::lock_guard<std::mutex> lock(m_producerMutex);
+diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
+index a6698c4..2a87b85 100644
+--- a/ps2xRuntime/src/main.cpp
++++ b/ps2xRuntime/src/main.cpp
+@@ -7,6 +7,7 @@
+ #ifdef _DEBUG
+ #include "ps2_log.h"
+ #endif
++#include "runtime/gs/gs_threaded_backend.h" // GOW-Port: default GS backend.
+ 
+ #include <iostream>
+ #include <string>
+@@ -193,6 +194,10 @@ int main(int argc, char *argv[])
+             windowTitle += elfName;
+         }
+ 
++#if defined(__linux__)
++        // GOW-Port: the Linux runner prefers the Vulkan GS (PS2X_GS_BACKEND=cpu opts out; CPU if no device).
++        GSThreadedBackend::SetVulkanByDefault(true);
++#endif
+         PS2Runtime runtime;
+ #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)
+         // This hook is to prevent leak rlimgui deps to recompiler etc
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 49a17f7..1e938ac 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -41,6 +41,7 @@ add_library(ps2_test_lib STATIC
+     src/ps2_gs_cpu_parallel_tests.cpp # GOW-Port: rasterizado CPU por filas en paralelo.
+     src/ps2_gs_texa_depth_tests.cpp # GOW-Port: TEXA en alias de profundidad.
+     src/ps2_gs_pcrtc_blend_tests.cpp # GOW-Port: mezcla PCRTC contra circuitos/fondo.
++    src/ps2_gs_vulkan_tests.cpp # GOW-Port: Vulkan GS backend vs CPU reference.
+     src/ps2_gs_backend_tests.cpp # GOW-Port: cola, VRAM y comparación CPU/OpenGL.
+     src/ps2_gpu_profile_tests.cpp # GOW-Port: ventanas y lecturas de timestamps sin espera.
+     src/ps2_gpu_upload_ring_tests.cpp # GOW-Port: datos pendientes y fallback de uploads.
+diff --git a/ps2xTest/src/main.cpp b/ps2xTest/src/main.cpp
+index 26c2de7..85c1fb1 100644
+--- a/ps2xTest/src/main.cpp
++++ b/ps2xTest/src/main.cpp
+@@ -22,6 +22,7 @@ void register_gs_cpu_colclamp_tests(); // GOW-Port
+ void register_gs_cpu_parallel_tests(); // GOW-Port
+ void register_gs_texa_depth_tests(); // GOW-Port
+ void register_gs_pcrtc_blend_tests(); // GOW-Port
++void register_gs_vulkan_tests(); // GOW-Port
+ void register_ps2_gs_backend_tests(); // GOW-Port
+ void register_ps2_gpu_profile_tests(); // GOW-Port
+ void runGpuUploadRingTests(); // GOW-Port
+@@ -65,6 +66,7 @@ int main()
+     register_gs_cpu_parallel_tests(); // GOW-Port
+     register_gs_texa_depth_tests(); // GOW-Port
+     register_gs_pcrtc_blend_tests(); // GOW-Port
++    register_gs_vulkan_tests(); // GOW-Port
+     register_ps2_gs_backend_tests();
+     register_ps2_gpu_profile_tests();
+     runGpuUploadRingTests();
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+new file mode 100644
+index 0000000..8032543
+--- /dev/null
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -0,0 +1,123 @@
++// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
++#include "MiniTest.h"
++#include "runtime/gs/gs_cpu_backend.h"
++#if defined(PS2X_GS_VULKAN)
++#include "runtime/gs/gs_vulkan_backend.h"
++#endif
++
++#include <cstdio>
++#include <vector>
++
++#if defined(PS2X_GS_VULKAN)
++namespace
++{
++    GSPrimitiveBatch prim(GSPrimType type, uint8_t psm, bool iip)
++    {
++        GSPrimitiveBatch b{};
++        b.vertexCount = type == GS_PRIM_SPRITE ? 2 : 3;
++        b.state.prim.type = type;
++        b.state.prim.iip = iip;
++        auto &c = b.state.context;
++        c.frame = {100, 10, psm, 0};
++        c.scissor = {0, 639, 0, 447};
++        c.zbuf = {200, GS_PSM_Z32, true};
++        return b;
++    }
++
++    void vertex(GSPrimitiveBatch &b, int i, float x, float y, uint32_t rgba)
++    {
++        auto &v = b.vertices[i];
++        v.x = x;
++        v.y = y;
++        v.r = uint8_t(rgba);
++        v.g = uint8_t(rgba >> 8);
++        v.b = uint8_t(rgba >> 16);
++        v.a = uint8_t(rgba >> 24);
++    }
++
++    std::vector<GSPrimitiveBatch> scene()
++    {
++        std::vector<GSPrimitiveBatch> out;
++        auto s = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // flat sprite, fractional edges
++        vertex(s, 0, 20.5f, 10.25f, 0); vertex(s, 1, 520.5f, 300.75f, 0x80C02010u);
++        out.push_back(s);
++        auto g = prim(GS_PRIM_TRIANGLE, GS_PSM_CT32, true); // Gouraud triangle
++        vertex(g, 0, 30.0f, 40.0f, 0x10FF0000u); vertex(g, 1, 600.3f, 90.6f, 0x8000FF00u); vertex(g, 2, 100.7f, 420.1f, 0xFF0000FFu);
++        out.push_back(g);
++        auto f = prim(GS_PRIM_TRISTRIP, GS_PSM_CT32, false); // flat, uses v2, scissor + XYOFFSET
++        f.state.context.scissor = {64, 300, 50, 200};
++        f.state.context.xyoffset = {16 * 8, 16 * 4};
++        vertex(f, 0, 400.0f, 10.0f, 1); vertex(f, 1, 20.0f, 300.0f, 2); vertex(f, 2, 350.0f, 260.0f, 0x7F334455u);
++        out.push_back(f);
++        auto m = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // FBMSK + FBA
++        m.state.context.frame.fbmsk = 0xFF00FF00u;
++        m.state.context.fba = 1;
++        vertex(m, 0, 100.0f, 100.0f, 0); vertex(m, 1, 200.0f, 180.0f, 0x11223344u);
++        out.push_back(m);
++        auto a = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // blended: CPU fallback between GPU draws
++        a.state.prim.abe = true;
++        a.state.context.alpha = (uint64_t(64) << 32) | 0x64u;
++        vertex(a, 0, 150.0f, 50.0f, 0); vertex(a, 1, 450.0f, 350.0f, 0x40FFFFFFu);
++        out.push_back(a);
++        auto h = prim(GS_PRIM_TRIANGLE, GS_PSM_CT16, true); // 16-bit target, other page
++        h.state.context.frame = {300, 10, GS_PSM_CT16, 0x00008000u};
++        vertex(h, 0, 5.0f, 5.0f, 0xFF102030u); vertex(h, 1, 630.0f, 30.0f, 0x00F0E0D0u); vertex(h, 2, 300.0f, 440.0f, 0x80808080u);
++        out.push_back(h);
++        auto t = prim(GS_PRIM_SPRITE, GS_PSM_CT24, false); // 24-bit keeps the top byte
++        t.state.context.frame = {400, 10, GS_PSM_CT24, 0};
++        vertex(t, 0, 0.0f, 0.0f, 0); vertex(t, 1, 333.0f, 222.0f, 0xAABBCCDDu);
++        out.push_back(t);
++        auto o = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // overlaps the blended sprite: order matters
++        vertex(o, 0, 300.0f, 200.0f, 0); vertex(o, 1, 380.0f, 260.0f, 0x01020304u);
++        out.push_back(o);
++        return out;
++    }
++
++    std::vector<uint8_t> noise()
++    {
++        std::vector<uint8_t> vram(4u << 20);
++        uint32_t seed = 777u;
++        for (auto &b : vram) { seed = seed * 1664525u + 1013904223u; b = uint8_t(seed >> 24); }
++        return vram;
++    }
++
++    template <typename Backend>
++    std::vector<uint8_t> render(Backend &backend)
++    {
++        auto vram = noise();
++        backend.Initialize(vram.data(), uint32_t(vram.size()));
++        for (const auto &b : scene())
++            backend.Submit(b);
++        backend.Flush();
++        return vram;
++    }
++}
++#endif
++
++void register_gs_vulkan_tests()
++{
++    MiniTest::Case("GS Vulkan backend", [](TestCase &test) {
++        test.Run("Vulkan VRAM equals CPU VRAM", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            GSVulkanBackend vulkan;
++            if (!vulkan.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++            GSCpuBackend cpu;
++            const auto reference = render(cpu);
++            const auto gpu = render(vulkan);
++            size_t diff = 0;
++            for (size_t i = 0; i < reference.size(); ++i)
++                diff += reference[i] != gpu[i];
++            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
++            t.Equals(vulkan.GpuPrimitives(), uint64_t(7), "Primitives drawn on the GPU");
++            t.IsTrue(reference != noise(), "The scene changed VRAM");
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
++#endif
++        });
++    });
++}

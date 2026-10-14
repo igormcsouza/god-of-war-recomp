@@ -261,4 +261,4 @@ nombre = "Linux"
   nombre = { es = "Port nativo para Linux", en = "Native Linux port", pt = "Port nativo para Linux" }
   estado = "parcial"
   peso = 2
-  nota = { es = "Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); falta el backend Vulkan; mandos pendientes", en = "Launcher and ISO extraction work; the build is partial (only the runtime is verified in CI); Vulkan backend pending; controllers pending", pt = "Lançador e extração da ISO funcionam; compilação parcial (só o runtime é verificado no CI); backend Vulkan pendente; controles pendentes" }
+  nota = { es = "Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); backend Vulkan en fase A (primitivas sin textura en GPU); mandos pendientes", en = "Launcher and ISO extraction work; the build is partial (only the runtime is verified in CI); Vulkan backend in phase A (untextured primitives on the GPU); controllers pending", pt = "Lançador e extração da ISO funcionam; compilação parcial (só o runtime é verificado no CI); backend Vulkan na fase A (primitivas sem textura na GPU); controles pendentes" }

@@ -6542,3 +6542,18 @@ tried. The gain is small (about 1.9x total, still ~4 FPS): the per-pixel exact r
 dominate, and the intro draws many full-screen layers. `PS2X_GS_THREAD=1` is worth enabling together with the raster
 threads. A real fix still needs a GPU backend. Profiling tip: `perf`/attach are blocked here; launching under gdb with
 `handle SIGUSR2 stop print nopass` (not `noprint`, which implies nostop) and a `pkill -USR2` loop gives usable samples.
+
+### Vulkan GS backend, phase A (2026-10-14)
+
+New patch `patches/ps2recomp-gs-vulkan.patch` (registered last). Design and phases are in [`docs/VULKAN.md`](VULKAN.md).
+`GSVulkanBackend` wraps `GSCpuBackend`. Untextured sprites and triangles (flat/Gouraud; CT32/24/16/16S; FBMSK/FBA; no
+blend, tests, fog or Z write) run as Vulkan compute dispatches on a GPU copy of VRAM. Everything else, including
+`Present`, runs on the CPU after the GPU run is copied back into host VRAM. Selection: `PS2X_GS_BACKEND=vulkan|cpu`. The Linux
+runner defaults to Vulkan and falls back to CPU with a `[gow-gs]` log line. `PS2X_VK_DEVICE=<n>` forces a device.
+
+Verified: from a fresh checkout at the pinned commit, all patches apply in order and `ps2x_tests` passes 628/628 (new test
+"GS Vulkan backend": identical VRAM bytes against the CPU on Intel RPL-P/Mesa, NVIDIA RTX 5050 and llvmpipe). With a temporary
+finish-per-primitive change, the whole suite also passes under `PS2X_GS_BACKEND=vulkan`. The runner builds. A 34 s run with
+`PS2X_GS_BACKEND=vulkan` selects the Intel iGPU and shows the main menu correctly (`GOW_SCREENSHOT_AT=28`). FPS is unchanged
+(title: 4.0/4.0/3.0 at 15/22/29 s for both Vulkan and CPU), as expected: the intro is almost all textured primitives, which still
+run on the CPU. Next: phase B (textures/CLUT on the GPU), then phase C (blend/tests/Z, batching, dirty-page copies).
