@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="424" viewBox="0 0 900 424" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-labelledby="titulo-estado">
-<title id="titulo-estado">Status: libraries* 65.4%, hardware 60.5%</title>
+<title id="titulo-estado">Status: libraries* 65.4%, hardware 57.8%</title>
 <style>
   .fondo { fill: #ffffff; }
   .borde { stroke: #d0d7de; }
@@ -40,7 +40,7 @@
 <rect class="parcial" x="237.6" y="56" width="52" height="22" rx="3"/>
 <rect class="parcial" x="237.6" y="56" width="4" height="22"/>
 <text class="badge-t" x="200.8" y="71" font-size="12" text-anchor="middle">hardware</text>
-<text class="badge-v-oscuro" x="263.6" y="71" font-size="12" font-weight="600" text-anchor="middle">60.5%</text>
+<text class="badge-v-oscuro" x="263.6" y="71" font-size="12" font-weight="600" text-anchor="middle">57.8%</text>
 <text class="t1" x="16" y="102" font-size="14">Sony SDK libraries*: 65.4% (423/647)</text>
 <rect class="grupo" x="16" y="112" width="424" height="260"/>
 <rect class="ok" x="17.5" y="113.5" width="11.6" height="11.7"><title>libc · sub_00289200 (148 B)</title></rect>
@@ -932,57 +932,62 @@
 <text class="t1" x="362.9" y="251" font-size="11" pointer-events="none">libm</text>
 <rect class="chip" x="317.4" y="338.9" width="47.6" height="15" rx="2" pointer-events="none"/>
 <text class="t1" x="321.4" y="349.9" font-size="11" pointer-events="none">libdbc</text>
-<text class="t1" x="460" y="102" font-size="14">PS2 hardware: 60.5%</text>
+<text class="t1" x="460" y="102" font-size="14">PS2 hardware: 57.8%</text>
 <rect class="grupo" x="460" y="112" width="424" height="260"/>
-<rect class="ok" x="461.5" y="113.5" width="92.5" height="79.6"><title>R3000A CPU (interpreter) — Opus idle scheduler integrated and validated with GS/VU1: caches the next wake-up; its profile reduces IOP from ~1300–1500 to ~570–650 ms per 5 s; an FPS comparison without concurrent builds remains pending</title></rect>
-<text class="badge-t" x="507.7" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">R3000A</text>
-<rect class="ok" x="555" y="113.5" width="61.3" height="79.6"><title>Original IRX modules</title></rect>
-<text class="badge-t" x="585.6" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">IRX</text>
-<rect class="ok" x="461.5" y="194.1" width="76.9" height="63.5"><title>SIF: EE ↔ IOP RPC and DMA</title></rect>
-<text class="badge-t" x="499.9" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">SIF</text>
-<rect class="ok" x="539.4" y="194.1" width="76.9" height="63.5"><title>CDVD: reading the original ISO</title></rect>
-<text class="badge-t" x="577.8" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">CDVD</text>
-<rect class="parcial" x="461.5" y="258.6" width="65.8" height="111.9"><title>SPU2: audio output — Bank loading and continuous sound in emulated time verified; at ~2 fps playback stutters; reverb and ADMA are missing</title></rect>
-<rect x="461.5" y="258.6" width="65.8" height="111.9" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="494.4" y="318.4" font-size="11" text-anchor="middle" pointer-events="none">SPU2</text>
-<rect class="parcial" x="528.3" y="258.6" width="88" height="55.4"><title>DualShock 2 controller — libpad2 via HLE (first port); controllers read as disconnected on the emulated SIO2</title></rect>
-<rect x="528.3" y="258.6" width="88" height="55.4" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="572.3" y="290.2" font-size="11" text-anchor="middle" pointer-events="none">Pad</text>
-<rect class="parcial" x="528.3" y="315.1" width="88" height="55.4"><title>SIO2: memory card — SIO2 and 8 MB card with ECC: loading, saving and reloading verified in-game on a PCSX2 copy; formatting and reopening in PCSX2 remain unverified</title></rect>
-<rect x="528.3" y="315.1" width="88" height="55.4" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="572.3" y="346.6" font-size="11" text-anchor="middle" pointer-events="none">MC</text>
-<rect class="ok" x="619.3" y="113.5" width="144.9" height="85"><title>R5900 CPU (recompiled to C++)</title></rect>
-<text class="badge-t" x="691.7" y="159.8" font-size="11" text-anchor="middle" pointer-events="none">R5900</text>
-<rect class="ok" x="619.3" y="199.5" width="86.5" height="85"><title>Kernel: threads, semaphores and alarms</title></rect>
-<text class="badge-t" x="662.5" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">Kernel</text>
-<rect class="ok" x="706.8" y="199.5" width="57.4" height="85"><title>FPU (COP1) and MMI instructions</title></rect>
-<text class="badge-t" x="735.5" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">FPU/MMI</text>
-<rect class="ok" x="619.3" y="285.5" width="57.4" height="85"><title>INTC: VSync and GS interrupt</title></rect>
-<text class="badge-t" x="647.9" y="331.9" font-size="11" text-anchor="middle" pointer-events="none">INTC</text>
-<rect class="ok" x="677.6" y="285.5" width="57.4" height="85"><title>DMA controller — fromSPR/toSPR chains now copy the bone palette; Kratos and enemy shapes verified in gameplay</title></rect>
-<text class="badge-t" x="706.3" y="331.9" font-size="11" text-anchor="middle" pointer-events="none">DMAC</text>
-<rect class="ok" x="736" y="285.5" width="28.2" height="85"><title>Timers</title></rect>
-<text class="badge-t" x="750.1" y="331.9" font-size="11" text-anchor="middle" transform="rotate(-90 750.1 328)" pointer-events="none">Timers</text>
-<rect class="ok" x="767.2" y="113.5" width="45.5" height="106.5"><title>GIF (PATH1-3)</title></rect>
-<text class="badge-t" x="789.9" y="170.6" font-size="11" text-anchor="middle" pointer-events="none">GIF</text>
-<rect class="parcial" x="813.7" y="113.5" width="68.8" height="106.5"><title>GS: primitives and framebuffer — CPU/OpenGL retained; ship, Kratos, enemies and HUD visible. Color/Z ordering and width/wrap aliases validated. Unstable feedback narrowed to 33 submissions; optional snapshot stable over 64 passes, still different from CPU. Read-only depth optimization withheld; per-variant GPU profiling and query boundary verified; coverage remains incomplete</title></rect>
-<rect x="813.7" y="113.5" width="68.8" height="106.5" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="848.1" y="170.6" font-size="11" text-anchor="middle" pointer-events="none">GS</text>
-<rect class="parcial" x="767.2" y="221" width="115.3" height="63.5"><title>VIF1 and VU1 — Compiled blocks, persistent flags, four-lane SSE, compiled DIV and flags committed when read (interpreter 333 → 293 ms per frame); FTZ/DAZ regression preserves underflow. Models and HUD visible after MMI/EFU/SPR fixes. In loaded gameplay VU1 takes ~35% of the game thread and waiting on the GPU ~31%; coverage and sustained performance remain unverified</title></rect>
-<rect x="767.2" y="221" width="115.3" height="63.5" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="824.8" y="256.6" font-size="11" text-anchor="middle" pointer-events="none">VIF1/VU1</text>
-<rect class="parcial" x="767.2" y="285.5" width="57.2" height="85"><title>GS: textures, CLUT and fonts — HUD visible; CPU/OpenGL bilinear and nearest STQ verified, including signed 16.16 boundaries, against procedural PCSX2 software patterns; GPU feedback stable in an experimental mode; regional texture batches optimized and verified across all 13 PSMs; real GS cache and full font/CLUT coverage remain unverified</title></rect>
-<rect x="767.2" y="285.5" width="57.2" height="85" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="795.8" y="331.1" font-size="9" text-anchor="middle" pointer-events="none">Tex/CLUT</text>
-<rect class="parcial" x="825.3" y="285.5" width="57.2" height="85"><title>IPU: FMV video — The FMV intro works through software MPEG decoding; this does not establish complete IPU hardware emulation</title></rect>
-<rect x="825.3" y="285.5" width="57.2" height="85" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="853.9" y="331.9" font-size="11" text-anchor="middle" pointer-events="none">IPU</text>
+<rect class="ok" x="461.5" y="113.5" width="88.3" height="79.6"><title>R3000A CPU (interpreter) — Opus idle scheduler integrated and validated with GS/VU1: caches the next wake-up; its profile reduces IOP from ~1300–1500 to ~570–650 ms per 5 s; an FPS comparison without concurrent builds remains pending</title></rect>
+<text class="badge-t" x="505.6" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">R3000A</text>
+<rect class="ok" x="550.8" y="113.5" width="58.5" height="79.6"><title>Original IRX modules</title></rect>
+<text class="badge-t" x="580" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">IRX</text>
+<rect class="ok" x="461.5" y="194.1" width="73.4" height="63.5"><title>SIF: EE ↔ IOP RPC and DMA</title></rect>
+<text class="badge-t" x="498.2" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">SIF</text>
+<rect class="ok" x="535.9" y="194.1" width="73.4" height="63.5"><title>CDVD: reading the original ISO</title></rect>
+<text class="badge-t" x="572.6" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">CDVD</text>
+<rect class="parcial" x="461.5" y="258.6" width="62.8" height="111.9"><title>SPU2: audio output — Bank loading and continuous sound in emulated time verified; at ~2 fps playback stutters; reverb and ADMA are missing</title></rect>
+<rect x="461.5" y="258.6" width="62.8" height="111.9" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="492.9" y="318.4" font-size="11" text-anchor="middle" pointer-events="none">SPU2</text>
+<rect class="parcial" x="525.3" y="258.6" width="84" height="55.4"><title>DualShock 2 controller — libpad2 via HLE (first port); controllers read as disconnected on the emulated SIO2</title></rect>
+<rect x="525.3" y="258.6" width="84" height="55.4" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="567.3" y="290.2" font-size="11" text-anchor="middle" pointer-events="none">Pad</text>
+<rect class="parcial" x="525.3" y="315.1" width="84" height="55.4"><title>SIO2: memory card — SIO2 and 8 MB card with ECC: loading, saving and reloading verified in-game on a PCSX2 copy; formatting and reopening in PCSX2 remain unverified</title></rect>
+<rect x="525.3" y="315.1" width="84" height="55.4" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="567.3" y="346.6" font-size="11" text-anchor="middle" pointer-events="none">MC</text>
+<rect class="ok" x="612.3" y="113.5" width="138.3" height="85"><title>R5900 CPU (recompiled to C++)</title></rect>
+<text class="badge-t" x="681.4" y="159.8" font-size="11" text-anchor="middle" pointer-events="none">R5900</text>
+<rect class="ok" x="612.3" y="199.5" width="82.6" height="85"><title>Kernel: threads, semaphores and alarms</title></rect>
+<text class="badge-t" x="653.6" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">Kernel</text>
+<rect class="ok" x="695.9" y="199.5" width="54.7" height="85"><title>FPU (COP1) and MMI instructions</title></rect>
+<text class="badge-t" x="723.2" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">FPU/MMI</text>
+<rect class="ok" x="612.3" y="285.5" width="54.7" height="85"><title>INTC: VSync and GS interrupt</title></rect>
+<text class="badge-t" x="639.6" y="331.9" font-size="11" text-anchor="middle" pointer-events="none">INTC</text>
+<rect class="ok" x="668" y="285.5" width="82.6" height="56.3"><title>DMA controller — fromSPR/toSPR chains now copy the bone palette; Kratos and enemy shapes verified in gameplay</title></rect>
+<text class="badge-t" x="709.3" y="317.5" font-size="11" text-anchor="middle" pointer-events="none">DMAC</text>
+<rect class="ok" x="668" y="342.8" width="82.6" height="27.7"><title>Timers</title></rect>
+<text class="badge-t" x="709.3" y="360.5" font-size="11" text-anchor="middle" pointer-events="none">Timers</text>
+<rect class="ok" x="753.6" y="113.5" width="51" height="91"><title>GIF (PATH1-3)</title></rect>
+<text class="badge-t" x="779.1" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GIF</text>
+<rect class="parcial" x="805.6" y="113.5" width="76.9" height="91"><title>GS: primitives and framebuffer — CPU/OpenGL retained; ship, Kratos, enemies and HUD visible. Color/Z ordering and width/wrap aliases validated. Unstable feedback narrowed to 33 submissions; optional snapshot stable over 64 passes, still different from CPU. Read-only depth optimization withheld; per-variant GPU profiling and query boundary verified; coverage remains incomplete</title></rect>
+<rect x="805.6" y="113.5" width="76.9" height="91" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="844" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GS</text>
+<rect class="parcial" x="753.6" y="205.5" width="91.8" height="76.3"><title>VIF1 and VU1 — Compiled blocks, persistent flags, four-lane SSE, compiled DIV and flags committed when read (interpreter 333 → 293 ms per frame); FTZ/DAZ regression preserves underflow. Models and HUD visible after MMI/EFU/SPR fixes. In loaded gameplay VU1 takes ~35% of the game thread and waiting on the GPU ~31%; coverage and sustained performance remain unverified</title></rect>
+<rect x="753.6" y="205.5" width="91.8" height="76.3" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="799.5" y="247.5" font-size="11" text-anchor="middle" pointer-events="none">VIF1/VU1</text>
+<rect class="parcial" x="753.6" y="282.8" width="91.8" height="50.5"><title>GS: textures, CLUT and fonts — HUD visible; CPU/OpenGL bilinear and nearest STQ verified, including signed 16.16 boundaries, against procedural PCSX2 software patterns; GPU feedback stable in an experimental mode; regional texture batches optimized and verified across all 13 PSMs; real GS cache and full font/CLUT coverage remain unverified</title></rect>
+<rect x="753.6" y="282.8" width="91.8" height="50.5" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="799.5" y="311.9" font-size="11" text-anchor="middle" pointer-events="none">Tex/CLUT</text>
+<rect class="parcial" x="846.4" y="205.5" width="36.1" height="127.8"><title>IPU: FMV video — The FMV intro works through software MPEG decoding; this does not establish complete IPU hardware emulation</title></rect>
+<rect x="846.4" y="205.5" width="36.1" height="127.8" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="864.4" y="273.3" font-size="11" text-anchor="middle" pointer-events="none">IPU</text>
+<rect class="parcial" x="753.6" y="336.4" width="128.9" height="34.1"><title>Native Linux port — Launcher and ISO extraction work; the build is partial (only the runtime is verified in CI); Vulkan backend pending; controllers pending</title></rect>
+<rect x="753.6" y="336.4" width="128.9" height="34.1" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="818" y="357.3" font-size="11" text-anchor="middle" pointer-events="none">Linux</text>
 <rect class="chip" x="462" y="114" width="27.8" height="15" rx="2" pointer-events="none"/>
 <text class="t1" x="466" y="125" font-size="11" pointer-events="none">IOP</text>
-<rect class="chip" x="619.8" y="114" width="21.2" height="15" rx="2" pointer-events="none"/>
-<text class="t1" x="623.8" y="125" font-size="11" pointer-events="none">EE</text>
-<rect class="chip" x="767.7" y="114" width="54.2" height="15" rx="2" pointer-events="none"/>
-<text class="t1" x="771.7" y="125" font-size="11" pointer-events="none">GS / VU</text>
+<rect class="chip" x="612.8" y="114" width="21.2" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="616.8" y="125" font-size="11" pointer-events="none">EE</text>
+<rect class="chip" x="754.1" y="114" width="54.2" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="758.1" y="125" font-size="11" pointer-events="none">GS / VU</text>
+<rect class="chip" x="754.1" y="336.9" width="41" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="758.1" y="347.9" font-size="11" pointer-events="none">Linux</text>
 <rect class="ok" x="16" y="384" width="12" height="12" rx="2"/>
 <text class="t2" x="33" y="394" font-size="12">Working</text>
 <rect class="parcial" x="101.4" y="384" width="12" height="12" rx="2"/>
