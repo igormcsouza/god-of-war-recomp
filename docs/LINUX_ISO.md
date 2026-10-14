@@ -10,7 +10,7 @@ python3 tools/linux/gow_launcher.py \
   --runner "/path/to/ps2EntryRunner"
 ```
 
-If `--iso` is omitted, a graphical file picker opens. A terminal prompt is used when a
+If `--iso` is omitted, the settings window opens (see `docs/LINUX_LAUNCHER.md`; needs `python3-tk`). A terminal prompt is used when a
 graphical display is unavailable. If `--runner` is omitted, the launcher looks for
 `bin/ps2EntryRunner` in the repository; `GOW_RUNNER` can also specify its path. To
 validate and prepare the files without starting the game:

@@ -294,6 +294,146 @@ def _choose_iso() -> Path:
     raise IsoError("specify the ISO with --iso (no graphical picker is available)")
 
 
+DEFAULT_SETTINGS = {
+    "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
+    "raster_threads": 0, "pad_index": None, "debug_ui": False,
+}
+
+
+def settings_path() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / "gow-one-recomp" / "settings.json"
+
+
+def load_settings(path: Path | None = None) -> dict:
+    """Saved settings merged over defaults; unknown keys and wrong types are dropped."""
+    result = dict(DEFAULT_SETTINGS)
+    try:
+        saved = json.loads((path or settings_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return result
+    if isinstance(saved, dict):
+        for key, default in DEFAULT_SETTINGS.items():
+            value = saved.get(key, default)
+            if key == "pad_index":
+                ok = value is None or (type(value) is int and 0 <= value <= 3)
+            else:
+                ok = type(value) is type(default)
+            if ok:
+                result[key] = value
+    if result["resolution_scale"] not in (1, 2, 3):
+        result["resolution_scale"] = 1
+    result["raster_threads"] = max(0, min(result["raster_threads"], 256))
+    return result
+
+
+def save_settings(settings: dict, path: Path | None = None) -> None:
+    path = path or settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.replace(path)
+
+
+def settings_to_env(settings: dict) -> dict[str, str]:
+    """Environment variables for the runner. Only options the runtime already reads are mapped
+    (plus GOW_FULLSCREEN, not yet read by the runtime). show_fps and resolution_scale are stored
+    only: they apply with the Vulkan backend."""
+    env: dict[str, str] = {}
+    if settings.get("fullscreen"):
+        env["GOW_FULLSCREEN"] = "1"
+    if settings.get("debug_ui"):
+        env["GOW_DEBUG_UI"] = "1"
+    if settings.get("pad_index") is not None:
+        env["GOW_PAD_INDEX"] = str(settings["pad_index"])
+    if settings.get("raster_threads"):
+        env["PS2X_GS_RASTER_THREADS"] = str(settings["raster_threads"])
+    return env
+
+
+def detect_pads() -> list[str]:
+    """Names of connected joysticks, from /proc/bus/input/devices (best effort)."""
+    try:
+        text = Path("/proc/bus/input/devices").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    pads = []
+    for block in text.split("\n\n"):
+        if re.search(r"Handlers=.*\bjs\d+", block):
+            match = re.search(r'Name="([^"]*)"', block)
+            pads.append(match.group(1) if match else "Unknown gamepad")
+    return pads
+
+
+def validate_iso(path: str) -> str:
+    """Return '' if the ISO is a supported SCUS-97399, else the error text."""
+    try:
+        prepare(Path(path))
+        return ""
+    except (IsoError, OSError) as exc:
+        return str(exc)
+
+
+def settings_window(settings: dict) -> dict | None:
+    """Tk window. Returns the chosen settings, or None if closed without Play.
+    Raises (ImportError/TclError) when Tk or a display is unavailable."""
+    import tkinter
+    from tkinter import filedialog, ttk
+
+    root = tkinter.Tk()
+    root.title("God of War (recomp) launcher")
+    result: dict | None = None
+    iso = tkinter.StringVar(value=settings["iso"])
+    full = tkinter.BooleanVar(value=settings["fullscreen"])
+    fps = tkinter.BooleanVar(value=settings["show_fps"])
+    dbg = tkinter.BooleanVar(value=settings["debug_ui"])
+    scale = tkinter.StringVar(value=f"{settings['resolution_scale']}x")
+    threads = tkinter.StringVar(value=str(settings["raster_threads"] or "Auto"))
+    pads = detect_pads()
+    pad_values = ["Auto"] + [f"{i}: {n}" for i, n in enumerate(pads[:4])]
+    pad_index = settings["pad_index"]
+    pad = tkinter.StringVar(value="Auto" if pad_index is None else
+                            next((v for v in pad_values if v.startswith(f"{pad_index}:")), str(pad_index)))
+    error = tkinter.StringVar()
+    frame = ttk.Frame(root, padding=10)
+    frame.grid()
+    ttk.Label(frame, text="ISO").grid(row=0, column=0, sticky="w")
+    ttk.Entry(frame, textvariable=iso, width=50).grid(row=0, column=1)
+    ttk.Button(frame, text="Browse...", command=lambda: iso.set(filedialog.askopenfilename(
+        filetypes=[("ISO image", "*.iso"), ("All files", "*")]) or iso.get())).grid(row=0, column=2)
+    ttk.Label(frame, textvariable=error, foreground="red", wraplength=480).grid(row=1, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Fullscreen (pending runtime support)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Show FPS (applies with Vulkan backend)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
+    ttk.Label(frame, text="Internal resolution (applies with Vulkan backend)").grid(row=4, column=0, columnspan=2, sticky="w")
+    ttk.Combobox(frame, textvariable=scale, values=["1x", "2x", "3x"], state="readonly", width=8).grid(row=4, column=2)
+    ttk.Label(frame, text="Raster threads (0/Auto = default)").grid(row=5, column=0, columnspan=2, sticky="w")
+    ttk.Spinbox(frame, from_=0, to=64, textvariable=threads, width=8).grid(row=5, column=2)
+    ttk.Label(frame, text="Controller").grid(row=6, column=0, sticky="w")
+    ttk.Combobox(frame, textvariable=pad, values=pad_values, width=40).grid(row=6, column=1, columnspan=2, sticky="w")
+    ttk.Checkbutton(frame, text="Debug UI", variable=dbg).grid(row=7, column=0, columnspan=3, sticky="w")
+
+    def play() -> None:
+        nonlocal result
+        message = validate_iso(iso.get()) if iso.get() else "choose an ISO"
+        error.set(message)
+        if message:
+            return
+        digits = re.match(r"\d+", pad.get())
+        try:
+            count = int(threads.get())
+        except ValueError:
+            count = 0
+        result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
+                  "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
+                  "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get()}
+        root.destroy()
+
+    ttk.Button(frame, text="Play", command=play).grid(row=8, column=2, sticky="e", pady=8)
+    root.mainloop()
+    return result
+
+
 def _runner_path(explicit: Path | None) -> Path:
     if explicit is not None:
         runner = explicit
@@ -312,15 +452,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--iso", type=Path, help="original ISO image (opens a picker if omitted)")
     parser.add_argument("--runner", type=Path, help="prebuilt native ps2EntryRunner")
     parser.add_argument("--prepare-only", action="store_true", help="validate and prepare the cache without launching")
+    parser.add_argument("--no-gui", "--last", dest="no_gui", action="store_true",
+                        help="skip the settings window and use the saved settings")
     args = parser.parse_args(argv)
     try:
-        iso_path = args.iso or _choose_iso()
+        settings = load_settings()
+        gui = not (args.no_gui or args.iso or args.prepare_only) and bool(
+            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        if gui:
+            try:
+                chosen = settings_window(settings)
+            except Exception:  # python3-tk missing or no usable display: terminal flow.
+                chosen = settings
+                gui = False
+            else:
+                if chosen is None:
+                    return 1
+                settings = chosen
+                save_settings(settings)
+        iso_path = args.iso or (Path(settings["iso"]) if settings["iso"] else None) or _choose_iso()
         runner = None if args.prepare_only else _runner_path(args.runner)
         elf = prepare(iso_path)
         if args.prepare_only:
             print(f"Prepared: {elf}")
             return 0
         environment = os.environ.copy()
+        environment.update(settings_to_env(settings))
         environment["GOW_ISO"] = str(iso_path.expanduser().resolve())
         assert runner is not None
         return subprocess.call([str(runner), str(elf)], cwd=elf.parent, env=environment)

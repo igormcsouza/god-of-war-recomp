@@ -162,5 +162,48 @@ class LauncherTest(unittest.TestCase):
             popen.assert_not_called()
 
 
+class SettingsTest(unittest.TestCase):
+    def test_roundtrip_defaults_and_bad_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sub" / "settings.json"
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+            chosen = dict(launcher.DEFAULT_SETTINGS, iso="/x.iso", pad_index=2, raster_threads=4)
+            launcher.save_settings(chosen, path)
+            self.assertEqual(launcher.load_settings(path), chosen)
+            path.write_text('{"pad_index": 9, "resolution_scale": 7, "debug_ui": "yes", "junk": 1}')
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+            path.write_text("not json")
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+
+    def test_settings_path_uses_xdg(self) -> None:
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/cfg"}):
+            self.assertEqual(launcher.settings_path(), Path("/cfg/gow-one-recomp/settings.json"))
+
+    def test_env_mapping(self) -> None:
+        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS), {})
+        env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, fullscreen=True, debug_ui=True,
+                                            pad_index=0, raster_threads=3, resolution_scale=3))
+        self.assertEqual(env, {"GOW_FULLSCREEN": "1", "GOW_DEBUG_UI": "1", "GOW_PAD_INDEX": "0",
+                               "PS2X_GS_RASTER_THREADS": "3"})
+
+    def test_last_uses_saved_settings_without_gui(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp) / "d.iso"
+            elf = make_iso(iso)
+            import hashlib
+            runner = Path(tmp) / "r"
+            runner.write_text("#!/bin/sh\n")
+            runner.chmod(0o755)
+            cfg = Path(tmp) / "cfg"
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg), "XDG_CACHE_HOME": tmp + "/c"}), \
+                 patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf).hexdigest()), \
+                 patch.object(launcher, "settings_window") as win, \
+                 patch.object(launcher.subprocess, "call", return_value=0) as call:
+                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso), debug_ui=True))
+                self.assertEqual(launcher.main(["--last", "--runner", str(runner)]), 0)
+                win.assert_not_called()
+            self.assertEqual(call.call_args[1]["env"]["GOW_DEBUG_UI"], "1")
+
+
 if __name__ == "__main__":
     unittest.main()
