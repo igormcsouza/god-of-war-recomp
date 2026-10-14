@@ -6557,3 +6557,35 @@ finish-per-primitive change, the whole suite also passes under `PS2X_GS_BACKEND=
 `PS2X_GS_BACKEND=vulkan` selects the Intel iGPU and shows the main menu correctly (`GOW_SCREENSHOT_AT=28`). FPS is unchanged
 (title: 4.0/4.0/3.0 at 15/22/29 s for both Vulkan and CPU), as expected: the intro is almost all textured primitives, which still
 run on the CPU. Next: phase B (textures/CLUT on the GPU), then phase C (blend/tests/Z, batching, dirty-page copies).
+
+### Vulkan GS backend, phase B (2026-10-14)
+
+`patches/ps2recomp-gs-vulkan.patch` regenerated in place (still last). Design: [`docs/VULKAN.md`](VULKAN.md). The GPU now
+draws textured sprites and triangles (every texture PSM, CLUT CT32/24/16/16S with CSM1/CSM2/CSA, TEXA, the four wrap modes,
+TCC/TFX, nearest/bilinear, FST and STQ with an exact 1/Q), alpha test (all AFAIL modes), blending (PABE, COLCLAMP) and Z
+test/write (interpolated Z in fixed point). Per-primitive state moved from push constants to a record buffer; the CLUT
+is a GPU buffer copied when a run opens; `TextureFlush` and non-loading `LoadClut` no longer end a run. New
+`PS2X_GS_VULKAN_STATS=1` (see VULKAN.md) logs GPU/CPU draws per second with fallback reasons and run-ending causes.
+
+Verified: `ps2x_tests` 629/629 (run from `PS2Recomp/`; the new "Textured Vulkan VRAM equals CPU VRAM" plus the extended
+untextured scene are byte-identical on Intel RPL-P, NVIDIA RTX 5050 and llvmpipe; a deliberate 1-bit change to the
+bilinear weights makes the textured test fail). Menu screenshots (`GOW_SCREENSHOT_AT=8,15,28,38`) look right: fire, logo,
+Kratos, "New Game".
+
+Stats and FPS, title menu/intro on Intel RPL-P, 42 s runs (title FPS = `vid::Flip`/s):
+
+| Step | GPU draws/s | CPU draws/s, main reason | FPS |
+|---|---|---|---|
+| CPU backend (`PS2X_GS_BACKEND=cpu`) | 0 | all | 3.0-4.0 |
+| phase A | ~100 | ~55k, `blend` | 4.0 |
+| + textures | ~120 | ~55k, `blend` | 4.0 |
+| + blend, `TextureFlush` keeps runs | ~500 | ~50k, `alpha-test` | 3.0 |
+| + alpha test, flat Z | ~1.3k | ~44k, `z-varying` | 3.0 |
+| + interpolated Z | ~9.8k | ~21k, `tex-feedback` | 2.0 |
+
+Finding: correctness is there, but FPS gets worse as more draws move to the GPU. The cost is one dispatch plus a full
+barrier per primitive (~10k/s) and 60-90 GPU runs per second (two 4 MiB copies each, ended mostly by `LoadClut` and
+`BeginTransfer`), on top of ~21k/s `tex-feedback` draws that stay on the CPU. Until that is fixed the CPU backend is
+faster on this machine (`PS2X_GS_BACKEND=cpu`). Next (phase C): batch primitives per dispatch (tile binning like `kRaster`)
+instead of one barrier each; run CLUT loads and host-to-local transfers on the GPU so runs are not split; check whether the
+`tex-feedback` draws really overlap (exact texel rectangle instead of the page estimate); dirty-page copies.

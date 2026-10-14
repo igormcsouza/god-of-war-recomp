@@ -1,5 +1,5 @@
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index 0b06f85..a3c2937 100644
+index ffca57d..a3c2937 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -519,6 +519,34 @@ if(WIN32)
@@ -37,6 +37,31 @@ index 0b06f85..a3c2937 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
+@@ -655,3 +683,11 @@ endif()
+ install(DIRECTORY include/
+     DESTINATION include
+ )
++
++# GOW-Port include (Linux build helper)
++target_include_directories(ps2EntryRunner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/runner)
++
++# GOW-Port: moderate runner optimization for practical first builds
++if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++    target_compile_options(ps2EntryRunner PRIVATE $<$<CONFIG:Release>:-O1>)
++endif()
+diff --git a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h b/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
+index 444aad7..ec413f6 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
+@@ -42,6 +42,8 @@ public:
+     bool ImportState(const GSBackendState &state) override;
+ 
+ private:
++    // GOW-Port: the Vulkan backend wraps this one and reads the CLUT (m_clut, m_clutCbp) between calls.
++    friend class GSVulkanBackend;
+     void ResetUnlocked();
+     void UploadImageUnlocked(const uint8_t *data, uint32_t sizeBytes);
+     void LoadClutUnlocked(const GSTex0Reg &tex0, const GSTexClutReg &texclut);
 diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
 index 41cd2f7..d4ae045 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
@@ -52,11 +77,11 @@ index 41cd2f7..d4ae045 100644
      void Reset() override;
 diff --git a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
 new file mode 100644
-index 0000000..f83e233
+index 0000000..58b51e8
 --- /dev/null
 +++ b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
-@@ -0,0 +1,63 @@
-+// GOW-Port: Vulkan GS backend (phase A). See docs/VULKAN.md in the God of War port repository.
+@@ -0,0 +1,65 @@
++// GOW-Port: Vulkan GS backend (phases A-B). See docs/VULKAN.md in the God of War port repository.
 +#pragma once
 +
 +#include "runtime/gs/gs_backend.h"
@@ -109,8 +134,10 @@ index 0000000..f83e233
 +private:
 +    struct Impl;
 +    // Waits for recorded GPU work and copies the GPU VRAM back to host VRAM.
-+    void Finish() const;
-+    bool RecordGpu(const GSPrimitiveBatch &batch);
++    // `cause` names what ended the GPU run (PS2X_GS_VULKAN_STATS).
++    void Finish(const char *cause = "finish") const;
++    // nullptr when the primitive was recorded for the GPU, else the reason for the CPU fallback.
++    const char *RecordGpu(const GSPrimitiveBatch &batch);
 +
 +    std::unique_ptr<Impl> m_impl;
 +    GSCpuBackend m_cpu;
@@ -121,12 +148,12 @@ index 0000000..f83e233
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..d76ad17
+index 0000000..aab3011
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,506 @@
-+// GOW-Port: Vulkan GS backend, phase A (untextured sprites and triangles on the GPU, everything else on
-+// GSCpuBackend). Design notes: docs/VULKAN.md in the God of War port repository.
+@@ -0,0 +1,740 @@
++// GOW-Port: Vulkan GS backend, phases A-B (untextured and textured sprites and triangles on the GPU,
++// everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the God of War port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
 +#include "runtime/gs/gs_swizzle.h"
 +#include "runtime/gs/ps2_gs_common.h"
@@ -139,14 +166,19 @@ index 0000000..d76ad17
 +#include <xmmintrin.h>
 +
 +#include <algorithm>
++#include <array>
++#include <cmath>
++#include <chrono>
 +#include <cstdio>
++#include <map>
++#include <string>
 +#include <cstdlib>
 +#include <cstring>
 +
 +namespace
 +{
-+    // Must match the push_constant block of the kernel in gs_vulkan_shader_export.cpp.
-+    struct PrimPush
++    // Must match struct Prim of the kernel in gs_vulkan_shader_export.cpp (std430).
++    struct PrimRecord
 +    {
 +        int64_t ea[3];
 +        int64_t eb[3];
@@ -157,13 +189,35 @@ index 0000000..d76ad17
 +        uint32_t mode;
 +        uint32_t fbmsk;
 +        uint32_t color[3];
++        uint32_t tex;
++        uint32_t tsize;
++        uint32_t tmode;
++        uint32_t texa;
++        uint32_t clampLo;
++        uint32_t clampHi;
++        float axis[4];
++        float attr[12];
++        uint32_t alpha;
++        uint32_t test;
++        uint32_t zbuf;
++        uint32_t z;
++        int32_t zd[2];
 +    };
-+    static_assert(sizeof(PrimPush) == 120, "push constant layout");
++    static_assert(sizeof(PrimRecord) == 232, "std430 layout of struct Prim");
 +
 +    constexpr uint32_t kTriangle = 0x100u;
 +    constexpr uint32_t kIip = 0x200u;
 +    constexpr uint32_t kFba = 0x400u;
-+    constexpr uint32_t kBias0 = 0x800u;
++    constexpr uint32_t kBias0 = 0x800u; // 0x800, 0x1000, 0x2000
++    constexpr uint32_t kTme = 0x4000u;
++    constexpr uint32_t kFst = 0x8000u;
++    constexpr uint32_t kLinear = 0x10000u;
++    constexpr uint32_t kZip = 0x20000u;
++    constexpr uint32_t kAbe = 0x10000u; // PrimRecord::alpha flags
++    constexpr uint32_t kPabe = 0x20000u;
++    constexpr uint32_t kColclamp = 0x40000u;
++    // ponytail: fixed record ring per GPU run (~3.4 MB); a full ring ends the run.
++    constexpr uint32_t kMaxPrims = 16384u;
 +
 +    struct VkShared
 +    {
@@ -267,18 +321,18 @@ index 0000000..d76ad17
 +            return "vkCreateDevice failed";
 +        vkGetDeviceQueue(s.device, s.family, 0, &s.queue);
 +
-+        VkDescriptorSetLayoutBinding bindings[2]{};
-+        for (uint32_t i = 0; i < 2; ++i)
++        VkDescriptorSetLayoutBinding bindings[4]{};
++        for (uint32_t i = 0; i < 4; ++i)
 +        {
-+            bindings[i].binding = i; // 0 = VRAM, 1 = swizzle tables (kCommon)
++            bindings[i].binding = i; // 0 = VRAM, 1 = swizzle tables, 2 = CLUT (kCommon), 3 = primitive records
 +            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 +            bindings[i].descriptorCount = 1;
 +            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 +        }
 +        VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-+        setInfo.bindingCount = 2;
++        setInfo.bindingCount = 4;
 +        setInfo.pBindings = bindings;
-+        VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PrimPush)};
++        VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(uint32_t)};
 +        VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
 +        layoutInfo.setLayoutCount = 1;
 +        layoutInfo.pSetLayouts = &s.setLayout;
@@ -348,8 +402,33 @@ index 0000000..d76ad17
 +               (static_cast<uint32_t>(v.a) << 24u);
 +    }
 +
-+    // Phase A subset: the state where GSCpuBackend::WritePixel reduces to "store color, honour FBMSK/FBA".
-+    bool gpuSupports(const GSPrimitiveBatch &batch)
++    float fabsQ(float q)
++    {
++        return (std::fabs(q) > 1.0e-8f) ? q : 1.0f; // gs_cpu_backend.cpp
++    }
++
++    // gowTextureAliasesTargets of gs_cpu_backend.cpp: one dispatch reading pages it writes would race,
++    // while the CPU draws them in row order.
++    bool textureAliasesTargets(const GSDrawState &state, int maxY)
++    {
++        const GSContext &ctx = state.context;
++        std::array<bool, 512> target{};
++        const uint32_t rows = static_cast<uint32_t>(std::max(maxY, 0) + 1 + 31) / 32u;
++        const uint32_t pages = std::max<uint32_t>(ctx.frame.fbw, 1u) * rows;
++        for (const uint32_t base : {GSInternal::framePageBaseToBlock(ctx.frame.fbp) >> 5, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) >> 5})
++            for (uint32_t i = 0; i < pages && i < 512u; ++i)
++                target[(base + i) & 511u] = true;
++        const uint32_t texRows = (static_cast<uint32_t>(state.textureHeight) + 31u) / 32u;
++        const uint32_t texPages = std::min<uint32_t>(std::max<uint32_t>(ctx.tex0.tbw, 1u) * texRows + 1u, 512u);
++        for (uint32_t i = 0; i < texPages; ++i)
++            if (target[((ctx.tex0.tbp0 >> 5) + i) & 511u])
++                return true;
++        return false;
++    }
++
++    // The state where GSCpuBackend::WritePixel reduces to "alpha test, blend, honour FBMSK/FBA, store color". Returns the
++    // fallback reason, or nullptr when the GPU can draw the primitive.
++    const char *gpuUnsupported(const GSPrimitiveBatch &batch)
 +    {
 +        const GSDrawState &state = batch.state;
 +        const GSContext &ctx = state.context;
@@ -357,13 +436,41 @@ index 0000000..d76ad17
 +        const bool triangle = (state.prim.type == GS_PRIM_TRIANGLE || state.prim.type == GS_PRIM_TRISTRIP ||
 +                               state.prim.type == GS_PRIM_TRIFAN) && batch.vertexCount >= 3u;
 +        const uint8_t psm = ctx.frame.psm;
-+        const bool colorFormat = psm == GS_PSM_CT32 || psm == GS_PSM_CT24 || psm == GS_PSM_CT16 || psm == GS_PSM_CT16S;
 +        const uint64_t test = ctx.test;
-+        const bool noAlphaTests = (test & 0x1u) == 0u && (test & 0x4000u) == 0u;
-+        // ZTE=0, or ZTST=ALWAYS without Z write.
-+        const bool noDepth = (test & 0x10000u) == 0u || (((test >> 17) & 3u) == 1u && ctx.zbuf.zmask);
-+        return (sprite || triangle) && colorFormat && noAlphaTests && noDepth && !state.prim.tme && !state.prim.fge &&
-+               !state.prim.abe;
++        if (!sprite && !triangle)
++            return "line/point";
++        if (psm != GS_PSM_CT32 && psm != GS_PSM_CT24 && psm != GS_PSM_CT16 && psm != GS_PSM_CT16S)
++            return "frame-psm";
++        if (test & 0x4000u)
++            return "dest-alpha-test";
++        if ((test & 0x10000u) != 0u)
++        {
++            const uint8_t zpsm = ctx.zbuf.psm;
++            if (zpsm != GS_PSM_Z32 && zpsm != GS_PSM_Z24 && zpsm != GS_PSM_Z16 && zpsm != GS_PSM_Z16S)
++                return "z-psm";
++            // Interpolated Z runs in fixed point on the GPU: integer Z in [0, 2^32), deltas below 2^28.
++            const GSVertex *v = batch.vertices.data();
++            for (int i = 0; i < (triangle ? 3 : 0); ++i)
++                if (!(v[i].z >= 0.0 && v[i].z < 4294967296.0 && v[i].z == std::floor(v[i].z) &&
++                      std::fabs(v[i].z - v[0].z) < 268435456.0))
++                    return "z-range";
++        }
++        if (state.prim.fge)
++            return "fog";
++        if (state.prim.tme)
++        {
++            switch (ctx.tex0.psm)
++            {
++            case 0x00: case 0x01: case 0x02: case 0x0A: case 0x13: case 0x14: case 0x1B: case 0x24: case 0x2C:
++            case 0x30: case 0x31: case 0x32: case 0x3A:
++                break;
++            default:
++                return "tex-psm";
++            }
++            if (textureAliasesTargets(state, ctx.scissor.y1))
++                return "tex-feedback";
++        }
++        return nullptr;
 +    }
 +}
 +
@@ -378,15 +485,51 @@ index 0000000..d76ad17
 +    VkCommandPool commandPool = VK_NULL_HANDLE;
 +    VkCommandBuffer cmd = VK_NULL_HANDLE;
 +    VkFence fence = VK_NULL_HANDLE;
++    VkBuffer prims = VK_NULL_HANDLE;
++    VkDeviceMemory primsMemory = VK_NULL_HANDLE;
++    PrimRecord *primsMapped = nullptr;
++    VkBuffer clut = VK_NULL_HANDLE;
++    VkDeviceMemory clutMemory = VK_NULL_HANDLE;
++    void *clutMapped = nullptr;
++    uint32_t primCount = 0;
 +    bool open = false;
++
++    // PS2X_GS_VULKAN_STATS=1: once per second, GPU vs CPU draws with fallback reasons and what ended GPU runs.
++    bool statsEnabled = [] { const char *v = std::getenv("PS2X_GS_VULKAN_STATS"); return v && *v && *v != '0'; }();
++    std::chrono::steady_clock::time_point statsStart = std::chrono::steady_clock::now();
++    uint64_t statsGpu = 0, statsCpu = 0, statsRuns = 0;
++    std::map<std::string, uint64_t> statsFallback, statsRunEnd;
++
++    void statsTick()
++    {
++        const auto now = std::chrono::steady_clock::now();
++        if (now - statsStart < std::chrono::seconds(1))
++            return;
++        std::string line;
++        for (const auto &[reason, count] : statsFallback)
++            line += " " + reason + "=" + std::to_string(count);
++        line += " | runs=" + std::to_string(statsRuns) + " ended by:";
++        for (const auto &[cause, count] : statsRunEnd)
++            line += " " + cause + "=" + std::to_string(count);
++        std::fprintf(stderr, "[gow-gs-vk] gpu=%llu cpu=%llu:%s\n", static_cast<unsigned long long>(statsGpu),
++                     static_cast<unsigned long long>(statsCpu), line.c_str());
++        statsStart = now;
++        statsGpu = statsCpu = statsRuns = 0;
++        statsFallback.clear();
++        statsRunEnd.clear();
++    }
 +
 +    explicit Impl(VkShared &shared) : s(shared) {}
 +
 +    bool create()
 +    {
-+        if (!makeHostBuffer(s, GSSwizzle::kMemorySize, vram, vramMemory, &mapped))
++        void *primsVoid = nullptr;
++        if (!makeHostBuffer(s, GSSwizzle::kMemorySize, vram, vramMemory, &mapped) ||
++            !makeHostBuffer(s, kMaxPrims * sizeof(PrimRecord), prims, primsMemory, &primsVoid) ||
++            !makeHostBuffer(s, 512u * sizeof(uint16_t), clut, clutMemory, &clutMapped))
 +            return false;
-+        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2};
++        primsMapped = static_cast<PrimRecord *>(primsVoid);
++        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4};
 +        VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
 +        poolInfo.maxSets = 1;
 +        poolInfo.poolSizeCount = 1;
@@ -399,9 +542,10 @@ index 0000000..d76ad17
 +        setInfo.pSetLayouts = &s.setLayout;
 +        if (vkAllocateDescriptorSets(s.device, &setInfo, &set) != VK_SUCCESS)
 +            return false;
-+        VkDescriptorBufferInfo buffers[2] = {{vram, 0, VK_WHOLE_SIZE}, {s.swizzle, 0, VK_WHOLE_SIZE}};
-+        VkWriteDescriptorSet writes[2]{};
-+        for (uint32_t i = 0; i < 2; ++i)
++        VkDescriptorBufferInfo buffers[4] = {{vram, 0, VK_WHOLE_SIZE}, {s.swizzle, 0, VK_WHOLE_SIZE},
++                                             {clut, 0, VK_WHOLE_SIZE}, {prims, 0, VK_WHOLE_SIZE}};
++        VkWriteDescriptorSet writes[4]{};
++        for (uint32_t i = 0; i < 4; ++i)
 +        {
 +            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
 +            writes[i].dstSet = set;
@@ -410,7 +554,7 @@ index 0000000..d76ad17
 +            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
 +            writes[i].pBufferInfo = &buffers[i];
 +        }
-+        vkUpdateDescriptorSets(s.device, 2, writes, 0, nullptr);
++        vkUpdateDescriptorSets(s.device, 4, writes, 0, nullptr);
 +
 +        VkCommandPoolCreateInfo poolCreate{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
 +        poolCreate.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -438,6 +582,12 @@ index 0000000..d76ad17
 +            vkDestroyBuffer(s.device, vram, nullptr);
 +        if (vramMemory)
 +            vkFreeMemory(s.device, vramMemory, nullptr);
++        for (VkBuffer buffer : {prims, clut})
++            if (buffer)
++                vkDestroyBuffer(s.device, buffer, nullptr);
++        for (VkDeviceMemory memory : {primsMemory, clutMemory})
++            if (memory)
++                vkFreeMemory(s.device, memory, nullptr);
 +    }
 +
 +    void memoryBarrier(VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
@@ -472,12 +622,17 @@ index 0000000..d76ad17
 +    return m_impl != nullptr;
 +}
 +
-+void GSVulkanBackend::Finish() const
++void GSVulkanBackend::Finish(const char *cause) const
 +{
 +    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 +    if (!m_impl || !m_impl->open)
 +        return;
 +    Impl &impl = *m_impl;
++    if (impl.statsEnabled)
++    {
++        ++impl.statsRuns;
++        ++impl.statsRunEnd[cause];
++    }
 +    impl.memoryBarrier(VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
 +    vkEndCommandBuffer(impl.cmd);
 +    VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
@@ -495,20 +650,24 @@ index 0000000..d76ad17
 +    std::memcpy(m_vram, impl.mapped, std::min<size_t>(m_vramSize, GSSwizzle::kMemorySize));
 +}
 +
-+bool GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
++const char *GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
 +{
-+    if (!m_impl || !m_vram || m_vramSize < GSSwizzle::kMemorySize || !gpuSupports(batch))
-+        return false;
++    if (!m_impl || !m_vram || m_vramSize < GSSwizzle::kMemorySize)
++        return "no-gpu";
++    if (const char *reason = gpuUnsupported(batch))
++        return reason;
 +    const GSDrawState &state = batch.state;
 +    const GSContext &ctx = state.context;
 +    const GSVertex &v0 = batch.vertices[0];
 +    const GSVertex &v1 = batch.vertices[1];
 +    const GSVertex &v2 = batch.vertices[2];
++    const float texW = static_cast<float>(state.textureWidth);
++    const float texH = static_cast<float>(state.textureHeight);
 +
 +    // Same float rounding as GSCpuBackend::Submit (GSCpuRoundingScope).
 +    const unsigned csr = _mm_getcsr();
 +    _mm_setcsr(csr & ~_MM_ROUND_MASK);
-+    PrimPush push{};
++    PrimRecord rec{};
 +    int x0, y0, x1, y1;
 +    bool empty = false;
 +    if (state.prim.type == GS_PRIM_SPRITE)
@@ -519,7 +678,28 @@ index 0000000..d76ad17
 +        y0 = std::max(axisY.first, static_cast<int>(ctx.scissor.y0));
 +        x1 = std::min(axisX.last, static_cast<int>(ctx.scissor.x1));
 +        y1 = std::min(axisY.last, static_cast<int>(ctx.scissor.y1));
-+        push.color[0] = packColor(v1);
++        rec.color[0] = packColor(v1);
++        rec.axis[0] = axisX.origin;
++        rec.axis[1] = axisX.scale;
++        rec.axis[2] = axisY.origin;
++        rec.axis[3] = axisY.scale;
++        // Per-vertex texel coordinates exactly as GSCpuBackend::DrawSprite computes them.
++        if (state.prim.fst)
++        {
++            rec.attr[0] = static_cast<float>(v0.u) / 16.0f;
++            rec.attr[1] = static_cast<float>(v0.v) / 16.0f;
++            rec.attr[2] = static_cast<float>(v1.u) / 16.0f;
++            rec.attr[3] = static_cast<float>(v1.v) / 16.0f;
++        }
++        else
++        {
++            const float q0 = fabsQ(v0.q);
++            const float q1 = fabsQ(v1.q);
++            rec.attr[0] = (v0.s / q0) * texW;
++            rec.attr[1] = (v0.t / q0) * texH;
++            rec.attr[2] = (v1.s / q1) * texW;
++            rec.attr[3] = (v1.t / q1) * texH;
++        }
 +    }
 +    else
 +    {
@@ -531,39 +711,89 @@ index 0000000..d76ad17
 +        y1 = std::min(t.maxY, static_cast<int>(ctx.scissor.y1));
 +        for (int i = 0; i < 3; ++i)
 +        {
-+            push.ea[i] = t.a[i];
-+            push.eb[i] = t.b[i];
-+            push.ec[i] = t.c[i];
-+            push.mode |= t.bias[i] ? (kBias0 << i) : 0u;
++            rec.ea[i] = t.a[i];
++            rec.eb[i] = t.b[i];
++            rec.ec[i] = t.c[i];
++            rec.mode |= t.bias[i] ? (kBias0 << i) : 0u;
++            const GSVertex &v = batch.vertices[i];
++            if (state.prim.fst)
++            {
++                rec.attr[i * 2] = static_cast<float>(v.u);
++                rec.attr[i * 2 + 1] = static_cast<float>(v.v);
++            }
++            else
++            {
++                rec.attr[i * 3] = v.s;
++                rec.attr[i * 3 + 1] = v.t;
++                rec.attr[i * 3 + 2] = v.q;
++            }
 +        }
-+        push.area = t.area;
-+        push.mode |= kTriangle;
++        rec.area = t.area;
++        rec.mode |= kTriangle;
 +        if (state.prim.iip)
 +        {
-+            push.mode |= kIip;
-+            push.color[0] = packColor(v0);
-+            push.color[1] = packColor(v1);
-+            push.color[2] = packColor(v2);
++            rec.mode |= kIip;
++            rec.color[0] = packColor(v0);
++            rec.color[1] = packColor(v1);
++            rec.color[2] = packColor(v2);
 +        }
 +        else
-+            push.color[0] = packColor(v2);
++            rec.color[0] = packColor(v2);
 +    }
 +    _mm_setcsr(csr);
 +    if (empty || x0 > x1 || y0 > y1)
-+        return true; // the CPU backend draws nothing either
++        return nullptr; // the CPU backend draws nothing either
 +
-+    push.rect[0] = x0;
-+    push.rect[1] = y0;
-+    push.rect[2] = x1;
-+    push.rect[3] = y1;
-+    push.frame = GSInternal::framePageBaseToBlock(ctx.frame.fbp) | (std::max<uint32_t>(ctx.frame.fbw, 1u) << 16u);
-+    push.mode |= ctx.frame.psm | ((ctx.fba & 1u) ? kFba : 0u);
-+    push.fbmsk = ctx.frame.fbmsk;
++    rec.rect[0] = x0;
++    rec.rect[1] = y0;
++    rec.rect[2] = x1;
++    rec.rect[3] = y1;
++    rec.frame = GSInternal::framePageBaseToBlock(ctx.frame.fbp) | (std::max<uint32_t>(ctx.frame.fbw, 1u) << 16u);
++    rec.mode |= ctx.frame.psm | ((ctx.fba & 1u) ? kFba : 0u);
++    rec.fbmsk = ctx.frame.fbmsk;
++    rec.test = static_cast<uint32_t>(ctx.test & 0x3FFFu);
++    // Z as DrawSprite (u32(v1.z)) and DrawTriangle (v0.z plus the interpolated deltas) pass it on.
++    if (state.prim.type == GS_PRIM_SPRITE)
++        rec.z = static_cast<uint32_t>(v1.z);
++    else if ((ctx.test & 0x10000u) != 0u)
++    {
++        rec.z = static_cast<uint32_t>(v0.z);
++        rec.zd[0] = static_cast<int32_t>(v1.z - v0.z);
++        rec.zd[1] = static_cast<int32_t>(v2.z - v0.z);
++        rec.mode |= kZip;
++    }
++    {
++        const bool zte = (ctx.test & 0x10000u) != 0u;
++        const uint32_t ztst = zte ? static_cast<uint32_t>((ctx.test >> 17) & 3u) : 1u;
++        rec.zbuf = GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) | (static_cast<uint32_t>(ctx.zbuf.psm) << 16u) |
++                   (ztst << 24u) | ((zte && !ctx.zbuf.zmask) ? 0x4000000u : 0u);
++    }
++    if (state.prim.abe)
++        rec.alpha = static_cast<uint32_t>(ctx.alpha & 0xFFu) | (static_cast<uint32_t>((ctx.alpha >> 32) & 0xFFu) << 8u) | kAbe |
++                    (state.pabe ? kPabe : 0u) | ((state.colclamp & 1u) ? kColclamp : 0u);
++    if (state.prim.tme)
++    {
++        const GSTex0Reg &tex = ctx.tex0;
++        rec.mode |= kTme | (state.prim.fst ? kFst : 0u) | (state.linearFilter ? kLinear : 0u);
++        rec.tex = (tex.tbp0 & 0x3FFFu) | (static_cast<uint32_t>(tex.tbw) << 16u) | (static_cast<uint32_t>(tex.psm) << 24u);
++        rec.tsize = state.textureWidth | (static_cast<uint32_t>(state.textureHeight) << 16u);
++        rec.tmode = tex.tcc | (static_cast<uint32_t>(tex.tfx) << 8u) | (static_cast<uint32_t>(tex.cpsm) << 16u) |
++                    (static_cast<uint32_t>(tex.csm) << 24u);
++        rec.texa = (tex.csa & 0x1Fu) | (static_cast<uint32_t>(state.texa.ta0) << 8u) |
++                   (state.texa.aem ? 0x10000u : 0u) | (static_cast<uint32_t>(state.texa.ta1) << 24u);
++        rec.clampLo = static_cast<uint32_t>(ctx.clamp);
++        rec.clampHi = static_cast<uint32_t>(ctx.clamp >> 32u);
++    }
 +
 +    Impl &impl = *m_impl;
++    if (impl.open && impl.primCount == kMaxPrims)
++        Finish("record-ring");
 +    if (!impl.open)
 +    {
 +        std::memcpy(impl.mapped, m_vram, GSSwizzle::kMemorySize);
++        // CLUT loads end the run (LoadClut), so the CLUT is constant within one.
++        std::memcpy(impl.clutMapped, m_cpu.m_clut.data(), 512u * sizeof(uint16_t));
++        impl.primCount = 0;
 +        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
 +        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 +        vkBeginCommandBuffer(impl.cmd, &begin);
@@ -577,10 +807,12 @@ index 0000000..d76ad17
 +        // non-overlapping primitives (or tile-bin like kRaster) when this becomes the bottleneck.
 +        impl.memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 +    }
-+    vkCmdPushConstants(impl.cmd, impl.s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
++    const uint32_t index = impl.primCount++;
++    impl.primsMapped[index] = rec;
++    vkCmdPushConstants(impl.cmd, impl.s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(index), &index);
 +    vkCmdDispatch(impl.cmd, static_cast<uint32_t>(x1 - x0) / 8u + 1u, static_cast<uint32_t>(y1 - y0) / 8u + 1u, 1u);
 +    ++m_gpuPrimitives;
-+    return true;
++    return nullptr;
 +}
 +
 +void GSVulkanBackend::Initialize(uint8_t *vram, uint32_t vramSize)
@@ -602,23 +834,52 @@ index 0000000..d76ad17
 +void GSVulkanBackend::Submit(const GSPrimitiveBatch &batch)
 +{
 +    std::lock_guard<std::recursive_mutex> lock(m_mutex);
-+    if (RecordGpu(batch))
++    const char *reason = RecordGpu(batch);
++    if (m_impl && m_impl->statsEnabled)
++    {
++        if (reason)
++        {
++            ++m_impl->statsCpu;
++            ++m_impl->statsFallback[reason];
++        }
++        else
++            ++m_impl->statsGpu;
++        m_impl->statsTick();
++    }
++    if (!reason)
 +        return;
-+    Finish();
++    Finish(reason);
 +    m_cpu.Submit(batch);
 +}
 +
 +// Everything below is CPU work on host VRAM, after the GPU run (if any) has landed there.
 +#define GOW_VK_CPU(call)                                \
 +    std::lock_guard<std::recursive_mutex> lock(m_mutex); \
-+    Finish();                                           \
++    Finish(#call);                                      \
 +    return m_cpu.call
 +
-+void GSVulkanBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut) { GOW_VK_CPU(LoadClut(tex0, texclut)); }
++void GSVulkanBackend::LoadClut(const GSTex0Reg &tex0, const GSTexClutReg &texclut)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    // Same early-outs as GSCpuBackend::LoadClut: when no CLUT is loaded, VRAM is not read and the run goes on.
++    const bool indexed = tex0.psm == GS_PSM_T8 || tex0.psm == GS_PSM_T8H || tex0.psm == GS_PSM_T4 ||
++                         tex0.psm == GS_PSM_T4HL || tex0.psm == GS_PSM_T4HH;
++    const bool loads = indexed && tex0.cld >= 1u && tex0.cld <= 5u &&
++                       !(tex0.cld == 4u && m_cpu.m_clutCbp[0] == tex0.cbp) &&
++                       !(tex0.cld == 5u && m_cpu.m_clutCbp[1] == tex0.cbp);
++    if (loads)
++        Finish("LoadClut");
++    m_cpu.LoadClut(tex0, texclut);
++}
 +void GSVulkanBackend::BeginTransfer(const GSTransferCommand &command) { GOW_VK_CPU(BeginTransfer(command)); }
 +void GSVulkanBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes) { GOW_VK_CPU(UploadImage(data, sizeBytes)); }
 +void GSVulkanBackend::Flush() { GOW_VK_CPU(Flush()); }
-+void GSVulkanBackend::TextureFlush() { GOW_VK_CPU(TextureFlush()); }
++// Only drops the CPU texture page cache: no VRAM access, so the GPU run goes on.
++void GSVulkanBackend::TextureFlush()
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    m_cpu.TextureFlush();
++}
 +void GSVulkanBackend::Sync(GSSyncReason reason) { GOW_VK_CPU(Sync(reason)); }
 +PresentationFrame GSVulkanBackend::Present(const GSPresentationRequest &request) { GOW_VK_CPU(Present(request)); }
 +bool GSVulkanBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba) { GOW_VK_CPU(ClearFramebuffer(context, rgba)); }
@@ -633,10 +894,10 @@ index 0000000..d76ad17
 +#undef GOW_VK_CPU
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 new file mode 100644
-index 0000000..9583297
+index 0000000..21137ad
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,450 @@
 +// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
 +// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
 +// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
@@ -661,37 +922,101 @@ index 0000000..9583297
 +#define TABLE_P4 917504u
 +)GLSL";
 +
-+    // One primitive per dispatch over its scissored bounding box. Coverage and Gouraud weights follow
-+    // GSCpuBackend::DrawSprite/DrawTriangle exactly (gs_triangle_rules.h); the pixel write follows
-+    // GSCpuBackend::WritePixel for the subset GSVulkanBackend accepts (no texture, fog, blend, tests, Z).
++    // One primitive per dispatch over its scissored bounding box. Coverage, Gouraud weights and texture
++    // sampling follow GSCpuBackend::DrawSprite/DrawTriangle/SampleTexture exactly (gs_triangle_rules.h);
++    // the pixel write follows GSCpuBackend::WritePixel for the subset GSVulkanBackend accepts (no fog,
++    // blend, tests or Z). Float math is `precise` (no FMA contraction, like -march=x86-64-v2 on the CPU)
++    // and 1/Q uses an exact integer division because GLSL division is not correctly rounded.
 +    const char *const kKernel = R"GLSL(
 +layout(local_size_x = 8, local_size_y = 8) in;
 +
-+layout(push_constant) uniform Prim
++// Must match PrimRecord in gs_vulkan_backend.cpp.
++struct Prim
 +{
 +    int64_t ea[3];
 +    int64_t eb[3];
 +    int64_t ec[3];
 +    int64_t area;
-+    ivec4 rect;      // inclusive x0, y0, x1, y1
++    int rect[4];     // inclusive x0, y0, x1, y1
 +    uint frame;      // frame base in blocks | fbw << 16
 +    uint mode;       // psm | M_* flags
 +    uint fbmsk;
 +    uint color[3];   // sprite / flat: color[0]; Gouraud: v0, v1, v2
-+} p;
++    uint tex;        // tbp0 | tbw << 16 | tpsm << 24
++    uint tsize;      // texW | texH << 16
++    uint tmode;      // tcc | tfx << 8 | cpsm << 16 | csm << 24
++    uint texa;       // csa | ta0 << 8 | aem << 16 | ta1 << 24
++    uint clampLo;    // CLAMP bits 0..31
++    uint clampHi;    // CLAMP bits 32..63
++    float axis[4];   // sprite: origin/scale of X, then Y
++    float attr[12];  // sprite: u0 v0 u1 v1 (texels); triangle: s t q per vertex, or u v per vertex (FST)
++    uint alpha;      // ALPHA A|B<<2|C<<4|D<<6 | FIX << 8 | M_* blend flags
++    uint test;       // TEST bits 0..13 (ATE, ATST, AREF, AFAIL)
++    uint zbuf;       // Z base in blocks | zpsm << 16 | ZTST << 24 (ALWAYS when ZTE=0) | Z write << 26
++    uint z;          // Z of v0 (sprites: v1), an integer
++    int zd[2];       // triangles: integer Z(v1) - Z(v0), Z(v2) - Z(v0), |d| < 2^28
++};
++layout(std430, binding = 3) readonly buffer PrimBuffer { Prim prims[]; };
++layout(push_constant) uniform Push { uint index; } pc;
++#define P prims[pc.index]
 +
 +const uint M_TRIANGLE = 0x100u;
 +const uint M_IIP = 0x200u;
 +const uint M_FBA = 0x400u;
 +const uint M_BIAS0 = 0x800u;
++const uint M_TME = 0x4000u;
++const uint M_FST = 0x8000u;
++const uint M_LINEAR = 0x10000u;
++const uint M_ZIP = 0x20000u;
++const uint A_ABE = 0x10000u;
++const uint A_PABE = 0x20000u;
++const uint A_COLCLAMP = 0x40000u;
 +
-+// Correctly rounded float(n / d) for 0 <= n <= d, as float(double(n) * (1.0 / d)) on the CPU.
-+float ratio(int64_t n, int64_t d)
++bool passesAlphaTest(uint test, uint a)
 +{
-+    if (n <= 0l)
-+        return 0.0;
-+    if (n >= d)
-+        return 1.0;
++    uint aref = (test >> 4u) & 0xFFu;
++    switch ((test >> 1u) & 7u)
++    {
++    case 0u: return false;
++    case 1u: return true;
++    case 2u: return a < aref;
++    case 3u: return a <= aref;
++    case 4u: return a == aref;
++    case 5u: return a >= aref;
++    case 6u: return a > aref;
++    }
++    return a != aref;
++}
++
++int pickRgb(uint sel, int cs, int cd)
++{
++    return sel == 0u ? cs : (sel == 1u ? cd : 0);
++}
++
++// Alpha blending of GSCpuBackend::WritePixel; dst is the frame pixel as RGBA8888.
++uint blend(uint src, uint dst)
++{
++    uint alpha = P.alpha;
++    uint a = src >> 24u;
++    if ((alpha & A_PABE) != 0u && (a & 0x80u) == 0u)
++        return src;
++    uint csel = (alpha >> 4u) & 3u;
++    int cAlpha = csel == 0u ? int(a) : (csel == 1u ? int(dst >> 24u) : int((alpha >> 8u) & 0xFFu));
++    uint out_ = src & 0xFF000000u;
++    for (uint shift = 0u; shift < 24u; shift += 8u)
++    {
++        int cs = int((src >> shift) & 0xFFu);
++        int cd = int((dst >> shift) & 0xFFu);
++        int value = ((pickRgb(alpha & 3u, cs, cd) - pickRgb((alpha >> 2u) & 3u, cs, cd)) * cAlpha >> 7) +
++                    pickRgb((alpha >> 6u) & 3u, cs, cd);
++        out_ |= ((alpha & A_COLCLAMP) != 0u ? clampU8(value) : (uint(value) & 0xFFu)) << shift;
++    }
++    return out_;
++}
++
++// Correctly rounded float(n / d) = q * 2^-shift for 0 < n < d, as float(double(n) * (1.0 / d)) on the CPU.
++int64_t ratioMantissa(int64_t n, int64_t d, out int shift)
++{
 +    int s = 0;
 +    while ((n << s) < d)
 +        ++s;
@@ -700,7 +1025,50 @@ index 0000000..9583297
 +    int64_t r = num - q * d;
 +    if (2l * r > d || (2l * r == d && (q & 1l) != 0l))
 +        ++q;
-+    return ldexp(float(q), -(s + 23));
++    shift = s + 23;
++    return q;
++}
++
++float ratio(int64_t n, int64_t d)
++{
++    if (n <= 0l)
++        return 0.0;
++    if (n >= d)
++        return 1.0;
++    int shift;
++    float q = float(ratioMantissa(n, d, shift));
++    return ldexp(q, -shift);
++}
++
++// dz * ratio(n, d) in 2^-34 fixed point (exact unless the weight has more than 34 fraction bits).
++int64_t zTerm(int64_t dz, int64_t n, int64_t d)
++{
++    if (n <= 0l)
++        return 0l;
++    if (n >= d)
++        return dz << 34;
++    int shift;
++    int64_t p = dz * ratioMantissa(n, d, shift);
++    if (shift <= 34)
++        return p << (34 - shift);
++    return (p + (1l << (shift - 35))) >> (shift - 34);
++}
++
++// Correctly rounded 1.0f / d for a normal d (fabsQ keeps |d| > 1e-8), like divss on the CPU.
++float recipExact(float d)
++{
++    uint bits = floatBitsToUint(d);
++    uint ex = (bits >> 23u) & 0xFFu;
++    if (ex == 0xFFu)
++        return (bits & 0x7FFFFFu) != 0u ? d : uintBitsToFloat(bits & 0x80000000u);
++    if (ex == 0u)
++        return 1.0 / d;
++    int64_t m = int64_t((bits & 0x7FFFFFu) | 0x800000u);
++    int64_t q = (1l << 47) / m;
++    if (2l * ((1l << 47) - q * m) > m)
++        ++q;
++    float result = ldexp(float(q), 103 - int(ex));
++    return (bits & 0x80000000u) != 0u ? -result : result;
 +}
 +
 +uint channel(uint c0, uint c1, uint c2, uint shift, float w1, float w2)
@@ -713,47 +1081,260 @@ index 0000000..9583297
 +    return clampU8(int(result)) << shift;
 +}
 +
++uint applyTexa(uint psm, uint texel)
++{
++    if (psm == 0u)
++        return texel;
++    uint ta0 = (P.texa >> 8u) & 0xFFu;
++    bool aem = ((P.texa >> 16u) & 1u) != 0u;
++    uint ta1 = P.texa >> 24u;
++    bool rgbZero = (texel & 0x00FFFFFFu) == 0u;
++    uint a = texel >> 24u;
++    if (psm == 1u || psm == 0x31u)
++        a = (aem && rgbZero) ? 0u : ta0;
++    else if (psm == 2u || psm == 10u || psm == 0x32u || psm == 0x3Au)
++        a = (a & 0x80u) != 0u ? ta1 : ((aem && rgbZero) ? 0u : ta0);
++    return (texel & 0x00FFFFFFu) | (a << 24u);
++}
++
++int wrapCoordinate(int coordinate, int size, uint mode, uint regionMin, uint regionMax)
++{
++    switch (mode & 3u)
++    {
++    case 0u: return int(uint(coordinate) & uint(size - 1));
++    case 1u: return clamp(coordinate, 0, size - 1);
++    case 2u: return min(max(coordinate, int(regionMin)), int(regionMax));
++    }
++    return int((uint(coordinate) & regionMin) | regionMax);
++}
++
++bool isFourBit(uint psm) { return psm == 0x14u || psm == 0x24u || psm == 0x2Cu; }
++bool isEightBit(uint psm) { return psm == 0x13u || psm == 0x1Bu; }
++
++// GSCpuBackend::LookupCLUT; the CLUT buffer holds GSCpuBackend::m_clut as uploaded at the start of the run.
++uint lookupClut(uint index)
++{
++    uint cpsm = (P.tmode >> 16u) & 0xFFu;
++    uint csm = P.tmode >> 24u;
++    uint sourcePsm = P.tex >> 24u;
++    bool sixteenBit = cpsm == 2u || cpsm == 10u;
++    uint clutBase = (P.texa & (sixteenBit ? 0x1Fu : 0x0Fu)) << 4u;
++    uint sourceIndex = isFourBit(sourcePsm) ? (index & 0x0Fu) : index;
++    uint clutIndex = (clutBase + sourceIndex) & (sixteenBit ? 0x1FFu : 0x0FFu);
++    if (!sixteenBit && csm == 0u && isEightBit(sourcePsm))
++        clutIndex = min((sourceIndex & 0xF0u) + clutBase, 240u) + (sourceIndex & 0x0Fu);
++    if (cpsm == 0u || cpsm == 1u)
++    {
++        uint raw = clutEntry(0u, clutIndex) | (clutEntry(0u, clutIndex + 256u) << 16u);
++        return applyTexa(cpsm, cpsm == 1u ? raw & 0x00FFFFFFu : raw);
++    }
++    if (sixteenBit)
++        return applyTexa(cpsm, rgba5551To8888(clutEntry(0u, clutIndex)));
++    return 0xFFFF00FFu;
++}
++
++uint samplePoint(int u, int v)
++{
++    uint lo = P.clampLo;
++    uint hi = P.clampHi;
++    u = wrapCoordinate(u, int(P.tsize & 0xFFFFu), lo & 3u, (lo >> 4u) & 0x3FFu, (lo >> 14u) & 0x3FFu);
++    v = wrapCoordinate(v, int(P.tsize >> 16u), (lo >> 2u) & 3u, (lo >> 24u) | ((hi & 3u) << 8u), (hi >> 2u) & 0x3FFu);
++    uint psm = P.tex >> 24u;
++    uint raw = readPixel(psm, P.tex & 0x3FFFu, (P.tex >> 16u) & 0xFFu, uint(u), uint(v));
++    switch (psm)
++    {
++    case 0x00u: case 0x30u: case 0x01u: case 0x31u:
++        return applyTexa(psm, raw);
++    case 0x02u: case 0x0Au: case 0x32u: case 0x3Au:
++        return applyTexa(psm, rgba5551To8888(raw));
++    case 0x13u: case 0x1Bu: case 0x14u: case 0x24u: case 0x2Cu:
++        return lookupClut(raw & 0xFFu);
++    }
++    return 0xFFFF00FFu;
++}
++
++uint lerpChannel(uint c00, uint c10, uint c01, uint c11, float fx, float fy)
++{
++    uint wx = min(uint(fx * 16.0), 15u);
++    uint wy = min(uint(fy * 16.0), 15u);
++    uint top = ((16u - wx) * c00 + wx * c10) >> 4u;
++    uint bottom = ((16u - wx) * c01 + wx * c11) >> 4u;
++    return ((16u - wy) * top + wy * bottom) >> 4u;
++}
++
++// GSCpuBackend::SampleTexture after the S/Q, T/Q scaling: texel coordinates in, RGBA8888 out.
++uint sampleTexture(float texUf, float texVf)
++{
++    const float inv = 1.0 / 65536.0; // exact; GLSL x / 65536.0 need not be
++    precise float fixedU = trunc(texUf * 65536.0);
++    precise float fixedV = trunc(texVf * 65536.0);
++    if ((P.mode & M_LINEAR) == 0u)
++        return samplePoint(int(floor(fixedU * inv)), int(floor(fixedV * inv)));
++    precise float sampleU = fixedU * inv - 0.5;
++    precise float sampleV = fixedV * inv - 0.5;
++    int u0 = int(floor(sampleU));
++    int v0 = int(floor(sampleV));
++    precise float fx = sampleU - float(u0);
++    precise float fy = sampleV - float(v0);
++    uint c00 = samplePoint(u0, v0);
++    uint c10 = samplePoint(u0 + 1, v0);
++    uint c01 = samplePoint(u0, v0 + 1);
++    uint c11 = samplePoint(u0 + 1, v0 + 1);
++    uint result = 0u;
++    for (uint shift = 0u; shift < 32u; shift += 8u)
++        result |= lerpChannel((c00 >> shift) & 0xFFu, (c10 >> shift) & 0xFFu, (c01 >> shift) & 0xFFu,
++                              (c11 >> shift) & 0xFFu, fx, fy) << shift;
++    return result;
++}
++
++// combineTexture of gs_cpu_backend.cpp (TCC/TFX).
++uint combineTexture(uint shade, uint texel)
++{
++    bool tcc = (P.tmode & 0xFFu) != 0u;
++    uint tfx = (P.tmode >> 8u) & 0xFFu;
++    int va = int(shade >> 24u);
++    int ta = int(texel >> 24u);
++    if (tfx == 0u || tfx == 2u || tfx == 3u)
++    {
++        int add = tfx == 0u ? 0 : va;
++        uint rgb = 0u;
++        for (uint shift = 0u; shift < 24u; shift += 8u)
++            rgb |= clampU8(((int((texel >> shift) & 0xFFu) * int((shade >> shift) & 0xFFu)) >> 7) + add) << shift;
++        uint a = !tcc ? uint(va) : (tfx == 0u ? clampU8((ta * va) >> 7) : (tfx == 2u ? clampU8(ta + va) : uint(ta)));
++        return rgb | (a << 24u);
++    }
++    return (texel & 0x00FFFFFFu) | ((tcc ? uint(ta) : uint(va)) << 24u);
++}
++
++float fabsQ(float q)
++{
++    return abs(q) > 1.0e-8 ? q : 1.0;
++}
++
 +void main()
 +{
-+    ivec2 xy = p.rect.xy + ivec2(gl_GlobalInvocationID.xy);
-+    if (xy.x > p.rect.z || xy.y > p.rect.w)
++    ivec2 xy = ivec2(P.rect[0], P.rect[1]) + ivec2(gl_GlobalInvocationID.xy);
++    if (xy.x > P.rect[2] || xy.y > P.rect[3])
 +        return;
-+    uint pixel = p.color[0];
-+    if ((p.mode & M_TRIANGLE) != 0u)
++    uint mode = P.mode;
++    uint pixel = P.color[0];
++    uint z = P.z;
++    float w1 = 0.0;
++    float w2 = 0.0;
++    if ((mode & M_TRIANGLE) != 0u)
 +    {
 +        int64_t e[3];
 +        for (int i = 0; i < 3; ++i)
 +        {
-+            e[i] = p.ea[i] * int64_t(xy.x * 16) + p.eb[i] * int64_t(xy.y * 16) + p.ec[i];
-+            int64_t bias = (p.mode & (M_BIAS0 << i)) != 0u ? 1l : 0l;
++            e[i] = P.ea[i] * int64_t(xy.x * 16) + P.eb[i] * int64_t(xy.y * 16) + P.ec[i];
++            int64_t bias = (mode & (M_BIAS0 << i)) != 0u ? 1l : 0l;
 +            if (e[i] + bias <= 0l)
 +                return;
 +        }
-+        if ((p.mode & M_IIP) != 0u)
++        w1 = ratio(e[1], P.area);
++        w2 = ratio(e[2], P.area);
++        // DrawTriangle: u32(z0 + dz1 * w1 + dz2 * w2 + 0.5) in double. Integer Z keeps the fraction exact
++        // here; the CPU's double rounding (2^-21 at Z ~ 2^32) can only differ right at a .5 boundary.
++        // ponytail: fixed point instead of fp64 (missing on Intel Xe); emulate doubles if that ever shows.
++        if ((mode & M_ZIP) != 0u)
++            z += uint((zTerm(int64_t(P.zd[0]), e[1], P.area) + zTerm(int64_t(P.zd[1]), e[2], P.area) + (1l << 33)) >> 34);
++        if ((mode & M_IIP) != 0u)
 +        {
-+            float w1 = ratio(e[1], p.area);
-+            float w2 = ratio(e[2], p.area);
 +            pixel = 0u;
 +            for (uint shift = 0u; shift < 32u; shift += 8u)
-+                pixel |= channel(p.color[0], p.color[1], p.color[2], shift, w1, w2);
++                pixel |= channel(P.color[0], P.color[1], P.color[2], shift, w1, w2);
 +        }
 +    }
 +
-+    uint psm = p.mode & 0xFFu;
-+    uint fbp = p.frame & 0xFFFFu;
-+    uint fbw = p.frame >> 16u;
++    if ((mode & M_TME) != 0u)
++    {
++        precise float texUf;
++        precise float texVf;
++        if ((mode & M_TRIANGLE) == 0u)
++        {
++            precise float tx = (float(xy.x) - P.axis[0]) * P.axis[1];
++            precise float ty = (float(xy.y) - P.axis[2]) * P.axis[3];
++            texUf = P.attr[0] + (P.attr[2] - P.attr[0]) * tx;
++            texVf = P.attr[1] + (P.attr[3] - P.attr[1]) * ty;
++            if ((mode & M_FST) != 0u)
++            {
++                // UV are re-quantised to 12.4 like DrawSprite; STQ sprites divide by and multiply
++                // by the power-of-two texture size on the CPU, which is exact.
++                precise float fu = texUf * 16.0 + 0.5;
++                precise float fv = texVf * 16.0 + 0.5;
++                texUf = float(clamp(int(fu), 0, 0xFFFF)) * 0.0625;
++                texVf = float(clamp(int(fv), 0, 0xFFFF)) * 0.0625;
++            }
++        }
++        else if ((mode & M_FST) != 0u)
++        {
++            precise float fu = P.attr[0] + (P.attr[2] - P.attr[0]) * w1 + (P.attr[4] - P.attr[0]) * w2;
++            precise float fv = P.attr[1] + (P.attr[3] - P.attr[1]) * w1 + (P.attr[5] - P.attr[1]) * w2;
++            texUf = float(uint(int(fu)) & 0xFFFFu) * 0.0625;
++            texVf = float(uint(int(fv)) & 0xFFFFu) * 0.0625;
++        }
++        else
++        {
++            precise float s = P.attr[0] + (P.attr[3] - P.attr[0]) * w1 + (P.attr[6] - P.attr[0]) * w2;
++            precise float t = P.attr[1] + (P.attr[4] - P.attr[1]) * w1 + (P.attr[7] - P.attr[1]) * w2;
++            precise float q = P.attr[2] + (P.attr[5] - P.attr[2]) * w1 + (P.attr[8] - P.attr[2]) * w2;
++            float invQ = recipExact(fabsQ(q));
++            texUf = s * invQ * float(P.tsize & 0xFFFFu);
++            texVf = t * invQ * float(P.tsize >> 16u);
++        }
++        pixel = combineTexture(pixel, sampleTexture(texUf, texVf));
++    }
++
++    uint psm = mode & 0xFFu;
++    uint fbp = P.frame & 0xFFFFu;
++    uint fbw = P.frame >> 16u;
 +    bool is16 = bitsPerPixel(psm) == 16u;
-+    if ((p.mode & M_FBA) != 0u && psm != 1u)
-+        pixel |= 0x80000000u;
-+    if (p.fbmsk != 0u)
++    // Alpha test (classifyAlphaTest), then the Z test and Z write of GSCpuBackend::WritePixel.
++    bool writeRgb = true;
++    bool writeAlpha = true;
++    bool writeDepth = true;
++    if ((P.test & 1u) != 0u && !passesAlphaTest(P.test, pixel >> 24u))
++    {
++        uint afail = (P.test >> 12u) & 3u;
++        if (afail == 0u)
++            return;
++        writeRgb = afail != 2u;
++        writeAlpha = afail == 1u || (afail == 3u && psm != 0u);
++        writeDepth = afail == 2u;
++    }
++    uint zbp = P.zbuf & 0xFFFFu;
++    uint zpsm = (P.zbuf >> 16u) & 0xFFu;
++    uint ztst = (P.zbuf >> 24u) & 3u;
++    if (ztst == 0u)
++        return;
++    if (ztst >= 2u)
++    {
++        uint stored = readPixel(zpsm, zbp, fbw, uint(xy.x), uint(xy.y));
++        if (ztst == 2u ? z < stored : z <= stored)
++            return;
++    }
++
++    bool abe = (P.alpha & A_ABE) != 0u;
++    uint fb = 0u;
++    if (P.fbmsk != 0u || abe || !writeAlpha)
 +    {
 +        uint raw = readPixel(psm, fbp, fbw, uint(xy.x), uint(xy.y));
-+        uint fb = is16 ? rgba5551To8888(raw) : (psm == 1u ? (raw | 0x80000000u) : raw);
-+        pixel = (pixel & ~p.fbmsk) | (fb & p.fbmsk);
++        fb = is16 ? rgba5551To8888(raw) : (psm == 1u ? (raw | 0x80000000u) : raw);
 +    }
++    if (abe)
++        pixel = blend(pixel, fb);
++    if (writeAlpha && (mode & M_FBA) != 0u && psm != 1u)
++        pixel |= 0x80000000u;
++    if (P.fbmsk != 0u)
++        pixel = (pixel & ~P.fbmsk) | (fb & P.fbmsk);
++    if (!writeAlpha)
++        pixel = (pixel & 0x00FFFFFFu) | (fb & 0xFF000000u);
 +    if (is16)
 +        pixel = rgba8888To5551(pixel);
-+    writePixelRaw(psm, fbp, fbw, uint(xy.x), uint(xy.y), pixel);
++    if (writeRgb || writeAlpha)
++        writePixelRaw(psm, fbp, fbw, uint(xy.x), uint(xy.y), pixel);
++    if (writeDepth && (P.zbuf & 0x4000000u) != 0u)
++        writePixelRaw(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
 +}
 +)GLSL";
 +}
@@ -883,10 +1464,10 @@ index 26c2de7..85c1fb1 100644
      runGpuUploadRingTests();
 diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
 new file mode 100644
-index 0000000..8032543
+index 0000000..61bf39b
 --- /dev/null
 +++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,336 @@
 +// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
 +#include "MiniTest.h"
 +#include "runtime/gs/gs_cpu_backend.h"
@@ -894,6 +1475,7 @@ index 0000000..8032543
 +#include "runtime/gs/gs_vulkan_backend.h"
 +#endif
 +
++#include <algorithm>
 +#include <cstdio>
 +#include <vector>
 +
@@ -943,11 +1525,37 @@ index 0000000..8032543
 +        m.state.context.fba = 1;
 +        vertex(m, 0, 100.0f, 100.0f, 0); vertex(m, 1, 200.0f, 180.0f, 0x11223344u);
 +        out.push_back(m);
-+        auto a = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // blended: CPU fallback between GPU draws
-+        a.state.prim.abe = true;
-+        a.state.context.alpha = (uint64_t(64) << 32) | 0x64u;
++        auto a = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // Z test GEQUAL against noise, Z write
++        a.state.context.test = 0x10000u | (2u << 17);
++        a.state.context.zbuf.zmask = false;
 +        vertex(a, 0, 150.0f, 50.0f, 0); vertex(a, 1, 450.0f, 350.0f, 0x40FFFFFFu);
++        a.vertices[1].z = 0x80001234;
 +        out.push_back(a);
++        auto ln = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // line: CPU fallback between GPU draws
++        ln.state.prim.type = GS_PRIM_LINE;
++        vertex(ln, 0, 10.0f, 20.0f, 0); vertex(ln, 1, 600.0f, 400.0f, 0xFF00FF00u);
++        out.push_back(ln);
++        auto zv = prim(GS_PRIM_TRIANGLE, GS_PSM_CT32, false); // interpolated Z, GEQUAL against the sprite Z
++        zv.state.context.test = 0x10000u | (2u << 17);
++        zv.state.context.zbuf.zmask = false;
++        vertex(zv, 0, 140.0f, 40.0f, 0); vertex(zv, 1, 460.0f, 60.0f, 0); vertex(zv, 2, 200.0f, 360.0f, 0x30405060u);
++        zv.vertices[0].z = 0x80000000u; zv.vertices[1].z = 0x80003001u; zv.vertices[2].z = 0x7FFF0000u;
++        out.push_back(zv);
++        auto zb = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // alpha fail ZB_ONLY: Z16 written, frame kept
++        zb.state.context.test = 0x1u | (0u << 1) | (2u << 12) | 0x10000u | (3u << 17); // NEVER; Z GREATER
++        zb.state.context.zbuf = {200, GS_PSM_Z16, false};
++        vertex(zb, 0, 30.0f, 300.0f, 0); vertex(zb, 1, 330.0f, 440.0f, 0x7F7F7F7Fu);
++        zb.vertices[1].z = 0x8000;
++        out.push_back(zb);
++        auto r = prim(GS_PRIM_TRIANGLE, GS_PSM_CT32, true); // alpha test fails partly, AFAIL=RGB_ONLY
++        r.state.context.test = 0x1u | (5u << 1) | (0x30u << 4) | (3u << 12); // GEQUAL 0x30
++        vertex(r, 0, 100.0f, 300.0f, 0x00FFFFFFu); vertex(r, 1, 600.0f, 320.0f, 0x80FFFFFFu); vertex(r, 2, 300.0f, 440.0f, 0x60102030u);
++        out.push_back(r);
++        auto l = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // blended (A=Cs B=0 C=FIX D=Cd) on the GPU
++        l.state.prim.abe = true;
++        l.state.context.alpha = (uint64_t(64) << 32) | 0x64u;
++        vertex(l, 0, 250.0f, 150.0f, 0); vertex(l, 1, 500.0f, 400.0f, 0x40FFFFFFu);
++        out.push_back(l);
 +        auto h = prim(GS_PRIM_TRIANGLE, GS_PSM_CT16, true); // 16-bit target, other page
 +        h.state.context.frame = {300, 10, GS_PSM_CT16, 0x00008000u};
 +        vertex(h, 0, 5.0f, 5.0f, 0xFF102030u); vertex(h, 1, 630.0f, 30.0f, 0x00F0E0D0u); vertex(h, 2, 300.0f, 440.0f, 0x80808080u);
@@ -959,6 +1567,150 @@ index 0000000..8032543
 +        auto o = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false); // overlaps the blended sprite: order matters
 +        vertex(o, 0, 300.0f, 200.0f, 0); vertex(o, 1, 380.0f, 260.0f, 0x01020304u);
 +        out.push_back(o);
++        return out;
++    }
++
++    // Textured scene: the noisy VRAM at block 64 is the texture, CLUT data and all.
++    struct Op
++    {
++        GSPrimitiveBatch b;
++        bool clut = false; // LoadClut(b.tex0, b.texclut) instead of Submit
++    };
++
++    GSPrimitiveBatch textured(GSPrimType type, uint8_t tpsm, bool fst, bool linear, uint8_t tfx, uint64_t clamp)
++    {
++        auto b = prim(type, GS_PSM_CT32, true);
++        b.state.prim.tme = true;
++        b.state.prim.fst = fst;
++        b.state.linearFilter = linear;
++        b.state.textureWidth = 256;
++        b.state.textureHeight = 128;
++        auto &tex = b.state.context.tex0;
++        tex.tbp0 = 64; // pages 2..18, clear of every frame
++        tex.tbw = 4;
++        tex.psm = tpsm;
++        tex.tw = 8;
++        tex.th = 7;
++        tex.tcc = 1;
++        tex.tfx = tfx;
++        tex.cbp = 12000;
++        b.state.context.clamp = clamp;
++        b.state.texa = {0x40, true, 0xC0};
++        return b;
++    }
++
++    void uv(GSPrimitiveBatch &b, int i, float u, float v, float q, int texW = 256, int texH = 128)
++    {
++        auto &vx = b.vertices[i];
++        vx.u = uint16_t(u * 16.0f);
++        vx.v = uint16_t(v * 16.0f);
++        vx.s = u / texW * q;
++        vx.t = v / texH * q;
++        vx.q = q;
++    }
++
++    Op clutLoad(uint8_t tpsm, uint8_t cpsm, uint8_t csm, uint8_t csa, uint8_t cld, uint32_t cbp = 12000)
++    {
++        Op op;
++        op.clut = true;
++        auto &tex = op.b.state.context.tex0;
++        tex.psm = tpsm;
++        tex.cpsm = cpsm;
++        tex.csm = csm;
++        tex.csa = csa;
++        tex.cld = cld;
++        tex.cbp = cbp;
++        op.b.state.texclut = {2, 1, 3};
++        return op;
++    }
++
++    // CLAMP: WMS | WMT << 2 | MINU << 4 | MAXU << 14 | MINV << 24 | MAXV << 34
++    constexpr uint64_t clampReg(uint64_t wms, uint64_t wmt, uint64_t minu, uint64_t maxu, uint64_t minv, uint64_t maxv)
++    {
++        return wms | (wmt << 2) | (minu << 4) | (maxu << 14) | (minv << 24) | (maxv << 34);
++    }
++
++    std::vector<Op> texturedScene()
++    {
++        std::vector<Op> out;
++        auto add = [&](const GSPrimitiveBatch &b) { out.push_back({b, false}); };
++        // CT32, FST point sprite, modulate, REPEAT past the texture edge.
++        auto a = textured(GS_PRIM_SPRITE, GS_PSM_CT32, true, false, 0, 0);
++        vertex(a, 0, 10.0f, 10.0f, 0); vertex(a, 1, 300.5f, 200.25f, 0x80907060u);
++        uv(a, 0, 13.3f, 7.7f, 1.0f); uv(a, 1, 300.0f, 190.0f, 1.0f);
++        add(a);
++        // CT24 STQ bilinear sprite, decal, CLAMP, TEXA AEM.
++        auto b = textured(GS_PRIM_SPRITE, GS_PSM_CT24, false, true, 1, clampReg(1, 1, 0, 0, 0, 0));
++        vertex(b, 0, 320.0f, 10.0f, 0); vertex(b, 1, 630.0f, 230.0f, 0x40404040u);
++        uv(b, 0, -20.0f, 3.5f, 1.0f); uv(b, 1, 270.0f, 140.0f, 1.0f);
++        add(b);
++        // CT16 perspective triangle, Gouraud, highlight, region clamp.
++        auto c = textured(GS_PRIM_TRIANGLE, GS_PSM_CT16, false, false, 2, clampReg(2, 2, 10, 200, 5, 100));
++        vertex(c, 0, 20.0f, 220.0f, 0x10FF8020u); vertex(c, 1, 600.0f, 250.0f, 0x8000FF80u); vertex(c, 2, 200.0f, 440.0f, 0xFF4080FFu);
++        uv(c, 0, 0.0f, 0.0f, 1.0f); uv(c, 1, 250.0f, 20.0f, 2.5f); uv(c, 2, 60.0f, 127.0f, 0.7f);
++        add(c);
++        // CT16S FST bilinear triangle, highlight2, region repeat; 16-bit frame.
++        auto d = textured(GS_PRIM_TRIANGLE, GS_PSM_CT16S, true, true, 3, clampReg(3, 3, 0x3F, 0x40, 0x1F, 0x20));
++        d.state.context.frame = {300, 10, GS_PSM_CT16, 0};
++        vertex(d, 0, 5.0f, 5.0f, 0x80808080u); vertex(d, 1, 630.0f, 60.0f, 0x20406080u); vertex(d, 2, 320.0f, 400.0f, 0xF0E0D0C0u);
++        uv(d, 0, 1.25f, 2.5f, 1.0f); uv(d, 1, 500.0f, 10.0f, 1.0f); uv(d, 2, 100.0f, 300.0f, 1.0f);
++        add(d);
++        // T8 with a CT32 CLUT (CSM1 swizzle), TCC=0.
++        out.push_back(clutLoad(GS_PSM_T8, GS_PSM_CT32, 0, 0, 1));
++        auto e = textured(GS_PRIM_SPRITE, GS_PSM_T8, true, true, 0, 0);
++        e.state.context.tex0.cpsm = GS_PSM_CT32;
++        e.state.context.tex0.tcc = 0;
++        e.state.context.test = 0x1u | (2u << 1) | (0x50u << 4) | (1u << 12); // LESS 0x50, AFAIL=FB_ONLY
++        vertex(e, 0, 40.0f, 240.0f, 0); vertex(e, 1, 280.0f, 440.0f, 0x7F7F7F7Fu);
++        uv(e, 0, 0.0f, 0.0f, 1.0f); uv(e, 1, 256.0f, 128.0f, 1.0f);
++        add(e);
++        // CLD=0 keeps the GPU run going; T4 with a CT16 CLUT at CSA 3.
++        out.push_back(clutLoad(GS_PSM_T4, GS_PSM_CT16, 0, 3, 0));
++        out.push_back(clutLoad(GS_PSM_T4, GS_PSM_CT16, 0, 3, 1, 12100));
++        auto f = textured(GS_PRIM_TRIANGLE, GS_PSM_T4, false, true, 0, clampReg(0, 1, 0, 0, 0, 0));
++        f.state.context.tex0.cpsm = GS_PSM_CT16;
++        f.state.context.tex0.csa = 3;
++        vertex(f, 0, 300.0f, 250.0f, 0x80808080u); vertex(f, 1, 630.0f, 300.0f, 0x80FF8080u); vertex(f, 2, 400.0f, 440.0f, 0x808080FFu);
++        uv(f, 0, 3.0f, 3.0f, 1.2f); uv(f, 1, 200.0f, 40.0f, 0.9f); uv(f, 2, 90.0f, 140.0f, 3.0f);
++        add(f);
++        // CSM2-style CLUT (csm=1, TEXCLUT offsets) for T8H, then T4HH and T4HL.
++        out.push_back(clutLoad(GS_PSM_T8H, GS_PSM_CT32, 1, 0, 1, 12200));
++        auto g = textured(GS_PRIM_SPRITE, GS_PSM_T8H, false, false, 0, 0);
++        g.state.context.tex0.cpsm = GS_PSM_CT32;
++        g.state.context.tex0.csm = 1;
++        vertex(g, 0, 300.0f, 300.0f, 0); vertex(g, 1, 400.0f, 400.0f, 0x80808080u);
++        uv(g, 0, 10.0f, 10.0f, 1.0f); uv(g, 1, 90.0f, 70.0f, 1.0f);
++        add(g);
++        out.push_back(clutLoad(GS_PSM_T4HH, GS_PSM_CT32, 0, 2, 1, 12300));
++        for (uint8_t psm : {GS_PSM_T4HH, GS_PSM_T4HL})
++        {
++            auto h = textured(GS_PRIM_SPRITE, psm, true, false, 1, 0);
++            h.state.context.tex0.cpsm = GS_PSM_CT32;
++            h.state.context.tex0.csa = 2;
++            const float x = psm == GS_PSM_T4HH ? 420.0f : 520.0f;
++            vertex(h, 0, x, 300.0f, 0); vertex(h, 1, x + 90.0f, 440.0f, 0x80808080u);
++            uv(h, 0, 0.0f, 0.0f, 1.0f); uv(h, 1, 64.0f, 100.0f, 1.0f);
++            add(h);
++        }
++        // Blending over textures: (Cs - Cd) * As + Cd without COLCLAMP (wraps) on a CT24 frame (Ad = 0x80)...
++        auto m = textured(GS_PRIM_TRIANGLE, GS_PSM_CT32, true, true, 2, 0);
++        m.state.prim.abe = true;
++        m.state.context.alpha = 0x44u; // A=Cs B=Cd C=As D=Cd
++        m.state.context.frame = {250, 10, GS_PSM_CT24, 0}; // fbp 400 would wrap onto the texture pages
++        vertex(m, 0, 0.0f, 0.0f, 0x80FF00FFu); vertex(m, 1, 630.0f, 20.0f, 0xFF808080u); vertex(m, 2, 50.0f, 440.0f, 0x2000FF00u);
++        uv(m, 0, 0.0f, 0.0f, 1.0f); uv(m, 1, 255.0f, 0.0f, 1.0f); uv(m, 2, 0.0f, 127.0f, 1.0f);
++        add(m);
++        // ...and (Cd - Cs) * Ad + 0 with PABE and COLCLAMP on a CT16 frame.
++        auto n = textured(GS_PRIM_SPRITE, GS_PSM_CT16, false, false, 0, 0);
++        n.state.prim.abe = true;
++        n.state.pabe = true;
++        n.state.colclamp = 1;
++        n.state.context.test = 0x1u | (7u << 1) | (0x80u << 4); // NOTEQUAL 0x80, AFAIL=KEEP
++        n.state.context.alpha = 0x01u | (0u << 2) | (1u << 4) | (2u << 6);
++        n.state.context.frame = {300, 10, GS_PSM_CT16, 0};
++        vertex(n, 0, 100.0f, 100.0f, 0); vertex(n, 1, 600.0f, 400.0f, 0xFF808080u);
++        uv(n, 0, 0.0f, 0.0f, 1.0f); uv(n, 1, 256.0f, 128.0f, 1.0f);
++        add(n);
 +        return out;
 +    }
 +
@@ -977,6 +1729,21 @@ index 0000000..8032543
 +        backend.Initialize(vram.data(), uint32_t(vram.size()));
 +        for (const auto &b : scene())
 +            backend.Submit(b);
++        backend.Flush();
++        return vram;
++    }
++
++    std::vector<uint8_t> renderTextured(GSRasterBackend &backend)
++    {
++        auto vram = noise();
++        backend.Initialize(vram.data(), uint32_t(vram.size()));
++        for (const auto &op : texturedScene())
++        {
++            if (op.clut)
++                backend.LoadClut(op.b.state.context.tex0, op.b.state.texclut);
++            else
++                backend.Submit(op.b);
++        }
 +        backend.Flush();
 +        return vram;
 +    }
@@ -1001,8 +1768,35 @@ index 0000000..8032543
 +            for (size_t i = 0; i < reference.size(); ++i)
 +                diff += reference[i] != gpu[i];
 +            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
-+            t.Equals(vulkan.GpuPrimitives(), uint64_t(7), "Primitives drawn on the GPU");
++            t.Equals(vulkan.GpuPrimitives(), uint64_t(12), "Primitives drawn on the GPU");
 +            t.IsTrue(reference != noise(), "The scene changed VRAM");
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
++#endif
++        });
++        test.Run("Textured Vulkan VRAM equals CPU VRAM", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            GSVulkanBackend vulkan;
++            if (!vulkan.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++            GSCpuBackend cpu;
++            const auto reference = renderTextured(cpu);
++            const auto gpu = renderTextured(vulkan);
++            size_t diff = 0, first = reference.size();
++            for (size_t i = 0; i < reference.size(); ++i)
++                if (reference[i] != gpu[i])
++                {
++                    first = std::min(first, i);
++                    ++diff;
++                }
++            if (diff)
++                std::printf("    first differing byte at 0x%zx\n", first);
++            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
++            t.Equals(vulkan.GpuPrimitives(), uint64_t(11), "Textured primitives drawn on the GPU");
 +#else
 +            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
 +            t.IsTrue(true, "skipped");
