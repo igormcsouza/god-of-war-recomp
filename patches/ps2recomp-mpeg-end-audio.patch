@@ -1,0 +1,165 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 64ce614..2780992 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -1,3 +1,4 @@
++#include <algorithm>
+ #include "Common.h"
+ #include "MPEG.h"
+ #include "runtime/ee_scheduler.h"
+@@ -1149,7 +1150,11 @@ namespace ps2_stubs
+ 
+             for (const MpegRegisteredCallback &callback : it->second)
+             {
+-                if (callback.stream && callback.type == streamType)
++                // GOW-Port: God of War crea el mismo handle dos veces y registra otra vez sus callbacks; libmpeg
++                // reinicia la tabla al crear, asi que cada paquete llega una sola vez a cada (funcion, datos).
++                if (callback.stream && callback.type == streamType &&
++                    std::none_of(out.begin(), out.end(), [&](const MpegRegisteredCallback &o)
++                                 { return o.func == callback.func && o.data == callback.data; }))
+                 {
+                     out.push_back(callback);
+                 }
+@@ -1352,6 +1357,7 @@ namespace ps2_stubs
+                     const size_t payloadStart = pes.payloadOffset;
+                     if (payloadStart < packetEnd && payloadStart < playback.pssGuestAddrs.size())
+                     {
++                        const size_t eventsBefore = callbackEvents.size();
+                         queueStreamCallbackEvent(
+                             mpegAddr,
+                             kMpegStrPCM,
+@@ -1360,14 +1366,17 @@ namespace ps2_stubs
+                             callbackEvents,
+                             pes.pts90k,
+                             pes.dts90k);
+-                        queueStreamCallbackEvent(
+-                            mpegAddr,
+-                            kMpegStrADPCM,
+-                            playback.pssGuestAddrs[payloadStart],
+-                            static_cast<uint32_t>(packetEnd - payloadStart),
+-                            callbackEvents,
+-                            pes.pts90k,
+-                            pes.dts90k);
++                        // GOW-Port: el paquete de audio es de un solo tipo; GoW registra la misma funcion para PCM y
++                        // ADPCM y recibia cada paquete dos veces (los bytes del PCM se desplazaban y sonaba ruido).
++                        if (callbackEvents.size() == eventsBefore)
++                            queueStreamCallbackEvent(
++                                mpegAddr,
++                                kMpegStrADPCM,
++                                playback.pssGuestAddrs[payloadStart],
++                                static_cast<uint32_t>(packetEnd - payloadStart),
++                                callbackEvents,
++                                pes.pts90k,
++                                pes.dts90k);
+                     }
+                 }
+ 
+@@ -2458,6 +2467,7 @@ namespace ps2_stubs
+         uint32_t height = kStubMovieHeight;
+         uint32_t frameCount = 0u;
+         bool haveFrame = false;
++        bool streamDone = false;
+         MpegDecodedFrame frame;
+         {
+             std::unique_lock<std::mutex> lock(g_mpeg_stub_mutex);
+@@ -2565,6 +2575,8 @@ namespace ps2_stubs
+                 width = playback.width;
+                 height = playback.height;
+                 frameCount = playback.picturesServed;
++                // GOW-Port: sin fotogramas y sin esperas posibles, el flujo ha terminado (fin de secuencia, EOF o fallo).
++                streamDone = true;
+             }
+         }
+ 
+@@ -2592,6 +2604,10 @@ namespace ps2_stubs
+                 *reinterpret_cast<uint32_t *>(inner + 0xe4) = getRegU32(ctx, 6);
+                 *reinterpret_cast<uint32_t *>(inner + 0xdc) = 0;
+                 *reinterpret_cast<uint32_t *>(inner + 0xe0) = 0;
++                // GOW-Port: sceMpegIsEnd de libmpeg es codigo del juego (no un stub) y devuelve esta palabra; la
++                // libmpeg original la pone a 1 al terminar el flujo. Sin ella el bucle de la pelicula no acababa nunca.
++                if (streamDone)
++                    *reinterpret_cast<uint32_t *>(inner + 0x00) = 1;
+             }
+         }
+ 
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index fb21cd4..898ce22 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -972,6 +972,50 @@ void register_ps2_runtime_expansion_tests()
+                      "the caller should get the consumed byte count after the callbacks");
+         });
+ 
++        tc.Run("sceMpegDemuxPssRing delivers an audio packet once to a callback registered for PCM, ADPCM and twice", [](TestCase &t)
++        {
++            // GOW-Port: God of War registra la misma funcion para varios tipos y vuelve a registrarla tras recrear el
++            // handle; cada paquete de audio llegaba varias veces y el PCM (paquetes de tamano impar) se desplazaba.
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            ps2_stubs::resetMpegStubState();
++            ps2_stubs::notifyMpegCdStreamStart();
++            runtime.registerFunction(kSyncDemuxMainPc, testSyncDemuxMain);
++            runtime.registerFunction(kSyncDemuxResumePc, testSyncDemuxResume);
++            runtime.registerFunction(kSyncDemuxCallbackPc, testSyncDemuxCallback);
++            gSyncDemuxCallbacks.store(0u, std::memory_order_release);
++            gSyncDemuxSeenAtReturn.store(-1, std::memory_order_release);
++            gSyncDemuxResult.store(-999, std::memory_order_release);
++
++            const std::vector<uint8_t> payload = {0xFFu, 0xA0u, 0x00u, 0x00u, 0x01u, 0x02u, 0x03u, 0x04u};
++            const uint16_t packetLen = static_cast<uint16_t>(payload.size() + 3u);
++            std::vector<uint8_t> packet = {0x00u, 0x00u, 0x01u, 0xBDu, static_cast<uint8_t>(packetLen >> 8u),
++                                           static_cast<uint8_t>(packetLen & 0xFFu), 0x80u, 0x00u, 0x00u};
++            packet.insert(packet.end(), payload.begin(), payload.end());
++            std::memcpy(rdram.data() + kSyncDemuxPacket, packet.data(), packet.size());
++            gSyncDemuxPacketSize.store(static_cast<uint32_t>(packet.size()), std::memory_order_release);
++
++            for (uint32_t streamType : {2u, 3u, 4u, 2u, 3u, 4u})
++            {
++                R5900Context addCtx{};
++                setRegU32(addCtx, 4, kSyncDemuxHandle);
++                setRegU32(addCtx, 5, streamType);
++                setRegU32(addCtx, 6, 0u);
++                setRegU32(addCtx, 7, kSyncDemuxCallbackPc);
++                setRegU32(addCtx, 8, 0u);
++                ps2_stubs::sceMpegAddStrCallback(rdram.data(), &addCtx, &runtime);
++            }
++
++            R5900Context mainContext{};
++            mainContext.pc = kSyncDemuxMainPc;
++            EeScheduler &ee = runtime.eeScheduler();
++            ee.reset(rdram.data(), mainContext);
++            ee.run();
++
++            t.Equals(gSyncDemuxCallbacks.load(std::memory_order_acquire), 1u,
++                     "the audio callback should run exactly once per packet");
++        });
++
+         tc.Run("sceMpegGetPicture blocks as a typed scheduler wait and resumes on EOF", [](TestCase &t)
+         {
+             PS2Runtime runtime;
+@@ -1085,6 +1129,25 @@ void register_ps2_runtime_expansion_tests()
+                      "GetPicture should return once the retried callback produces a frame");
+         });
+ 
++        tc.Run("sceMpegGetPicture flags the end of the stream for the game's own sceMpegIsEnd", [](TestCase &t)
++        {
++            // GOW-Port: sceMpegIsEnd de libmpeg lee *(*(mpeg + 0x40)); la libmpeg original lo pone a 1 al terminar el
++            // flujo. Sin ello la pelicula de God of War se quedaba en su bucle de fin para siempre.
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            constexpr uint32_t kHandle = 0x00124800u, kEnv = 0x00124900u, kImage = 0x00132000u;
++            ps2_stubs::resetMpegStubState();
++            ps2_stubs::notifyMpegCdStreamStart();
++            Ps2FastWrite32(rdram.data(), kHandle + 0x40u, kEnv);
++            Ps2FastWrite32(rdram.data(), kEnv, 0u);
++            ps2_stubs::notifyMpegCdStreamEof();
++            R5900Context ctx{};
++            setRegU32(ctx, 4, kHandle);
++            setRegU32(ctx, 5, kImage);
++            ps2_stubs::sceMpegGetPicture(rdram.data(), &ctx, &runtime);
++            t.Equals(Ps2FastRead32(rdram.data(), kEnv), 1u, "no frame left and the stream is over: the end flag is set");
++        });
++
+         tc.Run("sceMpegGetPicture waits for new decoder output instead of duplicating the last frame", [](TestCase &t)
+         {
+             PS2Runtime runtime;

@@ -151,6 +151,8 @@ $vu1BlockCheckPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-block-check.pat
 $vu1StaticTicksPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-static-ticks.patch'
 $cdvdReadLatencyPatch = Join-Path $RepoRoot 'patches\ps2recomp-cdvd-read-latency.patch'
 $spu2LoopLatchPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-loop-latch.patch'
+$spu2AdmaPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-adma.patch'
+$mpegEndAudioPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-end-audio.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -326,6 +328,8 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1BlockCheckPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StaticTicksPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $cdvdReadLatencyPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2LoopLatchPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2AdmaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegEndAudioPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

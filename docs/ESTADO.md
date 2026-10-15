@@ -7400,3 +7400,37 @@ restart-state difference). Found by watching 989snd's stream tick (temporary `IO
   with a new KON at 61.809 / 120.425 / 179.041 s (three full loops, same period). Before the fix every run died after
   0.65-7.5 s. Not verified by ear (audio muted for the diagnosis). `ps2x_tests` 642 pass; 138 patches apply in order on
   a fresh pinned tree.
+
+## Movie audio and the post-movie stall: ADMA, the IsEnd flag and duplicated audio packets (2026-10-15, Linux) - fixed and verified
+
+Symptom: the intro FMV played silent (noise floor), then "Three Weeks Earlier" (the end of the video itself), then black forever
+(`0.0 FPS`, movie state `[0x29C838]=11`, EE looping on the sound RPC `cmd=0x40`). Three independent causes, all fixed:
+
+1. **ADMA was missing** (`patches/ps2recomp-spu2-adma.patch`). The movie audio is ADMA on SPU2 core 1: the PSS audio callback
+   (`0x18A8F8`) fills an EE ring, a feeder (`0x188380` -> `0x188688`) SIF-copies it to an IOP double buffer (`0x77640`/`0x79640`,
+   0x2000 each) and asks 989snd for the playback position with RPC `cmd=0x40` (the IOP DMA address); libsd programs `ADMAS=2`
+   and re-kicks DMA7 per half. The SPU2 ignored ADMA, so the DMA completed at once (~290,000 re-kicks per run) and nothing played.
+   Now with `ADMAS` set the DMA data is queued (blocks of 0x400 bytes = 256 L + 256 R samples), consumed at 48 kHz through a
+   two-half input buffer at `0x2000 + core*0x400`, mixed into the core's dry output with BVOL (a plain s16, `0x7FFF` = 1.0;
+   the voice/MVOL 15-bit format made the game's `0x7FFE` ~0), the DMA IRQ fires when the last block enters the buffer and
+   `MADR` advances with the copied blocks. Underrun: the core falls silent and restarts at the next block. Not modelled: MMIX
+   input bits (the game sets `0x0FCF`, input on), volume sweeps, wet path.
+2. **`sceMpegIsEnd` is game code, not a stub** (`patches/ps2recomp-mpeg-end-audio.patch`): `0x26FF70` returns `*(*(mpeg+0x40))`,
+   which libmpeg sets to 1 at the end of the stream. Our `sceMpegGetPicture` never did, so the movie loop (state 11,
+   `0x189450` -> `0x189B00`, `[0x140]==2` path) never left. `sceMpegGetPicture` now sets that word when it has no frame and no
+   wait is possible (end of sequence / EOF / failure). This is the post-movie freeze. `GOW_MOVIE_DIAG=1` (with `GOW_PAD_TEST=1`)
+   prints `[gow-movie]` every 5 s (movie state, ctx fields, EE audio ring, IOP ring counters) - that is how it was found
+   (`[0x140]=2`, `sceMpegIsEnd` never logged).
+3. **Audio packets were delivered 2-6 times** (same patch): the stub sent each private-stream-1 packet to the callbacks of
+   both PCM and ADPCM, and GoW registers the same function for types 2/3/4 and registers again after re-creating the handle
+   (libmpeg resets the table). The PCM packets have an odd payload (4073 bytes), so the duplicates shifted the byte stream and
+   half of the ADMA blocks were noise. Now one callback per distinct `(function, data)`, ADPCM only when no PCM callback matched.
+   The PSS audio itself is 48 kHz stereo PCM ("SShd", interleave 0x200), checked against the ISO's own PSS.
+
+Verified (menu script `5:start,12:x,20:x,28:x`, `GOW_AUDIO_PCM`, 140 s, NVIDIA): the movie ends (`[gow-movie] st=0`), the game goes
+on to gameplay (screenshot at 135 s shows the rainy-deck fight); the captured PCM during the movie has RMS 4,000-8,000 and
+lag-1 autocorrelation 0.97-1.0 (before the last fix 0.04-0.3 = noise, before ADMA RMS 2 = silence). Not checked by ear.
+`ps2x_tests` 646 pass (run from `PS2Recomp/`); 140 patches apply in order on a fresh pinned tree. Tests: "ADMA streams the DMA
+data ...", "ADMA restarts cleanly after an underrun", "sceMpegGetPicture flags the end of the stream ...", "sceMpegDemuxPssRing
+delivers an audio packet once ...". Left: a second FMV starts about 10 s after the first in this run (state 10 at 125 s, not
+examined); `GOW_SPU2_DIAG` still logs MMIX/volume writes in the uncommitted `PS2Recomp/` WIP.

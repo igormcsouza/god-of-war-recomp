@@ -1,0 +1,382 @@
+diff --git a/ps2xIOP/src/emulator/core/iop_memory.cpp b/ps2xIOP/src/emulator/core/iop_memory.cpp
+index 502e812..c464401 100644
+--- a/ps2xIOP/src/emulator/core/iop_memory.cpp
++++ b/ps2xIOP/src/emulator/core/iop_memory.cpp
+@@ -10,6 +10,7 @@ namespace ps2x::iop::detail
+     {
+         constexpr uint32_t kDmaSpu0Chcr = 0x1F8010C8u;
+         constexpr uint32_t kDmaSpu1Chcr = 0x1F801508u;
++        constexpr uint32_t kDmaSpu0Madr = kDmaSpu0Chcr - 8u, kDmaSpu1Madr = kDmaSpu1Chcr - 8u;
+         constexpr uint32_t kDmaStart = 1u << 24u;
+         constexpr int kDmaSpu0Irq = 0x24;
+         constexpr int kDmaSpu1Irq = 0x28;
+@@ -248,7 +249,14 @@ namespace ps2x::iop::detail
+             return m_sio2.read32(address);
+         const auto value = m_hardware.find(address);
+         if (value != m_hardware.end())
++        {
++            // GOW-Port: con ADMA el MADR del DMA del SPU2 avanza al ritmo de la reproduccion (libsd lo lee para
++            // saber por donde va el streaming: sceSdBlockTransStatus).
++            if (address == kDmaSpu0Madr || address == kDmaSpu1Madr)
++                if (const auto done = m_spu2.admaDmaBytesDone(address == kDmaSpu1Madr ? 1u : 0u))
++                    return value->second + *done;
+             return value->second;
++        }
+         switch (address)
+         {
+         case 0x1F801070u:
+@@ -292,6 +300,8 @@ namespace ps2x::iop::detail
+         }
+ 
+         m_hardware[address] = value;
++        if (address == kDmaSpu0Madr || address == kDmaSpu1Madr)
++            m_spu2.admaDmaClear(address == kDmaSpu1Madr ? 1u : 0u);
+         if ((address != kDmaSpu0Chcr && address != kDmaSpu1Chcr) || (value & kDmaStart) == 0u)
+             return;
+ 
+@@ -318,9 +328,10 @@ namespace ps2x::iop::detail
+         else if (m_spu2.dmaRead(core, m_ram.data() + madr, bytes))
+             markOwned(madr, bytes);
+         m_spu2.markDmaReady(core);
++        // GOW-Port: con ADMA el DMA acaba cuando el SPU2 ha consumido los bloques, no al instante.
+         m_dmaStart = DmaStart{
+             secondCore ? kDmaSpu1Irq : kDmaSpu0Irq,
+-            std::max<uint64_t>(transferWords * 2u, 64u),
++            std::max<uint64_t>({transferWords * 2u, uint64_t{64u}, m_spu2.takeDmaDelayCycles(core)}),
+         };
+     }
+ 
+diff --git a/ps2xIOP/src/emulator/core/spu2.cpp b/ps2xIOP/src/emulator/core/spu2.cpp
+index fbe7a21..d09fc58 100644
+--- a/ps2xIOP/src/emulator/core/spu2.cpp
++++ b/ps2xIOP/src/emulator/core/spu2.cpp
+@@ -37,6 +37,9 @@ namespace ps2x::iop::detail
+             for (auto &voice : core)
+                 voice = VoiceState{};
+         m_endx.fill(0);
++        for (uint32_t core = 0; core < 2u; ++core)
++            admaReset(core);
++        m_dmaDelayCycles.fill(0);
+         {
+             std::lock_guard<std::mutex> lock(m_outputMutex);
+             m_output.clear();
+@@ -154,6 +157,17 @@ namespace ps2x::iop::detail
+             setReg32(base + RegTsa, tsa + 1u);
+             return;
+         }
++        case RegAdmas:
++        {
++            // GOW-Port: el bit (core + 1) de ADMAS activa el DMA automatico de este nucleo; al cambiarlo se reinicia.
++            const bool enable = (value & (core + 1u)) != 0u;
++            if (enable != m_adma[core].enabled)
++            {
++                admaReset(core);
++                m_adma[core].enabled = enable;
++            }
++            return;
++        }
+         case RegEndx:
+             m_endx[core] &= 0xFF0000u;
+             return;
+@@ -184,8 +198,21 @@ namespace ps2x::iop::detail
+     bool Spu2::dmaWrite(uint32_t core, const uint8_t *source, size_t bytes)
+     {
+         const uint32_t base = core * 0x400u;
+-        if ((reg(base + RegAdmas) & (core + 1u)) != 0u)
+-            return false;
++        if (m_adma[core].enabled)
++        {
++            Adma &a = m_adma[core];
++            if (a.pendingPos != 0u)
++            {
++                a.pending.erase(a.pending.begin(), a.pending.begin() + static_cast<std::ptrdiff_t>(a.pendingPos));
++                a.pendingPos = 0u;
++            }
++            const size_t whole = bytes & ~size_t{AdmaBlockBytes - 1u};
++            a.pending.insert(a.pending.end(), source, source + whole);
++            a.dmaTotal = a.pending.size() - a.pendingPos;
++            admaFill(core);
++            m_dmaDelayCycles[core] = admaDelayCycles(core);
++            return true;
++        }
+         uint32_t tsa = reg32(base + RegTsa);
+         for (size_t i = 0; i + 1u < bytes; i += 2u)
+             writeRam(tsa++, static_cast<uint16_t>(source[i] | (source[i + 1u] << 8u)));
+@@ -196,7 +223,7 @@ namespace ps2x::iop::detail
+     bool Spu2::dmaRead(uint32_t core, uint8_t *destination, size_t bytes)
+     {
+         const uint32_t base = core * 0x400u;
+-        if ((reg(base + RegAdmas) & (core + 1u)) != 0u)
++        if (m_adma[core].enabled)
+             return false;
+         uint32_t tsa = reg32(base + RegTsa);
+         for (size_t i = 0; i + 1u < bytes; i += 2u)
+@@ -209,6 +236,93 @@ namespace ps2x::iop::detail
+         return true;
+     }
+ 
++    std::optional<uint32_t> Spu2::admaDmaBytesDone(uint32_t core) const noexcept
++    {
++        const Adma &a = m_adma[core];
++        if (!a.enabled || a.dmaTotal == 0u)
++            return std::nullopt;
++        const size_t remaining = std::min(a.dmaTotal, a.pending.size() - a.pendingPos);
++        return static_cast<uint32_t>(a.dmaTotal - remaining);
++    }
++
++    void Spu2::admaReset(uint32_t core) noexcept
++    {
++        m_adma[core] = Adma{};
++    }
++
++    // Copia bloques pendientes a las mitades libres del buffer de entrada. El primer bloque arranca la lectura.
++    void Spu2::admaFill(uint32_t core)
++    {
++        Adma &a = m_adma[core];
++        const uint32_t base = 0x2000u + core * 0x400u;
++        while (a.pending.size() - a.pendingPos >= AdmaBlockBytes && !a.filled[a.writeHalf])
++        {
++            const uint8_t *block = a.pending.data() + a.pendingPos;
++            const uint32_t dst = base + a.writeHalf * AdmaHalfSamples;
++            for (uint32_t i = 0; i < AdmaHalfSamples; ++i)
++            {
++                m_ram[(dst + i) & (RamHalfwords - 1u)] = static_cast<uint16_t>(block[i * 2u] | (block[i * 2u + 1u] << 8u));
++                m_ram[(dst + 0x200u + i) & (RamHalfwords - 1u)] =
++                    static_cast<uint16_t>(block[0x200u + i * 2u] | (block[0x200u + i * 2u + 1u] << 8u));
++            }
++            a.pendingPos += AdmaBlockBytes;
++            a.filled[a.writeHalf] = true;
++            a.writeHalf ^= 1u;
++            if (!a.playing)
++            {
++                a.playing = true;
++                a.readPos = 0;
++            }
++        }
++        if (a.pendingPos == a.pending.size())
++        {
++            a.pending.clear();
++            a.pendingPos = 0;
++        }
++    }
++
++    // Ciclos del IOP hasta que el ultimo bloque pendiente pasa al buffer de entrada: una mitad se libera cada 256
++    // muestras, la primera cuando termina la que se esta leyendo.
++    uint64_t Spu2::admaDelayCycles(uint32_t core) const noexcept
++    {
++        const Adma &a = m_adma[core];
++        const uint64_t blocks = (a.pending.size() - a.pendingPos) / AdmaBlockBytes;
++        if (blocks == 0u)
++            return 0u;
++        const uint64_t first = a.playing ? AdmaHalfSamples - (a.readPos & (AdmaHalfSamples - 1u)) : AdmaHalfSamples;
++        return (first + (blocks - 1u) * AdmaHalfSamples) * CyclesPerSample;
++    }
++
++    // Una muestra de la entrada ADMA del nucleo: se suma a la mezcla seca con el volumen de entrada (BVOL).
++    void Spu2::admaInput(uint32_t core, int32_t &left, int32_t &right)
++    {
++        Adma &a = m_adma[core];
++        if (!a.enabled || !a.playing)
++            return;
++        const uint32_t base = 0x2000u + core * 0x400u;
++        const uint32_t half = a.readPos / AdmaHalfSamples;
++        if (a.filled[half])
++        {
++            const int32_t volBase = RegMvolBase + core * RegMvolStride + 0xCu;
++            const int16_t inL = static_cast<int16_t>(m_ram[(base + a.readPos) & (RamHalfwords - 1u)]);
++            const int16_t inR = static_cast<int16_t>(m_ram[(base + 0x200u + a.readPos) & (RamHalfwords - 1u)]);
++            // BVOL es un s16 completo (0x7FFF = 1.0), no el volumen de 15 bits con bit de signo de las voces y MVOL.
++            left += (inL * static_cast<int16_t>(reg(volBase))) >> 15;
++            right += (inR * static_cast<int16_t>(reg(volBase + 2u))) >> 15;
++        }
++        a.readPos = (a.readPos + 1u) & 0x1FFu;
++        if ((a.readPos & (AdmaHalfSamples - 1u)) != 0u)
++            return;
++        a.filled[half] = false; // la mitad leida queda libre para el siguiente bloque
++        admaFill(core);
++        if (!a.filled[a.readPos / AdmaHalfSamples]) // sin datos: el nucleo se detiene hasta que lleguen
++        {
++            a.playing = false;
++            a.writeHalf = 0;
++            a.filled[0] = a.filled[1] = false;
++        }
++    }
++
+     void Spu2::markDmaReady(uint32_t core) noexcept
+     {
+         reg(core * 0x400u + RegStatx) |= StatxDmaReady;
+@@ -430,6 +544,7 @@ namespace ps2x::iop::detail
+                 if ((mixRight & (1u << index)) != 0u)
+                     right += (sample * volRight) >> 14;
+             }
++            admaInput(core, left, right);
+             coreOut[core][0] = left;
+             coreOut[core][1] = right;
+         }
+diff --git a/ps2xIOP/src/emulator/core/spu2.h b/ps2xIOP/src/emulator/core/spu2.h
+index 341e652..593d8cd 100644
+--- a/ps2xIOP/src/emulator/core/spu2.h
++++ b/ps2xIOP/src/emulator/core/spu2.h
+@@ -3,13 +3,15 @@
+ // GOW-Port: emulacion del SPU2 (dos nucleos de 24 voces, 2 MB de RAM de sonido).
+ // Fase 1: registros, RAM, transferencias manuales y DMA, voces ADPCM con tono, ADSR, volumen fijo y mezcla seca,
+ // ENDX/ENVX/NAX legibles e interrupcion por IRQA. Fase 2: la mezcla sale por el audio del host (ps2_runtime.cpp).
+-// Pendiente: reverb, barrido de volumen e interpolacion gaussiana y ADMA.
++// ADMA (PCM en streaming por la entrada de memoria del nucleo). Pendiente: reverb, barrido de volumen e
++// interpolacion gaussiana.
+ // Referencias: PCSX2 (pcsx2/SPU2) y la documentacion "psx-spx" del SPU (ADPCM y ADSR son iguales que en la PS1).
+ 
+ #include <array>
+ #include <cstddef>
+ #include <cstdint>
+ #include <mutex>
++#include <optional>
+ #include <vector>
+ 
+ namespace ps2x::iop::detail
+@@ -52,10 +54,22 @@ namespace ps2x::iop::detail
+         void writeRam(uint32_t halfwordAddress, uint16_t value) noexcept;
+ 
+         // DMA del IOP (canales 4 y 7). Copia bytes desde/hacia la RAM del IOP en la TSA del nucleo y la avanza.
+-        // Devuelve false (sin copiar nada) si el nucleo esta en modo ADMA, que aun no esta emulado.
++        // Con ADMA activo (registro ADMAS) los datos no van a la TSA: se encolan y el nucleo los consume a 48 kHz
++        // (bloques de 0x400 bytes = 256 muestras L y 256 R), y dmaWrite devuelve true. takeDmaDelayCycles da el
++        // tiempo hasta que el ultimo bloque pasa al buffer de entrada (cuando acaba el DMA de verdad).
+         bool dmaWrite(uint32_t core, const uint8_t *source, size_t bytes);
+         bool dmaRead(uint32_t core, uint8_t *destination, size_t bytes);
+         void markDmaReady(uint32_t core) noexcept;
++        // Bytes del ultimo DMA ADMA que ya han pasado al buffer de entrada (el MADR del IOP avanza con ellos), o
++        // nullopt si no hay un DMA ADMA en curso o terminado cuyo MADR siga sin reprogramar.
++        [[nodiscard]] std::optional<uint32_t> admaDmaBytesDone(uint32_t core) const noexcept;
++        void admaDmaClear(uint32_t core) noexcept { m_adma[core].dmaTotal = 0; }
++        [[nodiscard]] uint64_t takeDmaDelayCycles(uint32_t core) noexcept
++        {
++            const uint64_t cycles = m_dmaDelayCycles[core];
++            m_dmaDelayCycles[core] = 0;
++            return cycles;
++        }
+ 
+         // Avanza hasta el ciclo indicado del IOP (una muestra cada CyclesPerSample ciclos).
+         void advanceTo(uint64_t iopCycle);
+@@ -109,6 +123,26 @@ namespace ps2x::iop::detail
+         void stepEnvelope(uint32_t core, uint32_t voice);
+         void checkIrqAddress(uint32_t halfwordAddress) noexcept;
+ 
++        // GOW-Port: ADMA. Buffer de entrada de 2 mitades de 256 muestras en 0x2000 + core * 0x400 (L) y +0x200 (R).
++        static constexpr uint32_t AdmaBlockBytes = 0x400u, AdmaHalfSamples = 0x100u;
++        struct Adma
++        {
++            bool enabled = false;
++            bool playing = false;
++            std::vector<uint8_t> pending; // bloques aun sin copiar al buffer de entrada
++            size_t pendingPos = 0;
++            uint32_t readPos = 0;         // muestra dentro del buffer (0..0x1FF)
++            uint32_t writeHalf = 0;
++            bool filled[2]{};
++            size_t dmaTotal = 0;          // bytes del ultimo DMA ADMA (0 = MADR reprogramado)
++        };
++        void admaReset(uint32_t core) noexcept;
++        void admaFill(uint32_t core);
++        [[nodiscard]] uint64_t admaDelayCycles(uint32_t core) const noexcept;
++        void admaInput(uint32_t core, int32_t &left, int32_t &right);
++
++        std::array<Adma, 2> m_adma{};
++        std::array<uint64_t, 2> m_dmaDelayCycles{};
+         std::vector<uint16_t> m_ram;
+         std::array<uint16_t, 0x400> m_regs{};
+         std::array<std::array<VoiceState, VoicesPerCore>, 2> m_voices{};
+diff --git a/ps2xTest/src/ps2_spu2_tests.cpp b/ps2xTest/src/ps2_spu2_tests.cpp
+index fd9ae83..a182aa2 100644
+--- a/ps2xTest/src/ps2_spu2_tests.cpp
++++ b/ps2xTest/src/ps2_spu2_tests.cpp
+@@ -167,6 +167,90 @@ void register_ps2_spu2_tests()
+             t.Equals(spu.voice(0u, 0u).nax, 0x3008u, "the jump should use the LSA read with the end block");
+         });
+ 
++        tc.Run("ADMA streams the DMA data through the core input at 48 kHz and ends the DMA when it is consumed", [](TestCase &t)
++        {
++            // GOW-Port: con ADMAS activo el DMA no escribe en la RAM de sonido: cada bloque de 0x400 bytes (256 muestras L y
++            // 256 R) pasa a una mitad del buffer de entrada cuando se libera, y el DMA acaba entonces. Antes se ignoraba:
++            // el DMA terminaba al instante, el IOP lo relanzaba sin parar y el audio de las peliculas no sonaba.
++            IopMemory memory;
++            std::vector<uint8_t> payload(0x1000u);
++            for (uint32_t block = 0; block < 4u; ++block)
++            {
++                const int16_t level = static_cast<int16_t>(0x1000 * (block + 1u));
++                for (uint32_t i = 0; i < 256u; ++i)
++                {
++                    const int16_t left = level, right = static_cast<int16_t>(-level);
++                    payload[block * 0x400u + i * 2u] = static_cast<uint8_t>(left);
++                    payload[block * 0x400u + i * 2u + 1u] = static_cast<uint8_t>(left >> 8);
++                    payload[block * 0x400u + 0x200u + i * 2u] = static_cast<uint8_t>(right);
++                    payload[block * 0x400u + 0x200u + i * 2u + 1u] = static_cast<uint8_t>(right >> 8);
++                }
++            }
++            t.IsTrue(memory.writeRam(0x80000u, payload.data(), payload.size()), "payload should be written to IOP RAM");
++            for (uint32_t core = 0; core < 2u; ++core)
++            {
++                memory.write16(kBase + Spu2::RegMvolBase + core * Spu2::RegMvolStride, 0x3FFFu);
++                memory.write16(kBase + Spu2::RegMvolBase + core * Spu2::RegMvolStride + 2u, 0x3FFFu);
++            }
++            memory.write16(kBase + Spu2::RegMvolBase + Spu2::RegMvolStride + 0xCu, 0x7FFFu); // BVOLL del nucleo 1
++            memory.write16(kBase + Spu2::RegMvolBase + Spu2::RegMvolStride + 0xEu, 0x7FFFu); // BVOLR
++            memory.write16(kBase + 0x400u + Spu2::RegAdmas, 2u);                              // ADMA en el nucleo 1
++            memory.write32(0x1F801500u, 0x80000u);                                            // MADR canal 7
++            memory.write32(0x1F801504u, (1u << 16u) | 0x400u);                                // 0x1000 bytes
++            memory.write32(0x1F801508u, 0x01000201u);
++            t.Equals(memory.spu2().ram(0x2400u), static_cast<uint16_t>(0x1000u), "block 0 L goes to the input buffer");
++            t.Equals(memory.spu2().ram(0x2600u), static_cast<uint16_t>(0xF000u), "block 0 R goes 0x200 halfwords after L");
++            t.Equals(memory.spu2().ram(0x2500u), static_cast<uint16_t>(0x2000u), "block 1 fills the second half");
++            t.Equals(memory.spu2().ram(0x2000u), static_cast<uint16_t>(0u), "core 0 input stays empty");
++            t.Equals(memory.spu2().ram(0x0000u + 0x400u), static_cast<uint16_t>(0u), "ADMA data does not use the TSA");
++            const auto start = memory.takeDmaStart();
++            t.IsTrue(start.has_value() && start->irq == 0x28, "the core 1 DMA interrupt should be scheduled");
++            t.IsTrue(start.has_value() && start->delayCycles == 2u * 256u * Spu2::CyclesPerSample,
++                     "the DMA should end when the last block enters the buffer, two half periods from now");
++            t.Equals(memory.read32(0x1F801500u), 0x80000u + 0x800u, "MADR should show the two blocks already copied");
++
++            memory.spu2().advanceTo(256u * Spu2::CyclesPerSample);
++            t.Equals(memory.read32(0x1F801500u), 0x80000u + 0xC00u, "MADR should advance one block per 256 samples");
++            memory.spu2().advanceTo(1024u * Spu2::CyclesPerSample);
++            t.Equals(memory.read32(0x1F801500u), 0x80000u + 0x1000u, "MADR should end after the whole transfer");
++            std::vector<int16_t> out(2048u * 2u);
++            t.Equals(memory.spu2().drainOutput(out.data(), 1100u), static_cast<size_t>(1024u), "one frame per sample");
++            t.IsTrue(out[0] > 0x0F00 && out[1] < -0x0F00, "block 0 plays first, L positive and R negative");
++            t.IsTrue(out[300u * 2u] > 0x1F00 && out[300u * 2u] < 0x2100, "block 1 plays after 256 samples");
++            t.IsTrue(out[900u * 2u] > 0x3F00, "block 3 plays last");
++            memory.spu2().advanceTo(1300u * Spu2::CyclesPerSample);
++            t.Equals(memory.spu2().drainOutput(out.data(), 400u), static_cast<size_t>(276u), "output keeps running");
++            t.Equals(out[100u * 2u], static_cast<int16_t>(0), "after the last block the core falls silent");
++        });
++
++        tc.Run("ADMA restarts cleanly after an underrun", [](TestCase &t)
++        {
++            Spu2 spu;
++            std::vector<uint8_t> block(0x400u, 0u);
++            for (uint32_t i = 0; i < 256u; ++i)
++                block[i * 2u + 1u] = 0x10u; // L = 0x1000
++            spu.write16(kBase + Spu2::RegMvolBase, 0x3FFFu);
++            spu.write16(kBase + Spu2::RegMvolBase + Spu2::RegMvolStride, 0x3FFFu);
++            spu.write16(kBase + Spu2::RegMvolBase + Spu2::RegMvolStride + 0xCu, 0x7FFFu);
++            spu.write16(kBase + Spu2::RegMvolBase + Spu2::RegMvolStride + 0xEu, 0x7FFFu);
++            spu.write16(kBase + 0x400u + Spu2::RegAdmas, 2u);
++            t.IsTrue(spu.dmaWrite(1u, block.data(), block.size()), "ADMA DMA is accepted");
++            t.Equals(spu.takeDmaDelayCycles(1u), uint64_t{0}, "one block fits the empty buffer: the DMA ends at once");
++            for (int i = 0; i < 600; ++i) // 256 muestras del bloque y el resto en silencio
++                spu.step();
++            std::vector<int16_t> out(1200u);
++            spu.drainOutput(out.data(), 600u);
++            t.IsTrue(out[10u * 2u] > 0x0F00, "the block is heard");
++            t.Equals(out[400u * 2u], static_cast<int16_t>(0), "silence after the underrun");
++            t.IsTrue(spu.dmaWrite(1u, block.data(), block.size()), "a new transfer is accepted after the underrun");
++            spu.step();
++            std::vector<int16_t> again(2u);
++            spu.drainOutput(again.data(), 1u);
++            t.IsTrue(again[0] > 0x0F00, "playback restarts with the new block");
++            spu.write16(kBase + 0x400u + Spu2::RegAdmas, 0u);
++            t.IsFalse(spu.admaDmaBytesDone(1u).has_value(), "disabling ADMA forgets the transfer");
++        });
++
+         tc.Run("ADSR attacks to full level and releases to silence after KOFF", [](TestCase &t)
+         {
+             Spu2 spu;
