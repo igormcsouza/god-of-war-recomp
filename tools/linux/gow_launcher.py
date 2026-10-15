@@ -296,7 +296,7 @@ def _choose_iso() -> Path:
 
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
-    "raster_threads": 0, "pad_index": None, "debug_ui": False,
+    "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False,
 }
 
 
@@ -349,6 +349,8 @@ def settings_to_env(settings: dict) -> dict[str, str]:
         env["GOW_PAD_INDEX"] = str(settings["pad_index"])
     if settings.get("raster_threads"):
         env["PS2X_GS_RASTER_THREADS"] = str(settings["raster_threads"])
+    if settings.get("mute_audio"):
+        env["GOW_AUDIO"] = "0"
     return env
 
 
@@ -388,6 +390,7 @@ def settings_window(settings: dict) -> dict | None:
     full = tkinter.BooleanVar(value=settings["fullscreen"])
     fps = tkinter.BooleanVar(value=settings["show_fps"])
     dbg = tkinter.BooleanVar(value=settings["debug_ui"])
+    mute = tkinter.BooleanVar(value=settings["mute_audio"])
     scale = tkinter.StringVar(value=f"{settings['resolution_scale']}x")
     threads = tkinter.StringVar(value=str(settings["raster_threads"] or "Auto"))
     pads = detect_pads()
@@ -412,6 +415,7 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Label(frame, text="Controller").grid(row=6, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=pad, values=pad_values, width=40).grid(row=6, column=1, columnspan=2, sticky="w")
     ttk.Checkbutton(frame, text="Debug UI", variable=dbg).grid(row=7, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
 
     def play() -> None:
         nonlocal result
@@ -426,10 +430,11 @@ def settings_window(settings: dict) -> dict | None:
             count = 0
         result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
-                  "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get()}
+                  "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
+                  "mute_audio": mute.get()}
         root.destroy()
 
-    ttk.Button(frame, text="Play", command=play).grid(row=8, column=2, sticky="e", pady=8)
+    ttk.Button(frame, text="Play", command=play).grid(row=9, column=2, sticky="e", pady=8)
     root.mainloop()
     return result
 
@@ -454,6 +459,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prepare-only", action="store_true", help="validate and prepare the cache without launching")
     parser.add_argument("--no-gui", "--last", dest="no_gui", action="store_true",
                         help="skip the settings window and use the saved settings")
+    parser.add_argument("--mute", action="store_true",
+                        help="mute audio for this run only (not saved; sets GOW_AUDIO=0)")
     args = parser.parse_args(argv)
     try:
         settings = load_settings()
@@ -470,6 +477,8 @@ def main(argv: list[str] | None = None) -> int:
                     return 1
                 settings = chosen
                 save_settings(settings)
+        if args.mute:  # one-run override, applied after saving so the file keeps the window value.
+            settings = dict(settings, mute_audio=True)
         iso_path = args.iso or (Path(settings["iso"]) if settings["iso"] else None) or _choose_iso()
         runner = None if args.prepare_only else _runner_path(args.runner)
         elf = prepare(iso_path)
