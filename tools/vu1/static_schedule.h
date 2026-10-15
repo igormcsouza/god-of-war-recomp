@@ -179,15 +179,26 @@ namespace vu1s
           << "        static VU1CompiledAccess::BlockCheck check;\n"
           << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words), check))\n            return 0;\n"
           << "        const uint64_t base = VU1CompiledAccess::cycle(vu);\n"
-          << "        if (!g_staticOn || !VU1CompiledAccess::staticEntry(vu, base + " << pl.span << "u)";
+          << "        if (!g_staticOn";
         for (const Slot &s : pl.liveIns)
             o << " ||\n            " << ready(s) << " > base + " << s.cycle << "u";
         o << ")\n        {\n            ++g_staticMisses;\n            return " << fallback << "(vu, c);\n        }\n"
           << "        ++g_staticHits;\n        g_blockPairs += " << pcs.size() << "u;\n";
         for (size_t i = 0; i < pl.region; ++i)
+        {
+            // Lo mismo que el final de cada par de la ruta par a par: avanzar el ciclo, confirmar las colas vencidas y el
+            // PATH1 de XGKICK; y, si el par espera a un escritor del prefijo, avanzar hasta su ciclo (advanceTo).
+            if (i == 0)
+                o << "        VU1CompiledAccess::staticFirst(vu);\n";
+            else if (pl.offset[i] == pl.offset[i - 1] + 1u)
+                o << "        VU1CompiledAccess::staticTick(vu, base + " << pl.offset[i] << "u);\n";
+            else
+                o << "        VU1CompiledAccess::staticTick(vu, base + " << pl.offset[i - 1] + 1u << "u);\n"
+                  << "        VU1CompiledAccess::staticAdvance(vu, base + " << pl.offset[i] << "u);\n";
             o << "        static_assert(vu1c::lowerInline(" << types[i] << "::value.lower) || " << types[i] << "::value.iBit);\n"
               << "        VU1CompiledAccess::stepStatic<" << types[i] << ", " << (dead[i] ? "true" : "false") << ">(vu, c, base + "
               << pl.offset[i] << "u);\n";
+        }
         for (const Slot &s : pl.writes)
         {
             const char *fn = s.kind == 0 ? "setVfReady" : s.kind == 1 ? "setViReady" : "setAccReady";
