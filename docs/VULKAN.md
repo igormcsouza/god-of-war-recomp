@@ -544,3 +544,49 @@ binary); at run time there is exactly one compute pipeline, created during devic
 driver's own disk cache is warm. So the cache removes about half a second of startup only when the driver cache is cold (new driver,
 cleared cache, other machine); it cannot change steady-state FPS, because no pipeline is compiled after startup. Further shader
 precompilation would affect stutter only, and there is nothing left to compile.
+
+## Wave 1b: VU1 speed, first findings (2026-10-15)
+
+Profiling tool: `GOW_VU1_SAMPLE=1` (`patches/ps2recomp-vu1-profile-diag.patch`) is an in-process RIP sampler for the VU1 worker
+(SIGPROF from a per-thread CPU-time timer, 100 us; every 10 s it prints `[vu1-sample] <image offset> <count>`). It exists because
+`perf` is unusable here (`perf_event_paranoid=4`). Resolve with `nm -C -n` (function level) or `addr2line -i` on a build with
+`-g1` for the generated files (inlined-function/line level). `PS2X_PIPE_STATS=1` now also prints `[pipe-vu1] pairs/s: compiled=
+interpreted=` so missing microcode coverage is visible at once.
+
+**Finding 1 (the big one): the compiled VU1 did not cover the gameplay microcode.** The local microcode folder
+(`GOW_VU1_MICROCODIGO`, captured with `GOW_VU1_CAPTURA`) held 144 images from a short run. A single 90 s gameplay run captures
+1,065 distinct images (the game uploads microprograms in slices, so the full 16 KB memory hash changes constantly); a block is
+used only if its own words match some captured image. With the 144-image set 7.3% of the pairs in the rainy fight fell back to
+the interpreter, which cost ~35% of the VU1 thread (`normalizeFmacResult`, `stepInterpreted`, `updateFmacFlags`, `execUpper`
+on top of the profile). Merging the captures (`cp` of all `*.bin` into one folder; the generator dedupes blocks: 853 -> 1,383
+blocks, generated C++ 9.4 -> 15 MB, ~1 min more build time) gives 0% interpreted pairs. Same scene (rainy fight, defaults,
+median over 33 s, one runner):
+
+| | 144 images | 1,065 images |
+|---|---|---|
+| interpreted pairs | 7.3% | 0% |
+| `pc=0x018` / `0x000` / `0x030` us per call | 36 / 23 / 28 | 26 / 16 / 18 |
+| ns per VU cycle (same three) | 12.0 / 13.5 / 13.8 | 8.7 / 9.5 / 9.0 |
+| `vu1_exec` ms/s | 837 | 734 |
+| window FPS (guest flips) | 14.9 | 19.8 |
+| VU1 ms per displayed frame | 56.2 | 37.1 |
+
+So 1.4-1.55x per call and 1.5x per frame from coverage alone, no code change. Not yet the 2x/4x asked for.
+
+**Finding 2: -O1 vs -O2 for the generated files makes no difference** (`PS2X_RUNNER_O1` compiles the generated VU1 at -O1;
+rebuilding it at -O2 gave the same ns/cycle, +45% compile time), so no flag change was shipped.
+
+**Finding 3: where the remaining ~9 ns/cycle (~35 host cycles per VU cycle) goes** (79% of the VU1 thread is block code; line
+profile of the generated blocks, `-g1` build): scoreboard checks `readyCycleT` (`std::max` chains over `m_vfReady/m_viReady/
+m_accReady`, ~16%), scoreboard writes in `stepPairT` (`markPairWrites`, ~8%), `commitReadyPipelines` + `pushFmacFlags` +
+`commitReadyFlags` (~7%), `blockPreconditions` (~3%), the rest is the SIMD FMAC lane math and exact-flag logic (`emmintrin`
+and `fmacScalarT`, ~40%). Blocks are ~900 bytes of x86 per VU pair.
+
+**Next (needs a design, not done):** static scheduling of whole blocks. At block entry check once that every live-in register's
+ready cycle is `<= m_cycle` (and `m_nextCommitCycle`/`m_xgkickEvent` are beyond the block); then the generator can compute the
+cycle offset of every pair at generation time (in-block writers with latency > distance are static stalls), drop all per-pair
+`readyCycleT`, `m_cycle++`, budget and commit checks, and at the exit store only the last write per register lane
+(`entry + const`, skipped when `<= exit cycle`) plus `m_cycle = entry + length`. Keep today's per-pair block as the fallback when
+the entry check fails. Expected: scoreboard + bookkeeping ~30-35% of block time, i.e. ~1.4-1.5x more on top of Finding 1 (about
+2.2x total from the original). Exactness check: GOW_VU1C env switches already allow compiled-vs-interpreter runs; a record/replay
+of VU1 state per MSCAL would be the proper test. The remaining 40% (FMAC flag math) would need a cheaper exact-flag proof.

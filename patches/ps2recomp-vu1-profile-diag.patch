@@ -1,0 +1,139 @@
+diff --git a/ps2xRuntime/include/runtime/ps2_pipe_stats.h b/ps2xRuntime/include/runtime/ps2_pipe_stats.h
+--- a/ps2xRuntime/include/runtime/ps2_pipe_stats.h
++++ b/ps2xRuntime/include/runtime/ps2_pipe_stats.h
+@@ -8,6 +8,13 @@
+ #include <cstdlib>
+ #include <thread>
+ 
++#if defined(__GNUC__) && defined(__linux__)
++// GOW-Port: defined by the generated VU1 code (tools/vu1/generar_vu1.cpp); null when the build has no compiled VU1.
++extern "C" unsigned long long gowVu1InterpretedPairs() __attribute__((weak));
++extern "C" unsigned long long gowVu1CompiledPairs() __attribute__((weak));
++#define PS2X_PIPE_VU1_PAIR_COUNTERS 1
++#endif
++
+ namespace ps2_pipe
+ {
+ enum Slot : int
+@@ -55,6 +62,7 @@
+     std::thread([] {
+         uint64_t prevNs[SlotCount] = {}, prevN[SlotCount] = {};
+         uint64_t prevPNs[kProgSlots] = {}, prevPN[kProgSlots] = {}, prevPCyc[kProgSlots] = {};
++        uint64_t prevIp = 0, prevCp = 0;
+         for (int tick = 1;; ++tick)
+         {
+             std::this_thread::sleep_for(std::chrono::seconds(1));
+@@ -74,6 +82,16 @@
+                                  ns / 5e6, calls / 5.0, ns / calls / 1e3, ns / std::max(1.0, double(g_progCyc[i].load() - prevPCyc[i])));
+                 }
+                 std::fprintf(stderr, "\n");
++#ifdef PS2X_PIPE_VU1_PAIR_COUNTERS
++                if (gowVu1InterpretedPairs && gowVu1CompiledPairs)
++                {
++                    const uint64_t ip = gowVu1InterpretedPairs(), cp = gowVu1CompiledPairs();
++                    std::fprintf(stderr, "[pipe-vu1] pairs/s: compiled=%.0f interpreted=%.0f (interpreted %.1f%% of pairs)\n",
++                                 double(cp - prevCp) / 5.0, double(ip - prevIp) / 5.0,
++                                 100.0 * double(ip - prevIp) / std::max(1.0, double((ip - prevIp) + (cp - prevCp))));
++                    prevIp = ip; prevCp = cp;
++                }
++#endif
+                 for (int i = 0; i < kProgSlots; ++i) { prevPNs[i] = g_progNs[i].load(); prevPN[i] = g_progN[i].load(); prevPCyc[i] = g_progCyc[i].load(); }
+             }
+             std::fprintf(stderr, "[pipe]");
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -36,6 +36,15 @@
+ #include <sstream>
+ #include <cstdio>
+ #include <cstdlib>
++#include <map>
++#if defined(__linux__)
++#include <csignal>
++#include <ctime>
++#include <dlfcn.h>
++#include <sys/syscall.h>
++#include <ucontext.h>
++#include <unistd.h>
++#endif
+ 
+ #if !defined(PLATFORM_VITA)
+ namespace
+@@ -706,6 +715,69 @@
+ }
+ } // namespace
+ 
++#if defined(__linux__)
++namespace
++{
++// GOW-Port: GOW_VU1_SAMPLE=1 -- tiny in-process RIP sampler for the VU1 worker thread (perf is not usable when
++// perf_event_paranoid > 2). SIGPROF from a per-thread CPU-time timer every 100 us records the interrupted RIP; every 10 s
++// the histogram is printed as "[vu1-sample] <offset in image> <count>" for objdump/addr2line.
++std::atomic<uint32_t> g_sampleN{0};
++uint64_t g_sampleRip[1u << 20];
++void vu1SampleHandler(int, siginfo_t *, void *uc)
++{
++    const uint32_t i = g_sampleN.fetch_add(1, std::memory_order_relaxed);
++    if (i < (1u << 20))
++        g_sampleRip[i] = static_cast<uint64_t>(static_cast<ucontext_t *>(uc)->uc_mcontext.gregs[REG_RIP]);
++}
++void vu1SampleEnsure()
++{
++    static const bool wanted = [] { const char *v = std::getenv("GOW_VU1_SAMPLE"); return v && *v && *v != '0'; }();
++    thread_local bool done = false;
++    if (!wanted || done)
++        return;
++    done = true;
++    struct sigaction sa {};
++    sa.sa_sigaction = vu1SampleHandler;
++    sa.sa_flags = SA_SIGINFO | SA_RESTART;
++    sigaction(SIGPROF, &sa, nullptr);
++    sigevent ev {};
++    ev.sigev_notify = SIGEV_THREAD_ID;
++    ev.sigev_signo = SIGPROF;
++    ev._sigev_un._tid = static_cast<int>(syscall(SYS_gettid));
++    timer_t timer;
++    clockid_t clk;
++    pthread_getcpuclockid(pthread_self(), &clk);
++    if (timer_create(clk, &ev, &timer) != 0)
++        return;
++    itimerspec its {};
++    its.it_interval.tv_nsec = 100000;
++    its.it_value.tv_nsec = 100000;
++    timer_settime(timer, 0, &its, nullptr);
++    std::thread([] {
++        Dl_info info {};
++        dladdr(reinterpret_cast<void *>(&vu1SampleEnsure), &info);
++        const uint64_t base = reinterpret_cast<uint64_t>(info.dli_fbase);
++        for (;;)
++        {
++            std::this_thread::sleep_for(std::chrono::seconds(10));
++            const uint32_t n = std::min<uint32_t>(g_sampleN.exchange(0), 1u << 20);
++            std::map<uint64_t, uint32_t> hist;
++            for (uint32_t k = 0; k < n; ++k)
++                ++hist[g_sampleRip[k] - base];
++            std::fprintf(stderr, "[vu1-sample] total=%u\n", n);
++            for (const auto &[a, c] : hist)
++                std::fprintf(stderr, "[vu1-sample] %llx %u\n", static_cast<unsigned long long>(a), c);
++        }
++    }).detach();
++}
++} // namespace
++#else
++namespace
++{
++void vu1SampleEnsure() {}
++} // namespace
++#endif
++
+ bool PS2Runtime::syncCoreSubsystems()
+ {
+     uint8_t *const rdram = m_memory.getRDRAM();
+@@ -753,6 +825,7 @@
+                                      m_vu1.state().tBitEnabled =
+                                          (cpuContext->vu0_fbrst & (1u << 11)) != 0u;
+                                      {
++                                         vu1SampleEnsure();
+                                          // GOW-Port: PS2X_PIPE_STATS per-microprogram time (includes the XGKICK copies it triggers).
+                                          const bool timed = ps2_pipe::enabled();
+                                          const auto t0 = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};

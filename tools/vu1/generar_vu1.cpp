@@ -606,6 +606,10 @@ int main(int argc, char **argv)
         << "                }\n            }\n"
         << "            ++g_stats.interpreted;\n"
         << "            if (!VU1CompiledAccess::interpret(vu, c))\n                return;\n        }\n    }\n}\n\n"
+        // GOW-Port: pair counters for the PS2X_PIPE_STATS [pipe-vu1] line (a high interpreted share means the
+        // microcode folder lacks the programs the game is running: capture more with GOW_VU1_CAPTURA).
+        << "extern \"C\" unsigned long long gowVu1InterpretedPairs() { return g_stats.interpreted; }\n"
+        << "extern \"C\" unsigned long long gowVu1CompiledPairs() { return g_stats.compiled + vu1c_gen::g_blockPairs; }\n\n"
         << "static const bool g_registered = (VU1Interpreter::registerCompiledProgram(&vu1c_gen::run), true);\n"
         << footer;
     writeIfChanged(base + "/programa0.cpp", out.str());
