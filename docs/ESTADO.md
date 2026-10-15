@@ -7193,3 +7193,35 @@ S1/S2 enums` (CodeGenerator, not touched by this patch; not investigated).
 the render thread read that, so the GS worker records the next batches while the GPU finishes (removes ~300-400 ms/s of fence wait,
 the GPU becomes the limit at ~55 -> ~90% busy). (2) A real ring for the prim/CLUT buffers (`record-ring`, `clut-ring` currently wait
 for all). (3) Move `tex-feedback` fallbacks to the GPU (~160-260 ms/s). (4) Find which reader needs the `Flush`/`Sync` fence before retrying that change.
+
+## GPU run-end census and async-Present plan (2026-10-15, measurement only, no code change)
+
+`PS2X_GS_VULKAN_STATS=1 PS2X_PIPE_STATS=1`, gameplay (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050), steady state t=60-95 s, per second
+(17.1 FPS window-title average over 13 samples):
+
+| Run ended by | runs/s | fence wait ms/s | Notes |
+|---|---|---|---|
+| `Flush()` | 43-47 | 125-148 | frontend `GS::latchHostPresentationFrame` (non-shared path) and the `GS_REG_FINISH` handler both call `Flush()` |
+| `Sync(reason)` | 59-63 | 119-137 | `Sync(Presentation)` in the latch, `Sync(Finish)` on GS FINISH writes |
+| `Present(request)` | 39-46 | 59-74 | CPU compositor snapshots VRAM, so the run must be finished |
+| `record-ring` (16384 prims) | 9-14 | 52-92 | |
+| `BeginTransfer(command)` | 10-13 | 34-49 | |
+| `line/point` fallback | 14-15 | 15-18 | |
+| `tex-feedback` fallback | 0 (CPU draws 224-240/s, `cpudraw_ms` 151-163) | 0 | these draws do not end the run (the run is ended by the other causes); they cost CPU time only |
+| total | 181-193 | 436-487 | |
+
+Findings: (1) `tex-feedback` does not end GPU runs; it is a ~155 ms/s CPU cost only. (2) About 60% of the fence wait (260 ms/s) comes from
+`Flush()` + `Sync()`, which the CPU backend implements as no-ops: per presented frame the latch ends the run up to three times
+(Flush, Sync(Presentation), Present), each one a full submit + fence wait + pipeline drain. (3) The previous no-wait attempt changed the
+backend methods (crashed the Vulkan suite). A safer route: leave `GSVulkanBackend::Flush/Sync` exact and let the frontend skip
+`Flush()/Sync(Presentation|Finish)` when the backend reports lazy host sync (new virtual, default false; every host-visible access still goes
+through `GOW_VK_CPU`/`BeginTransfer`, which finish the run), then make `Present` itself cheap.
+
+Design for the Present part (NOT implemented, token budget): `GSThreadedBackend::Present` -> two phases. Phase 1 on the GS worker: record
+a GPU copy of the VRAM buffer (4 MiB, `importedVram`) into one of 2-3 host-visible staging buffers inside the open command stream,
+`submitPartial()`, then an empty `vkQueueSubmit` with a per-slot fence (the run stays open). Phase 2 on the render thread: wait only on the
+slot fence, then run `GSCpuBackend::PresentFromLocalMemory` on the staging copy (the CPU backend already snapshots VRAM the same way). The
+worker keeps recording the next frame while the GPU finishes. Per-slot fences avoid the `Finish` fence reset race.
+
+**t=80 s black screenshot:** the CPU backend (`PS2X_GS_BACKEND=cpu`, ~3 FPS, so a different game time) is black at t=80 s too, so it is
+not a Vulkan bug; most likely the pad script's fade/transition. t=62 s Vulkan shot is the normal rain fight.
