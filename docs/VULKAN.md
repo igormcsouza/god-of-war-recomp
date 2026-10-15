@@ -437,3 +437,23 @@ Gameplay screenshots at t=62/75/90 s (after) checked by eye: rain fight, Kratos,
 (the replay wrapper does not forward `LazyHostSync`, so it exercises the old path and is unaffected).
 
 Next: a real ring for the prim buffer (two halves, per-half fence) so `record-ring` stops waiting for the whole run.
+
+### Why the headless replay looks 3.5x faster than the live game (2026-10-15, measurement only)
+
+Mostly a unit error. The window-title FPS counts guest display flips (`g_gowGuestFlips`), while the replay counts backend `Present` calls. Live gameplay does
+~40 `Present`s per second (`async_present` counter) for ~15 flips/s (~2.7 presents per flip). The 121-present capture is therefore ~3 s of game time, and the
+replay speed is 121 / 2.1 s = ~57 presents/s against ~40 live: a 1.4x gap, not 3.5x (in flips: ~21 vs ~15 FPS-equivalent). GPU cost per present matches:
+replay 10.9 ms, live 613-644 ms/s of `gpu_busy` over ~40 presents = ~15-16 ms (live scene is heavier and drifts over time). The remaining 1.4x is live-only work: CPU fallbacks
+(`tex-feedback` ~320-345/s, `cpudraw_ms` 213-254) serialised in the GS worker, `record-ring` waits (240-325 ms/s) and EE/VU1/front-end threads competing for CPU.
+
+Hypotheses tested (RTX 5050 laptop + Intel RPL-P iGPU, Wayland session with XWayland `DISPLAY=:2`):
+
+| Hypothesis | Result |
+|---|---|
+| (a) GPU clocks/P-state | Replay: SM 2340-2595 MHz, P2 (13 of 16 samples). Live: P2 in all 89 samples, mean SM 2200 MHz, util 70%. No low-clock state; nothing to fix (an idle-gap P5 only appears between bench passes). |
+| (b) Display path | The raylib GL window renders on the Intel iGPU (`glxinfo -B`: Intel); Vulkan compute runs on NVIDIA. `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only`: 14.9 / 15.2 FPS vs default 15.5 / 15.0 (noise). The present path copies the staged VRAM frame through host memory, so there is no cross-GPU or GL<->Vulkan engine contention to remove. |
+| (c) Run structure | Live: ~8000 dispatches/s, avg 0.07-0.10 ms, ~70 GPU runs/s; replay: 17157 dispatches per 121 presents (~142/present, live ~200/present). Same shader cost per dispatch; live only adds waits and fallbacks. |
+
+FPS table (40 s windows at t>55 s, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): default 15.5 / 15.0; NVIDIA PRIME offload env 14.9 / 15.2. `PS2X_VK_DEVICE=Intel` not run (the iGPU is slower
+and not the question). No software fix was found, so no code, launcher default or patch changed. Needing sudo (untested): `nvidia-smi -lgc` to pin clocks (not needed, clocks are already high).
+Real levers stay the same: per-present GPU time (~11-16 ms) and the `record-ring`/CPU-fallback waits in the serial GS worker.
