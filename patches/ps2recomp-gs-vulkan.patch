@@ -148,10 +148,10 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..51e684a
+index 0000000..a9a6506
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,1000 @@
+@@ -0,0 +1,1115 @@
 +// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
 +// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
@@ -220,6 +220,7 @@ index 0000000..51e684a
 +    // ponytail: fixed record ring per GPU run (~3.4 MB); a full ring ends the run.
 +    constexpr uint32_t kMaxPrims = 16384u;
 +    constexpr uint32_t kMaxBatch = 1024u;
++    constexpr uint32_t kQueriesPerCmd = 1056u; // begin/end of the command buffer + a begin/end pair per dispatch (stats only)
 +    constexpr uint32_t kMaxCmds = 32u;      // command buffers per GPU run (partial submissions)
 +    constexpr uint32_t kSubmitEvery = 512u; // primitives between partial submissions
 +
@@ -237,6 +238,8 @@ index 0000000..51e684a
 +        VkDevice device = VK_NULL_HANDLE;
 +        VkQueue queue = VK_NULL_HANDLE;
 +        uint32_t family = 0;
++        uint32_t timestampBits = 0;   // GOW-Port: timestampValidBits of the queue family (0 = no timestamps)
++        float timestampPeriod = 0.f;  // ns per tick
 +        VkPhysicalDeviceMemoryProperties memory{};
 +        VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
 +        VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -311,6 +314,8 @@ index 0000000..51e684a
 +                    {
 +                        s.phys = devices[i];
 +                        s.family = f;
++                        s.timestampBits = familyProps[f].timestampValidBits;
++                        s.timestampPeriod = props.limits.timestampPeriod;
 +                        std::fprintf(stderr, "[gow-gs] Vulkan device: %s\n", props.deviceName);
 +                    }
 +            }
@@ -531,6 +536,12 @@ index 0000000..51e684a
 +    VkCommandBuffer cmds[kMaxCmds]{};
 +    VkFence fences[kMaxCmds]{};
 +    uint32_t cmdIndex = 0, primsAtSubmit = 0;
++    // GOW-Port: GPU timestamps, only with PS2X_GS_VULKAN_STATS=1 (gpuTime false = no queries recorded, no overhead).
++    struct Dispatch { uint64_t unionPx, coveredPx; uint32_t prims; };
++    VkQueryPool queryPool = VK_NULL_HANDLE;
++    bool gpuTime = false;
++    uint32_t queriesUsed[kMaxCmds]{};
++    std::vector<Dispatch> dispatches[kMaxCmds];
 +    VkBuffer prims = VK_NULL_HANDLE;
 +    VkDeviceMemory primsMemory = VK_NULL_HANDLE;
 +    PrimRecord *primsMapped = nullptr;
@@ -557,27 +568,90 @@ index 0000000..51e684a
 +    bool statsEnabled = [] { const char *v = std::getenv("PS2X_GS_VULKAN_STATS"); return v && *v && *v != '0'; }();
 +    std::chrono::steady_clock::time_point statsStart = std::chrono::steady_clock::now();
 +    uint64_t statsGpu = 0, statsCpu = 0, statsRuns = 0, statsBatches = 0, statsFinishUs = 0, statsRecordUs = 0, statsCpuUs = 0;
-+    std::map<std::string, uint64_t> statsFallback, statsRunEnd;
++    std::map<std::string, uint64_t> statsFallback, statsRunEnd, statsRunWaitUs;
++    // GOW-Port: GPU-side numbers. Bucket = union rectangle / sum of the primitives' own rectangles (<=2x, <=8x, <=32x, more).
++    double statsGpuBusyNs = 0, statsGpuSpanNs = 0;
++    uint64_t statsDispatches = 0, statsUnionPx = 0, statsCoveredPx = 0, statsWalkPx = 0, statsDispatchPrims = 0;
++    uint64_t statsBucketN[4]{}, statsBucketUnionPx[4]{}, statsBucketCoveredPx[4]{};
++    double statsBucketNs[4]{};
 +
 +    void statsTick()
 +    {
 +        const auto now = std::chrono::steady_clock::now();
 +        if (now - statsStart < std::chrono::seconds(1))
 +            return;
-+        std::string line;
++        std::string line, gpuLine;
 +        for (const auto &[reason, count] : statsFallback)
 +            line += " " + reason + "=" + std::to_string(count);
 +        line += " | batches=" + std::to_string(statsBatches) + " finish_ms=" + std::to_string(statsFinishUs / 1000u) + " record_ms=" + std::to_string(statsRecordUs / 1000u) +
 +                " cpudraw_ms=" + std::to_string(statsCpuUs / 1000u) +
 +                " runs=" + std::to_string(statsRuns) + " ended by:";
 +        for (const auto &[cause, count] : statsRunEnd)
-+            line += " " + cause + "=" + std::to_string(count);
-+        std::fprintf(stderr, "[gow-gs-vk] gpu=%llu cpu=%llu:%s\n", static_cast<unsigned long long>(statsGpu),
-+                     static_cast<unsigned long long>(statsCpu), line.c_str());
++            line += " " + cause + "=" + std::to_string(count) + "(" + std::to_string(statsRunWaitUs[cause] / 1000u) + "ms)";
++        if (gpuTime)
++        {
++            char buf[512];
++            std::snprintf(buf, sizeof(buf),
++                          "\n[gow-gs-vk-gpu] gpu_busy_ms=%.1f (cmd span %.1f) dispatches=%llu avg_dispatch_ms=%.3f prims/dispatch=%.1f "
++                          "union_Mpx=%.1f covered_Mpx=%.1f (union/covered %.1fx) walk_Mpx=%.1f avg_union=%llu px",
++                          statsGpuBusyNs / 1e6, statsGpuSpanNs / 1e6, static_cast<unsigned long long>(statsDispatches),
++                          statsDispatches ? statsGpuBusyNs / 1e6 / static_cast<double>(statsDispatches) : 0.0,
++                          statsDispatches ? static_cast<double>(statsDispatchPrims) / static_cast<double>(statsDispatches) : 0.0,
++                          static_cast<double>(statsUnionPx) / 1e6, static_cast<double>(statsCoveredPx) / 1e6,
++                          statsCoveredPx ? static_cast<double>(statsUnionPx) / static_cast<double>(statsCoveredPx) : 0.0,
++                          static_cast<double>(statsWalkPx) / 1e6,
++                          static_cast<unsigned long long>(statsDispatches ? statsUnionPx / statsDispatches : 0));
++            gpuLine = buf;
++            static const char *names[4] = {"<=2x", "<=8x", "<=32x", ">32x"};
++            for (int b = 0; b < 4; ++b)
++            {
++                std::snprintf(buf, sizeof(buf), "%s n=%llu union_Mpx=%.1f gpu_ms=%.1f", names[b],
++                              static_cast<unsigned long long>(statsBucketN[b]), static_cast<double>(statsBucketUnionPx[b]) / 1e6,
++                              statsBucketNs[b] / 1e6);
++                gpuLine += std::string(b ? " | " : "\n[gow-gs-vk-gpu] union/covered: ") + buf;
++            }
++        }
++        std::fprintf(stderr, "[gow-gs-vk] gpu=%llu cpu=%llu:%s%s\n", static_cast<unsigned long long>(statsGpu),
++                     static_cast<unsigned long long>(statsCpu), line.c_str(), gpuLine.c_str());
 +        statsStart = now;
 +        statsGpu = statsCpu = statsRuns = statsBatches = statsFinishUs = statsRecordUs = statsCpuUs = 0;
 +        statsFallback.clear();
 +        statsRunEnd.clear();
++        statsRunWaitUs.clear();
++        statsGpuBusyNs = statsGpuSpanNs = 0;
++        statsDispatches = statsUnionPx = statsCoveredPx = statsWalkPx = statsDispatchPrims = 0;
++        std::fill(std::begin(statsBucketN), std::end(statsBucketN), 0);
++        std::fill(std::begin(statsBucketUnionPx), std::end(statsBucketUnionPx), 0);
++        std::fill(std::begin(statsBucketCoveredPx), std::end(statsBucketCoveredPx), 0);
++        std::fill(std::begin(statsBucketNs), std::end(statsBucketNs), 0.0);
++    }
++
++    // Reads the timestamps of the command buffers of a finished run (all fences signalled).
++    void collectGpuTime(uint32_t cmdCount)
++    {
++        const uint64_t mask = s.timestampBits >= 64 ? ~0ull : ((1ull << s.timestampBits) - 1ull);
++        std::vector<uint64_t> ts(kQueriesPerCmd);
++        for (uint32_t i = 0; i < cmdCount; ++i)
++        {
++            const uint32_t n = queriesUsed[i];
++            if (n < 2 || vkGetQueryPoolResults(s.device, queryPool, i * kQueriesPerCmd, n, n * sizeof(uint64_t), ts.data(),
++                                               sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT) != VK_SUCCESS)
++                continue;
++            auto ns = [&](uint64_t a, uint64_t b) { return static_cast<double>((b - a) & mask) * static_cast<double>(s.timestampPeriod); };
++            statsGpuSpanNs += ns(ts[0], ts[1]);
++            for (size_t d = 0; d < dispatches[i].size() && 2 + 2 * d + 1 < n; ++d)
++            {
++                const Dispatch &disp = dispatches[i][d];
++                const double t = ns(ts[2 + 2 * d], ts[3 + 2 * d]);
++                statsGpuBusyNs += t;
++                const double ratio = disp.coveredPx ? static_cast<double>(disp.unionPx) / static_cast<double>(disp.coveredPx) : 1e9;
++                const int b = ratio <= 2.0 ? 0 : ratio <= 8.0 ? 1 : ratio <= 32.0 ? 2 : 3;
++                ++statsBucketN[b];
++                statsBucketUnionPx[b] += disp.unionPx;
++                statsBucketCoveredPx[b] += disp.coveredPx;
++                statsBucketNs[b] += t;
++            }
++        }
 +    }
 +
 +    explicit Impl(VkShared &shared) : s(shared) {}
@@ -630,6 +704,15 @@ index 0000000..51e684a
 +        if (vkAllocateCommandBuffers(s.device, &cmdInfo, cmds) != VK_SUCCESS)
 +            return false;
 +        cmd = cmds[0];
++        if (statsEnabled && s.timestampBits && s.timestampPeriod > 0.f)
++        {
++            VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
++            q.queryType = VK_QUERY_TYPE_TIMESTAMP;
++            q.queryCount = kQueriesPerCmd * kMaxCmds;
++            gpuTime = vkCreateQueryPool(s.device, &q, nullptr, &queryPool) == VK_SUCCESS;
++            std::fprintf(stderr, "[gow-gs-vk] GPU timestamps %s (valid bits %u, period %.2f ns)\n", gpuTime ? "on" : "unavailable",
++                         s.timestampBits, static_cast<double>(s.timestampPeriod));
++        }
 +        for (VkFence &f : fences)
 +            if (vkCreateFence(s.device, &fenceInfo, nullptr, &f) != VK_SUCCESS)
 +                return false;
@@ -722,6 +805,8 @@ index 0000000..51e684a
 +        for (VkFence f : fences)
 +            if (f)
 +                vkDestroyFence(s.device, f, nullptr);
++        if (queryPool)
++            vkDestroyQueryPool(s.device, queryPool, nullptr);
 +        if (commandPool)
 +            vkDestroyCommandPool(s.device, commandPool, nullptr);
 +        if (pool)
@@ -745,10 +830,19 @@ index 0000000..51e684a
 +        vkBeginCommandBuffer(cmd, &begin);
 +        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.pipeline);
 +        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, s.pipelineLayout, 0, 1, &set, 0, nullptr);
++        if (gpuTime)
++        {
++            vkCmdResetQueryPool(cmd, queryPool, cmdIndex * kQueriesPerCmd, kQueriesPerCmd);
++            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, queryPool, cmdIndex * kQueriesPerCmd);
++            queriesUsed[cmdIndex] = 2; // slot 1 (end) is written by submitCmd
++            dispatches[cmdIndex].clear();
++        }
 +    }
 +
 +    void submitCmd()
 +    {
++        if (gpuTime)
++            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, cmdIndex * kQueriesPerCmd + 1);
 +        vkEndCommandBuffer(cmd);
 +        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
 +        submit.commandBufferCount = 1;
@@ -775,6 +869,10 @@ index 0000000..51e684a
 +    {
 +        if (!batchCount)
 +            return;
++        // GOW-Port: the pair brackets barrier + dispatch, so the intervals tile the GPU's busy time.
++        const bool timed = gpuTime && queriesUsed[cmdIndex] + 2 <= kQueriesPerCmd;
++        if (timed)
++            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, cmdIndex * kQueriesPerCmd + queriesUsed[cmdIndex]);
 +        if (dispatched)
 +            memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
 +        const Push push{batchRect[0], batchRect[1], batchFirst, batchCount};
@@ -783,6 +881,18 @@ index 0000000..51e684a
 +                      static_cast<uint32_t>(batchRect[3] - batchRect[1]) / 8u + 1u, 1u);
 +        dispatched = true;
 +        ++statsBatches;
++        if (timed)
++        {
++            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, cmdIndex * kQueriesPerCmd + queriesUsed[cmdIndex] + 1);
++            queriesUsed[cmdIndex] += 2;
++            const uint64_t u = static_cast<uint64_t>(batchRect[2] - batchRect[0] + 1) * static_cast<uint64_t>(batchRect[3] - batchRect[1] + 1);
++            dispatches[cmdIndex].push_back({u, batchPixels, batchCount});
++            ++statsDispatches;
++            statsUnionPx += u;
++            statsCoveredPx += batchPixels;
++            statsWalkPx += u * batchCount;
++            statsDispatchPrims += batchCount;
++        }
 +        batchCount = 0;
 +    }
 +
@@ -852,13 +962,18 @@ index 0000000..51e684a
 +    const auto waitStart = std::chrono::steady_clock::now();
 +    vkWaitForFences(impl.s.device, impl.cmdIndex + 1, impl.fences, VK_TRUE, UINT64_MAX);
 +    vkResetFences(impl.s.device, impl.cmdIndex + 1, impl.fences);
++    if (impl.gpuTime)
++        impl.collectGpuTime(impl.cmdIndex + 1);
 +    for (uint32_t i = 0; i <= impl.cmdIndex; ++i)
 +        vkResetCommandBuffer(impl.cmds[i], 0);
 +    impl.open = false;
 +    if (!impl.imported)
 +        std::memcpy(m_vram, impl.mapped, std::min<size_t>(m_vramSize, GSSwizzle::kMemorySize));
-+    impl.statsFinishUs += static_cast<uint64_t>(
++    const uint64_t waitUs = static_cast<uint64_t>(
 +        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - waitStart).count());
++    impl.statsFinishUs += waitUs;
++    if (impl.statsEnabled)
++        impl.statsRunWaitUs[cause] += waitUs; // GOW-Port: wait per run-ending cause
 +}
 +
 +const char *GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
@@ -1154,10 +1269,10 @@ index 0000000..51e684a
 +#undef GOW_VK_CPU
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 new file mode 100644
-index 0000000..82d4bd6
+index 0000000..e970281
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -0,0 +1,462 @@
+@@ -0,0 +1,482 @@
 +// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
 +// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
 +// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
@@ -1222,6 +1337,7 @@ index 0000000..82d4bd6
 +// batch's primitives in order.
 +layout(push_constant) uniform Push { int originX; int originY; uint first; uint count; } pc;
 +uint curPrim;
++shared uint hit[32]; // GOW-Port: kMaxBatch (1024) bits
 +#define P prims[curPrim]
 +
 +const uint M_TRIANGLE = 0x100u;
@@ -1601,11 +1717,30 @@ index 0000000..82d4bd6
 +void main()
 +{
 +    ivec2 xy = ivec2(pc.originX, pc.originY) + ivec2(gl_GlobalInvocationID.xy);
-+    for (uint i = pc.first; i < pc.first + pc.count; ++i)
++    // GOW-Port: the 64 threads of a tile first test the batch's rectangles against the tile together and keep a bitmask of
++    // the primitives that touch it; each thread then walks only those, in the same ascending order.
++    ivec2 tile0 = ivec2(pc.originX, pc.originY) + ivec2(gl_WorkGroupID.xy) * 8;
++    if (gl_LocalInvocationIndex < 32u)
++        hit[gl_LocalInvocationIndex] = 0u;
++    barrier();
++    for (uint k = gl_LocalInvocationIndex; k < pc.count; k += 64u)
 +    {
-+        curPrim = i;
-+        if (xy.x >= P.rect[0] && xy.x <= P.rect[2] && xy.y >= P.rect[1] && xy.y <= P.rect[3])
-+            shade(xy);
++        curPrim = pc.first + k;
++        if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y)
++            atomicOr(hit[k >> 5], 1u << (k & 31u));
++    }
++    barrier();
++    for (uint w = 0u; w < (pc.count + 31u) >> 5; ++w)
++    {
++        uint bits = hit[w];
++        while (bits != 0u)
++        {
++            uint b = uint(findLSB(bits));
++            bits &= bits - 1u;
++            curPrim = pc.first + (w << 5) + b;
++            if (xy.x >= P.rect[0] && xy.x <= P.rect[2] && xy.y >= P.rect[1] && xy.y <= P.rect[3])
++                shade(xy);
++        }
 +    }
 +}
 +)GLSL";
@@ -1680,6 +1815,7 @@ index 6181965..9835c8c 100644
  {
      std::lock_guard<std::mutex> lock(m_producerMutex);
 diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+index 780406b..09c1b4b 100644
 --- a/ps2xRuntime/src/lib/ps2_memory.cpp
 +++ b/ps2xRuntime/src/lib/ps2_memory.cpp
 @@ -510,7 +510,7 @@ PS2Memory::~PS2Memory()

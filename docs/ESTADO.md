@@ -6757,3 +6757,27 @@ so soak-test before relying on it. From a clean pinned-commit tree all 114 patch
 on the GIF thread. (2) Per-primitive CLUT versions and non-overlapping uploads to cut GPU fence waits (GS thread is the cap).
 (3) Draw `tex-feedback`/`z-alias` on the GPU. (4) Soak test (30+ min, gameplay) for the async-FINISH hang before keeping the
 default on Windows too.
+
+## GPU time measured, magenta frame, soak (2026-10-14, Linux, Intel RPL-P)
+
+- **Device**: the runner picks the Intel iGPU (RPL-P, Mesa 25.2); NVIDIA RTX 5050 and llvmpipe also exist.
+- **GPU time in the title menu** (~6.6 FPS): the GPU is busy about 550-600 ms of every second (~55-60%), ~800 dispatches/s,
+  ~88 primitives per dispatch, avg 0.78 ms per dispatch, ~100k GPU prims/s. EE waits in run ends (`finish_ms` ~550-680) match
+  the GPU busy time, so the pipeline is largely **GPU-bound on shading**, not latency-bound. Run-end waits: LoadClut
+  ~140 ends = ~350 ms/s, BeginTransfer ~40 = ~80 ms/s, Flush/Present/tex-feedback 30-80 ms/s each; they are the points
+  where the CPU needs the GPU's result, not extra cost.
+- **Union rectangles are not wasteful**: union/covered area is 0.7x (union is smaller than the sum of the primitives' own
+  rectangles because they overlap); 70% of dispatches are <=2x, none >32x. The threads walk ~1.7-2 G primitive-iterations/s.
+- **Tile culling** (workgroup bitmask) cut avg dispatch time 0.78 -> ~0.70 ms (~10%): the walk was not the bottleneck. Remaining
+  cost is per-pixel shading (~90 Mpx/s of covered area while busy). Next candidates: CLUT versions per primitive so LoadClut
+  does not end runs, then cheaper pixel work (swizzled storage-buffer read-modify-write, 64-bit edge math).
+- **Magenta frame ("0.0 FPS", pure #FF00FF)** is the `blankFallback` placeholder of `gs_host_present.cpp` (PMODE off). It
+  appeared because my reset of `PS2Recomp/` to the pinned commit with `git stash -u` dropped two local, tracked-file edits that
+  the Linux build relies on (`ps2xRuntime/src/runner/register_functions.cpp`, the recompiler output, and
+  `ps2xRuntime/cmake/ReleaseMode.cmake`): the EE jumped to 0x100008 (`missing-target`) and never enabled the display. Restoring them
+  fixed it. It is not caused by the committed code or by the timestamp/shader changes.
+- **Black screenshots**: single isolated black frames (about 1 in 25-100 screenshots, at 7-21 s and rarely later) happen with
+  both the CPU and the Vulkan backend, so they are not a Vulkan bug (likely a presented frame between scene changes; not
+  traced further). The 5-minute soak ran without a hang: ~100k GPU prims/s until 300 s; title menu rendered correctly
+  (screenshots viewed), but 5 of 11 sparse shots (150-300 s) were black, which later runs (26/26 non-black every 5 s) did not
+  reproduce. Open: confirm whether a late-menu fade/attract mode explains it.
