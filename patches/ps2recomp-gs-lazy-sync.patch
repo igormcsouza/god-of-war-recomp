@@ -1,0 +1,399 @@
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+index 191336d..04c89ee 100644
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -410,6 +410,53 @@ void register_gs_vulkan_tests()
+ #else
+             std::printf("    [skip] built without PS2X_GS_VULKAN\n");
+             t.IsTrue(true, "skipped");
++#endif
++        });
++        // GOW-Port: lazy host sync + two-phase Present. The staged frame is the VRAM at BeginPresent time even though the
++        // GPU keeps drawing afterwards, and host reads after an unflushed run see the GPU results.
++        test.Run("Vulkan two-phase Present equals CPU Present and host reads see lazy GPU work", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            GSVulkanBackend vulkan;
++            if (!vulkan.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++            GSPresentationRequest request{};
++            request.pmode = 1u;
++            request.dispfb1 = 10ull << 9;
++            request.display1 = (639ull << 32) | (447ull << 44);
++            GSCpuBackend cpu;
++            const auto reference = render(cpu);
++            const PresentationFrame expected = cpu.Present(request);
++            t.IsTrue(static_cast<bool>(expected), "The CPU reference produced a frame");
++            t.IsTrue(vulkan.LazyHostSync() == true || std::getenv("PS2X_VK_LAZY_SYNC") != nullptr, "Vulkan reports lazy host sync");
++            auto vram = noise();
++            vulkan.Initialize(vram.data(), uint32_t(vram.size()));
++            for (const auto &b : scene())
++                vulkan.Submit(b); // no Flush: the run stays open
++            auto pending = vulkan.BeginPresent(request);
++            if (!pending)
++            {
++                std::printf("    [skip] two-phase Present disabled (PS2X_VK_SYNC_PRESENT)\n");
++                return;
++            }
++            for (const auto &b : scene())
++                vulkan.Submit(b); // the GPU overwrites VRAM after the copy was recorded
++            const PresentationFrame got = pending->Resolve();
++            t.IsTrue(got.pixels == expected.pixels && got.width == expected.width && got.height == expected.height,
++                     "Staged frame equals the CPU frame at BeginPresent time");
++            // Host reader after the lazy run: ReadVram must wait for the second pass, and equal two CPU passes.
++            for (const auto &b : scene())
++                cpu.Submit(b);
++            bool same = true;
++            for (uint32_t y = 0; y < 64 && same; y += 3)
++                for (uint32_t x = 0; x < 256 && same; x += 5)
++                    same = vulkan.ReadVram(GS_PSM_CT32, 0, 10, x, y) == cpu.ReadVram(GS_PSM_CT32, 0, 10, x, y);
++            t.IsTrue(same, "Host VRAM read after an unflushed run sees the GPU results");
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
+ #endif
+         });
+         // GOW-Port: PS2X_VK_DEVICE that matches no device must fall back to the default choice, not disable the backend.
+diff --git a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+index 9174b3c..f4ce239 100644
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -335,6 +335,7 @@ void GSThreadedBackend::Initialize(uint8_t *vram, uint32_t vramSize)
+             m_inner->Initialize(vram, vramSize);
+         }
+         m_sharedPresentation.store(m_inner->UsesSharedPresentation(), std::memory_order_release);
++        m_lazyHostSync.store(m_inner->LazyHostSync(), std::memory_order_release);
+     });
+ }
+ 
+@@ -393,6 +394,9 @@ void GSThreadedBackend::Sync(GSSyncReason reason)
+     }
+     if (reason == GSSyncReason::Presentation && UsesSharedPresentation())
+         return;
++    // GOW-Port: lazy-sync backend: FINISH/Presentation need no GPU wait (host readers still wait on their own).
++    if ((reason == GSSyncReason::Finish || reason == GSSyncReason::Presentation) && LazyHostSync())
++        return;
+     // GOW-Port: FINISH solo se publica cuando terminaron los comandos anteriores.
+     RunOnWorker([&] { m_inner->Sync(reason); });
+ }
+@@ -406,6 +410,14 @@ PresentationFrame GSThreadedBackend::Present(const GSPresentationRequest &reques
+         PublishLocked();
+         return {};
+     }
++    if (LazyHostSync() && !request.forceReadback)
++    {
++        // GOW-Port: the worker only records the GPU copy; this thread waits for that slot and composes.
++        std::unique_ptr<GSRasterBackend::PendingPresent> pending;
++        RunOnWorker([&] { pending = m_inner->BeginPresent(request); });
++        if (pending)
++            return pending->Resolve();
++    }
+     PresentationFrame frame;
+     RunOnWorker([&] { frame = m_inner->Present(request); });
+     return frame;
+diff --git a/ps2xRuntime/src/lib/gs/gs_frontend.cpp b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+index 7a0d739..6b326f1 100644
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -626,7 +626,8 @@ void GS::latchHostPresentationFrame()
+             // GOW-Port: Present compartido encola y procesa los draws previos en FIFO.
+             // Flush aqui anularia la asincronia; las lecturas y FINISH conservan su barrera.
+             shared = m_backend->UsesSharedPresentation();
+-            if (!shared)
++            // GOW-Port: a lazy-sync backend waits inside Present/host readers, so the two barriers are skipped.
++            if (!shared && !m_backend->LazyHostSync())
+             {
+                 m_backend->Flush();
+                 m_backend->Sync(GSSyncReason::Presentation);
+@@ -1642,7 +1643,7 @@ void GS::writeRegisterUnlocked(uint8_t regAddr, uint64_t value)
+         if (m_backend)
+         {
+             static const bool finishAsync = [] { const char *v = std::getenv("GOW_GS_FINISH_ASINCRONO"); return v && v[0] == '1'; }();
+-            if (!finishAsync)
++            if (!finishAsync && !m_backend->LazyHostSync())
+                 m_backend->Flush();
+             m_backend->Sync(GSSyncReason::Finish);
+         }
+diff --git a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+index 03e6989..da42e9f 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+@@ -39,6 +39,9 @@ public:
+     void TextureFlush() override;
+     void Sync(GSSyncReason reason) override;
+     PresentationFrame Present(const GSPresentationRequest &request) override;
++    // GOW-Port: PS2X_VK_LAZY_SYNC=0 / PS2X_VK_SYNC_PRESENT=1 switch these off (old behaviour) for A/B.
++    bool LazyHostSync() const override;
++    std::unique_ptr<PendingPresent> BeginPresent(const GSPresentationRequest &request) override;
+ 
+     bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
+     uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
+@@ -53,6 +56,7 @@ public:
+ 
+ private:
+     struct Impl;
++    struct PendingFrame;
+     // Waits for recorded GPU work and copies the GPU VRAM back to host VRAM.
+     // `cause` names what ended the GPU run (PS2X_GS_VULKAN_STATS).
+     void Finish(const char *cause = "finish") const;
+diff --git a/ps2xRuntime/include/runtime/gs/gs_backend.h b/ps2xRuntime/include/runtime/gs/gs_backend.h
+index dcb4a07..67d85e0 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_backend.h
+@@ -3,6 +3,7 @@
+ #include "runtime/gs/gs_types.h"
+ 
+ #include <cstdint>
++#include <memory>
+ #include <vector>
+ 
+ class GSRasterBackend
+@@ -27,6 +28,19 @@ public:
+     // GOW-Port: capacidad efectiva por instancia; consultar no necesita un contexto GL.
+     virtual bool UsesSharedPresentation() const { return false; }
+ 
++    // GOW-Port: lazy host sync. True when the backend keeps GPU work in flight and every host access to VRAM
++    // (transfers, reads, CPU fallbacks, Present) already waits for it, so the frontend may skip the Flush() and
++    // Sync(Presentation|Finish) barriers (no-ops on the CPU backend).
++    virtual bool LazyHostSync() const { return false; }
++    // GOW-Port: two-phase Present. BeginPresent runs on the backend's worker and only records a GPU-side copy of VRAM;
++    // Resolve() (any thread, once) waits for that copy alone and composes the frame. nullptr = use Present().
++    struct PendingPresent
++    {
++        virtual ~PendingPresent() = default;
++        virtual PresentationFrame Resolve() = 0;
++    };
++    virtual std::unique_ptr<PendingPresent> BeginPresent(const GSPresentationRequest &) { return nullptr; }
++
+     virtual bool ClearFramebuffer(const GSContext &context, uint32_t rgba) = 0;
+     virtual uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) = 0;
+ 
+diff --git a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+index d4ae045..2eb5994 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_threaded_backend.h
+@@ -41,6 +41,7 @@ public:
+     void Sync(GSSyncReason reason) override;
+     PresentationFrame Present(const GSPresentationRequest &request) override;
+     bool UsesSharedPresentation() const override { return m_sharedPresentation.load(std::memory_order_acquire); }
++    bool LazyHostSync() const override { return m_lazyHostSync.load(std::memory_order_acquire); }
+ 
+     bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
+     uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
+@@ -82,6 +83,7 @@ private:
+     std::unique_ptr<GSRasterBackend> m_inner;
+     // GOW-Port: publicado por el worker tras Initialize, sin consultar GL desde el host.
+     std::atomic<bool> m_sharedPresentation{false};
++    std::atomic<bool> m_lazyHostSync{false};
+ 
+     mutable std::mutex m_producerMutex;
+     std::vector<uint8_t> m_open;
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+index 1eecbca..dc490b9 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -12,6 +12,8 @@
+ #include <xmmintrin.h>
+ 
+ #include <algorithm>
++#include <atomic>
++#include <memory>
+ #include <array>
+ #include <bitset>
+ #include <cctype>
+@@ -104,7 +106,7 @@ namespace
+     {
+         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+         info.size = size;
+-        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
++        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+         if (vkCreateBuffer(s.device, &info, nullptr, &buffer) != VK_SUCCESS)
+             return false;
+         VkMemoryRequirements req{};
+@@ -528,9 +530,73 @@ namespace
+     }
+ }
+ 
++// GOW-Port: staging slots for two-phase Present. Shared with the pending frames, so a frame resolved after the
++// backend is gone still has valid buffers. state: 0 free, 1 pending (owned by a frame), 2 abandoned (GPU copy may be in flight).
++namespace
++{
++struct PresentRing
++{
++    static constexpr uint32_t kSlots = 3;
++    VkShared &s;
++    VkBuffer buf[kSlots]{};
++    VkDeviceMemory mem[kSlots]{};
++    void *map[kSlots]{};
++    VkFence fence[kSlots]{};
++    std::atomic<int> state[kSlots]{};
++    uint32_t next = 0;
++    bool ok = false;
++    explicit PresentRing(VkShared &shared) : s(shared)
++    {
++        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
++        ok = true;
++        for (uint32_t i = 0; i < kSlots && ok; ++i)
++            ok = makeHostBuffer(s, GSSwizzle::kMemorySize, buf[i], mem[i], &map[i]) &&
++                 vkCreateFence(s.device, &fi, nullptr, &fence[i]) == VK_SUCCESS;
++    }
++    ~PresentRing()
++    {
++        for (uint32_t i = 0; i < kSlots; ++i)
++        {
++            if (fence[i])
++            {
++                if (state[i].load() == 2) // abandoned: its copy was submitted, wait before destroying
++                    vkWaitForFences(s.device, 1, &fence[i], VK_TRUE, UINT64_MAX);
++                vkDestroyFence(s.device, fence[i], nullptr);
++            }
++            if (buf[i])
++                vkDestroyBuffer(s.device, buf[i], nullptr);
++            if (mem[i])
++                vkFreeMemory(s.device, mem[i], nullptr);
++        }
++    }
++    // Worker side: a free slot, or an abandoned one whose copy has landed. -1 = none.
++    int acquire()
++    {
++        for (uint32_t k = 0; k < kSlots; ++k)
++        {
++            const uint32_t i = (next + k) % kSlots;
++            int st = state[i].load(std::memory_order_acquire);
++            if (st == 2 && vkGetFenceStatus(s.device, fence[i]) == VK_SUCCESS)
++            {
++                vkResetFences(s.device, 1, &fence[i]);
++                st = 0;
++            }
++            if (st == 0)
++            {
++                next = (i + 1) % kSlots;
++                return static_cast<int>(i);
++            }
++        }
++        return -1;
++    }
++};
++} // namespace
++
+ struct GSVulkanBackend::Impl
+ {
+     VkShared &s;
++    std::shared_ptr<PresentRing> ring;
++    uint64_t statsAsyncPresent = 0;
+     VkBuffer vram = VK_NULL_HANDLE;
+     VkDeviceMemory vramMemory = VK_NULL_HANDLE;
+     void *mapped = nullptr;
+@@ -598,7 +664,7 @@ struct GSVulkanBackend::Impl
+             line += " " + reason + "=" + std::to_string(count);
+         line += " | batches=" + std::to_string(statsBatches) + " finish_ms=" + std::to_string(statsFinishUs / 1000u) + " record_ms=" + std::to_string(statsRecordUs / 1000u) +
+                 " cpudraw_ms=" + std::to_string(statsCpuUs / 1000u) +
+-                " runs=" + std::to_string(statsRuns) + " ended by:";
++                " runs=" + std::to_string(statsRuns) + " async_present=" + std::to_string(statsAsyncPresent) + " ended by:";
+         for (const auto &[cause, count] : statsRunEnd)
+             line += " " + cause + "=" + std::to_string(count) + "(" + std::to_string(statsRunWaitUs[cause] / 1000u) + "ms)";
+         if (gpuTime)
+@@ -777,7 +843,7 @@ struct GSVulkanBackend::Impl
+         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+         info.pNext = &external;
+         info.size = GSSwizzle::kMemorySize;
+-        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
++        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+         VkMemoryHostPointerPropertiesEXT props{VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
+         VkMemoryRequirements req{};
+         uint32_t type = UINT32_MAX;
+@@ -1437,6 +1503,92 @@ void GSVulkanBackend::TextureFlush()
+ }
+ void GSVulkanBackend::Sync(GSSyncReason reason) { GOW_VK_CPU(Sync(reason)); }
+ PresentationFrame GSVulkanBackend::Present(const GSPresentationRequest &request) { GOW_VK_CPU(Present(request)); }
++
++// GOW-Port: lazy host sync + two-phase Present. Every host access to VRAM in this backend (GOW_VK_CPU, transfers,
++// CLUT loads, CPU fallbacks) still ends the GPU run; only the frontend's Flush/Sync(Finish|Presentation) and the
++// Present wait are skipped. PS2X_VK_LAZY_SYNC=0 restores them; PS2X_VK_SYNC_PRESENT=1 keeps only the old Present.
++static bool envOn(const char *name, bool otherwise)
++{
++    const char *v = std::getenv(name);
++    return v && *v ? *v != '0' : otherwise;
++}
++bool GSVulkanBackend::LazyHostSync() const
++{
++    static const bool on = envOn("PS2X_VK_LAZY_SYNC", true);
++    return on && m_impl != nullptr;
++}
++
++struct GSVulkanBackend::PendingFrame : GSRasterBackend::PendingPresent
++{
++    std::shared_ptr<PresentRing> ring;
++    uint32_t slot;
++    GSPresentationRequest request;
++    bool resolved = false;
++    PendingFrame(std::shared_ptr<PresentRing> r, uint32_t i, const GSPresentationRequest &q) : ring(std::move(r)), slot(i), request(q) {}
++    ~PendingFrame() override
++    {
++        if (!resolved)
++            ring->state[slot].store(2, std::memory_order_release);
++    }
++    PresentationFrame Resolve() override
++    {
++        PresentRing &r = *ring;
++        vkWaitForFences(r.s.device, 1, &r.fence[slot], VK_TRUE, UINT64_MAX);
++        // Same composition as GSCpuBackend::Present, on the staged copy instead of a host snapshot.
++        thread_local GSCpuBackend composer;
++        composer.Initialize(static_cast<uint8_t *>(r.map[slot]), GSSwizzle::kMemorySize);
++        PresentationFrame frame = composer.PresentFromLocalMemory(request);
++        vkResetFences(r.s.device, 1, &r.fence[slot]);
++        r.state[slot].store(0, std::memory_order_release);
++        resolved = true;
++        return frame;
++    }
++};
++
++std::unique_ptr<GSRasterBackend::PendingPresent> GSVulkanBackend::BeginPresent(const GSPresentationRequest &request)
++{
++    static const bool off = envOn("PS2X_VK_SYNC_PRESENT", false);
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    // No GPU run in flight: host VRAM is current, the plain Present is already cheap.
++    if (off || !m_impl || !m_impl->open || m_impl->cmdIndex + 1 >= kMaxCmds)
++        return nullptr;
++    Impl &impl = *m_impl;
++    if (!impl.ring)
++    {
++        impl.ring = std::make_shared<PresentRing>(impl.s);
++        if (!impl.ring->ok)
++            std::fprintf(stderr, "[gow-gs] Vulkan present staging unavailable; Present stays synchronous\n");
++    }
++    if (!impl.ring->ok)
++        return nullptr;
++    const int slot = impl.ring->acquire();
++    if (slot < 0)
++        return nullptr;
++    impl.emitBatch();
++    // shader writes -> copy; copy -> host read, and copy (reads VRAM) -> the next shader writes (WAR).
++    impl.memoryBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT);
++    const VkBuffer src = impl.imported ? impl.importedVram : impl.vram;
++    const VkBufferCopy region{0, 0, GSSwizzle::kMemorySize};
++    vkCmdCopyBuffer(impl.cmd, src, impl.ring->buf[slot], 1, &region);
++    VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
++    after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
++    after.dstAccessMask = VK_ACCESS_HOST_READ_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
++    vkCmdPipelineBarrier(impl.cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
++                         &after, 0, nullptr, 0, nullptr);
++    impl.submitCmd();
++    impl.cmd = impl.cmds[++impl.cmdIndex];
++    impl.beginCmd();
++    impl.primsAtSubmit = impl.primCount;
++    {
++        // An empty batch with the slot fence: a fence signals after everything submitted before it on this queue.
++        VkSubmitInfo empty{VK_STRUCTURE_TYPE_SUBMIT_INFO};
++        std::lock_guard<std::mutex> queueLock(impl.s.queueMutex);
++        vkQueueSubmit(impl.s.queue, 1, &empty, impl.ring->fence[slot]);
++    }
++    impl.ring->state[slot].store(1, std::memory_order_release);
++    ++impl.statsAsyncPresent;
++    return std::make_unique<PendingFrame>(impl.ring, static_cast<uint32_t>(slot), request);
++}
+ bool GSVulkanBackend::ClearFramebuffer(const GSContext &context, uint32_t rgba) { GOW_VK_CPU(ClearFramebuffer(context, rgba)); }
+ uint32_t GSVulkanBackend::ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) { GOW_VK_CPU(ConsumeLocalToHostBytes(dst, maxBytes)); }
+ uint32_t GSVulkanBackend::ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const { GOW_VK_CPU(ReadVram(psm, base, bw, x, y)); }
