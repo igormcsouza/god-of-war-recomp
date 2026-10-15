@@ -111,6 +111,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\probar_menu.ps1 -Seg
 Remove-Item Env:GOW_SKIP_FMV
 ```
 
+`GOW_PLAY_FMV=<nombre>[,<nombre>...]` (diagnóstico, desactivado por defecto) sustituye la N-ésima película que pide el juego por otra
+del `GODOFWAR.TOC` (nombre sin extensión: `A01MP05`, `MA360`, `D01MP02`...; la intro pide `Semo01`) para probar cada FMV sin
+jugar hasta ella; la última de la lista se repite. `GOW_MOVIE_DIAG=1` registra cada petición (`[gow-fmv] request`) y el estado del
+reproductor cada 5 s (`[gow-movie]`).
+
 `GOW_FAST_BOOT=1` permite repetir diagnósticos sin esperar la animación de entrada: solo su consulta
 de finalización (`ra=0x0021E714`) devuelve la duración total cuando el nivel ya está cargado.
 La opción está desactivada por defecto. La prueba sin ella llegó al estado de partida después de
