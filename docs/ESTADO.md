@@ -7317,3 +7317,30 @@ pre-roll); not checked against PCSX2. (2) The stub keeps callbacks across `sceMp
 handle twice and registers its callbacks again, so every video/audio packet is delivered twice (seen as duplicate
 `0x18A788` calls). libmpeg resets its callback table on create; an existing test asserts the current behaviour, so
 this was left as a separate change (check movie audio). (3) Retire `GOW_MPEG_DIAG`/`GOW_GIF_TRACE` once no longer needed.
+
+## Menu/movie audio: streamed music restarts its first fragment (2026-10-15, Linux, NVIDIA RTX 5050) - diagnosis, no fix yet
+
+User report: clips play only their first seconds and that fragment loops. Temporary `GOW_SPU2_DIAG=1` logging (KON/KOFF,
+voice LSA/SSA writes, NAX/ENDX reads, SPU2 DMA source/target, `sceCdRead`, `sceSifGetOtherData`, SIF) - uncommitted WIP in
+`PS2Recomp/` (spu2.cpp, iop_memory.cpp, iop_emulator.cpp, iop_cdvd.cpp, iop_rpc.cpp, iop_subsystem.cpp), menu runs of 12-45 s.
+
+- **The SPU2 side is correct.** The music stream is core 1 voices 0/1, a double buffer per channel (L 0x2820/0x7820,
+  R 0x3020/0x8020, 0x800 halfwords = 0.163 s at pitch 0x0EB3). 989snd polls NAX (no SPU2 IRQ: ATTR bit 6 never set,
+  so missed-IRQ theories are out), moves LSA to the other half and refills the half just played via DMA ch4 from IOP
+  `0x7BAF0`/`0x85AF0`. While data arrives, this alternates perfectly every 0.163 s (seconds of correct playback).
+  ADMA is never used (`admas=0`).
+- **The failure is upstream, in the CD stream.** smpd reads the music with `sceCdRead` 16 sectors at a time (LSN `0xBB79E`
+  onwards into `0xB32C8`/`0xBB2C8`). When the music file's first part ends (`a1=9` short read) the stream continues at the
+  loop LSN `0xBB867`. From then on the pattern is, every ~0.36 s: `KOFF` 0x3 -> `sceCdRead(0xBB867, 0x20)` +
+  `sceCdRead(0xBB887, 0x10)` -> preload both halves -> `KON` -> two halves played -> no further read -> `KOFF`. The next
+  read (`0xBB897`, seen once before into `0xAB2C8`) never happens again, so 989snd ends the stream and the loop restarts
+  it: that is the repeating fragment. The onset time varies between runs (1.3-4.5 s after the stream start).
+- Concurrently smpd loads another file (`0xBCEBB`...`0xBD27B`, ~1.9 MB) at full speed: our `sceCdRead` completes
+  synchronously and instantly (`sceCdSync` returns done immediately, single `completionCallback` slot), so the streamer
+  and the loader may race on smpd's request queue / CD callback. Leading hypothesis (not verified): a lost or
+  overwritten CD completion (`completionCallback` is one `std::optional`, `sceCdCallback` is set once) or the instant
+  completion leaves smpd's music request "in flight" forever after the loader's burst.
+- Next step: log `takeCompletionCallback` delivery vs. `sceCdRead` issue order (does every read get its callback?), and
+  the smpd request state; compare with a model where `sceCdRead` completes after a sector-time delay (PCSX2 timing).
+
+The post-intro freeze was not investigated in this round (budget).
