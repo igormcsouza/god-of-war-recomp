@@ -1,0 +1,106 @@
+diff --git a/ps2xRuntime/src/main.cpp b/ps2xRuntime/src/main.cpp
+index faa982a..3b8cc12 100644
+--- a/ps2xRuntime/src/main.cpp
++++ b/ps2xRuntime/src/main.cpp
+@@ -1,3 +1,4 @@
++#include "runtime/linux_defaults.h"
+ #include "ps2_runtime.h"
+ #include "games_database.h"
+ #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)
+@@ -200,6 +201,7 @@ int main(int argc, char *argv[])
+         // GOW-Port: the GS runs on its own thread by default on Linux (PS2X_GS_THREAD=0 opts out). It moves GPU fence
+         // waits off the EE thread and overlaps them with VU1 (measured 4.05 -> 5.13 FPS in the intro).
+         GSThreadedBackend::SetEnabledByDefault(true);
++        ps2x::ApplyLinuxThreadingDefaults(); // GOW-Port: VU1 worker + GS front end + async FINISH (see header).
+ #endif
+         PS2Runtime runtime;
+ #if defined(PS2X_ENABLE_DEBUG_UI) && !defined(PLATFORM_VITA)
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 1e938ac..0169062 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -31,6 +31,7 @@ add_library(ps2_test_lib STATIC
+     src/ps2_runtime_interrupt_tests.cpp
+     src/ps2_memory_tests.cpp
+     src/ps2_vu1_tests.cpp
++    src/linux_defaults_tests.cpp # GOW-Port: Linux threading defaults.
+     src/ps2_vu_tests.cpp
+     src/ps2_gs_tests.cpp
+     src/ps2_gs_external_tests.cpp # GOW-Port: transporte opcional sin perder tags.
+diff --git a/ps2xTest/src/main.cpp b/ps2xTest/src/main.cpp
+index 85c1fb1..2ed1828 100644
+--- a/ps2xTest/src/main.cpp
++++ b/ps2xTest/src/main.cpp
+@@ -12,6 +12,7 @@ void register_cop0_count_tests(); // GOW-Port
+ void register_ps2_runtime_interrupt_tests();
+ void register_ps2_memory_tests();
+ void register_ps2_vu1_tests();
++void register_linux_defaults_tests();
+ void register_ps2_vu_tests();
+ void register_ps2_gs_tests();
+ void register_gs_external_tests(); // GOW-Port
+@@ -56,6 +57,7 @@ int main()
+     register_ps2_runtime_interrupt_tests();
+     register_ps2_memory_tests();
+     register_ps2_vu1_tests();
++    register_linux_defaults_tests();
+     register_ps2_vu_tests();
+     register_ps2_gs_tests();
+     register_gs_external_tests(); // GOW-Port
+diff --git a/ps2xRuntime/include/runtime/linux_defaults.h b/ps2xRuntime/include/runtime/linux_defaults.h
+new file mode 100644
+index 0000000..7fd413b
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/linux_defaults.h
+@@ -0,0 +1,18 @@
++#pragma once
++// GOW-Port: Linux threading defaults. The intro/title measured 5.6 -> 6.6 FPS (game time 0.09 -> 0.39 s/s) with the VU1
++// worker, the GS front-end thread and asynchronous GS FINISH. Each knob keeps its own opt-out: set it to 0 (or, for
++// GOW_GS_FINISH_ASINCRONO, anything but 1) before launching. Existing values are never overwritten.
++#include <cstdlib>
++
++namespace ps2x
++{
++    inline void ApplyLinuxThreadingDefaults()
++    {
++#if defined(__linux__)
++        static const char *const kDefaults[][2] = {
++            {"PS2X_VU1_HILO", "1"}, {"PS2X_GS_FRENTE", "1"}, {"GOW_GS_FINISH_ASINCRONO", "1"}};
++        for (const auto &kv : kDefaults)
++            ::setenv(kv[0], kv[1], 0);
++#endif
++    }
++}
+diff --git a/ps2xTest/src/linux_defaults_tests.cpp b/ps2xTest/src/linux_defaults_tests.cpp
+new file mode 100644
+index 0000000..c56f15e
+--- /dev/null
++++ b/ps2xTest/src/linux_defaults_tests.cpp
+@@ -0,0 +1,27 @@
++#include "MiniTest.h"
++#include "runtime/linux_defaults.h"
++
++#include <cstdlib>
++#include <cstring>
++
++void register_linux_defaults_tests()
++{
++#if defined(__linux__)
++    MiniTest::Case("LinuxDefaults", [](TestCase &tc)
++    {
++        tc.Run("threading knobs default on but never overwrite an explicit value", [](TestCase &t)
++        {
++            ::unsetenv("PS2X_VU1_HILO");
++            ::unsetenv("PS2X_GS_FRENTE");
++            ::setenv("GOW_GS_FINISH_ASINCRONO", "0", 1);
++            ps2x::ApplyLinuxThreadingDefaults();
++            t.IsTrue(std::strcmp(std::getenv("PS2X_VU1_HILO"), "1") == 0, "VU1 worker defaults on");
++            t.IsTrue(std::strcmp(std::getenv("PS2X_GS_FRENTE"), "1") == 0, "GS front end defaults on");
++            t.IsTrue(std::strcmp(std::getenv("GOW_GS_FINISH_ASINCRONO"), "0") == 0, "explicit value is kept");
++            ::unsetenv("PS2X_VU1_HILO");
++            ::unsetenv("PS2X_GS_FRENTE");
++            ::unsetenv("GOW_GS_FINISH_ASINCRONO");
++        });
++    });
++#endif
++}
