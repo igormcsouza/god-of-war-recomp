@@ -138,6 +138,7 @@ $pipelinePatch = Join-Path $RepoRoot 'patches\ps2recomp-pipeline.patch'
 $displayOptionsPatch = Join-Path $RepoRoot 'patches\ps2recomp-display-options.patch'
 $mpegSyncCallbacksPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-sync-callbacks.patch'
 $wave0MeasurePatch = Join-Path $RepoRoot 'patches\ps2recomp-wave0-measure.patch'
+$vu1ProfileDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-profile-diag.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -300,6 +301,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsLazySyncPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $displayOptionsPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegSyncCallbacksPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $wave0MeasurePatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ProfileDiagPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
