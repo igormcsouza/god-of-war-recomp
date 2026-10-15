@@ -186,3 +186,41 @@ and in-place same-pixel strips are race-free when the UV-to-pixel map is the ide
 scratch-copy dispatch; at minimum split fallback rows across the idle raster workers. (2) `z-alias` (~190 run ends/s in
 the intro). (3) EE vs the GIF mutex (not touched). GPU alone is ~425 ms/s in gameplay, so fallbacks must go before more
 GPU-side work pays off.
+
+## Feedback, DATE and tight texture boxes on the GPU (2026-10-15, Linux, NVIDIA RTX 5050)
+
+Changes in `patches/ps2recomp-gs-vulkan.patch` (`gs_vulkan_backend.cpp`, shader, test):
+- **Same-pixel feedback proof (B2).** A FST sprite or triangle that samples the frame buffer itself (same base, width and
+  swizzle class) no longer counts as `tex-feedback` when every pixel provably reads its own texel. Sprites: the host
+  evaluates the shader's own UV expressions per column and row (12.4 re-quantisation included); nearest needs
+  `floor(u) == x`, bilinear `u - 0.5 == x` (zero weights). Triangles: all vertices must satisfy `u = x + cu`,
+  `v = y + cv` in raw 12.4 with `cu, cv` in [1,14] (nearest only; interpolation error stays below one raw unit). The thread
+  reads the pixel it is about to write, so no cross-thread hazard and batch order is kept.
+- **Disjoint read/write rectangles.** The 8-px "channel shuffle" strips (read the columns 8 px left) are detected by
+  rectangle: UV box vs written box in the same buffer. Batch-mates still use page sets, so each strip is its own batch.
+- **Z only tested is read-only.** Z pages count as written for the feedback test only when Z is written. This removed the
+  Z-as-colour (`tbp` = `zbp`) fallbacks of the post-effects.
+- **Tight UV box.** Exact sampled texel interval (first value to one step short of the far vertex, bilinear
+  `floor(u - 0.5)` .. +1) instead of +-1 texel; the old padding made the first row of every strip look like a wrap.
+- **Destination alpha test (B5)** in the shader (CT32 bit 31, CT16/CT16S bit 15, CT24 passes), `rec.test` keeps bits 14-15.
+- **Not done:** `z-alias` (frame and Z pages overlap): Z32/Z24 pages are swizzled differently from CT32/CT24, so "same base"
+  is NOT "same pixel" (a first attempt failed the byte compare); it needs the CPU's row order or an address-owner kernel.
+  The general snapshot copy (B1) was not needed: no remaining `tex-feedback` is a snapshot candidate except a few
+  d0/CT24 strips whose UV box is not provable (REPEAT past the edge).
+- `GOW_VK_NO_FBOPT=1` restores page-level rules and the DATE fallback (A/B). `GOW_VK_FBDIAG=1` logs the first 80 distinct
+  fallback shapes (`[fbdiag]`).
+- Test: "Feedback and Z-as-colour Vulkan VRAM equals CPU VRAM" (identity nearest/bilinear/triangle, shuffle strips, overlap,
+  one real feedback and two Z aliases on the CPU, Z read as colour, DATE CT32/CT16); asserts 11 GPU primitives.
+  ps2x_tests 634 pass.
+
+| Measurement (NVIDIA, `PS2X_GS_VULKAN_STATS=1`) | before (`GOW_VK_NO_FBOPT=1`) | after |
+|---|---|---|
+| gameplay CPU fallbacks, prims/s | ~1,800-2,200 | ~400-520 |
+| gameplay `cpudraw_ms`/s | ~330-370 | ~160-200 |
+| gameplay `tex-feedback` / `dest-alpha-test` / `z-alias` per s | ~1,470-1,870 / 160 / 160-176 | ~190-250 / 0 / ~190-250 |
+| gameplay FPS (rainy fight, avg 12 s) | 14.8 | 22.7 |
+| `gpu_busy` ms/s | ~425 | ~650 (work moved to the GPU) |
+| intro/title FPS (avg 23 s, no FMV skip) | 26.2 | 32.3 |
+Screenshots of the new build show correct bloom/rain/HUD; same-moment comparison with the CPU backend is not possible
+(the pad script and loading are wall-clock, the CPU backend runs at 4 FPS), so exactness rests on the byte-identical tests.
+Thread CPU% was not measured. Next: `z-alias` is now the biggest fallback (~200/s gameplay, ~500/s intro).
