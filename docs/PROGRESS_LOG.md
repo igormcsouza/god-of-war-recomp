@@ -45,6 +45,8 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 - Replay-vs-live task (lead default): measurement only; the "3.5x" came from comparing presents/s (replay) with flips/s (window FPS); no code changed, PRIME offload and clocks tested and ruled out.
 - Lazy-sync task (lead default): implemented as a new patch registered after the pipeline patch (the Vulkan patch stays untouched), default ON because tests and gameplay screenshots are correct; `PS2X_VK_LAZY_SYNC=0` / `PS2X_VK_SYNC_PRESENT=1` give the old behaviour. FINISH is not delayed for host readers (they still wait), but the EE now sees the FINISH bit before queued GS work executes. Skipped for budget: replay-bench byte compare, title screenshot.
 
+- Lead default (2026-10-15): HW renderer plan (docs/HW_RENDERER_PLAN.md) is a conditional go but milestones 2, 4 and 6 need a stronger model and it is a large fork, so the lead did NOT start it. Meanwhile ran the interim exact-path improvements (alternative A) with Sonnet.
+
 ## Log
 - 2026-10-15: Register-resident fb/Z words in the Vulkan kernel (perf patch regenerated; only its shader-export section changed, no later patch touches that file): replay 1328 -> 1188 ms, byte-identical, tests 636/0. Lead default: steps 2-3 and the game FPS A/B skipped (agent hit its token budget); screenshots (menu, rainy fight) look correct. Full fresh-clone series check not run (local partial clone broke); per-file apply verified.
 - 2026-10-15: Intro-movie garbage hunt. Garbage starts ~5-10 frames after the MPEG starts, not at the end, and the visible picture is NOT our decoded buffer. Root cause still open; see ESTADO.md 'Intro movie garbage is not an end-of-stream problem'. Added `GOW_MPEG_DIAG`.
