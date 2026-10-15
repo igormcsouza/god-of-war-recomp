@@ -136,6 +136,7 @@ $gsVulkanPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-perf.patch
 $gsLazySyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-lazy-sync.patch'
 $pipelinePatch = Join-Path $RepoRoot 'patches\ps2recomp-pipeline.patch'
 $displayOptionsPatch = Join-Path $RepoRoot 'patches\ps2recomp-display-options.patch'
+$mpegSyncCallbacksPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-sync-callbacks.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -296,6 +297,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPerfPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $pipelinePatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsLazySyncPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $displayOptionsPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegSyncCallbacksPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

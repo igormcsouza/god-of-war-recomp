@@ -7280,3 +7280,40 @@ Details and limits (16-bit targets still go to memory; occupancy/merge-batches n
 ## Vulkan GS: dead-prim skip + stateless tile HiZ (2026-10-15)
 Replay GPU 1209 -> 1181 ms (-2.3%), VRAM identical to the CPU replay, 636 tests pass; dead-prim skip no effect on this capture. Details
 in docs/VULKAN.md. Not measured: real-game FPS, screenshots (HiZ is byte-identical in the replay, so low risk).
+
+## Intro movie garbage: root cause found and fixed - deferred MPEG stream callbacks (2026-10-15, Linux, NVIDIA RTX 5050)
+
+**How the game shows a movie frame** (disassembly of the generated code): `sub_00189020` (movie loop) -> `sub_001899E0` ->
+`sub_0018A170` calls `sceMpegGetPicture(mp, ctx[0x94+i*4], ctx[0x58]*ctx[0x5C])` (RGB32, the `a2` "w*h" is the buffer size),
+then `func_26EE80` patches BITBLTBUF in the upload packet `ctx[0xA8+i*0x20]` and `func_26CDB8` pushes the packet on a
+2-entry queue (`0x30A440`). A vblank handler (`0x26D048`, mode 1; `0x26CF20`, mode 3) every 2 vsyncs sets DISPFB2 and kicks
+DMA ch2 in chain mode (`func_26EDE0`) with that packet, then a second packet at `0x30A340`. Movie context = `[0x304F20]`.
+
+**Root cause.** At movie init (`sub_00189BD0`) the game demuxes the first 16 KB of the PSS (`sceMpegDemuxPss` ->
+`sceMpegDemuxPssRing` stub); its M2V stream callback `0x18A788` copies the video ES into the game's own ring
+(`ctx[0xE8..0xF8]`), and the code right after reads the sequence header from that ring to set width/height
+(`ctx[0x58]`, `ctx[0x5C]`), which size the picture buffer and the upload packet. Our stub queued the stream callbacks
+(`queueInvocation`) instead of running them inside the call as libmpeg does, so the ring was still empty: width = height = 0,
+the picture buffer was allocated with 0 bytes (`img=0x148fbc0`, packet at `0x148fc00`), and `a2 = 0` (the "a2=0" seen
+earlier). Every `sceMpegGetPicture` then wrote 1.2 MB of pixels over the DMA packet and the heap after it; the vblank
+handler kicked DMA ch2 on pixel data as DMA/GIF tags (logged first tag `0x80433835...`), giving the strips, flat
+polygons and noise. This also explains why skipping `writeDecodedFrameToGuest` did not help (the packet stayed a
+zero-macroblock upload) and why GIF traffic looked "missing".
+
+**Fix** (`patches/ps2recomp-mpeg-sync-callbacks.patch`, registered last in `compilar.ps1`): when called from a guest
+thread, `sceMpegDemuxPss[Ring]` runs the stream callbacks synchronously with `invokeCurrentSequence` and the caller
+resumes with the consumed byte count; host-side calls (no current guest thread) keep the old queued path. New test
+"sceMpegDemuxPssRing runs stream callbacks before its guest caller continues" (fails without the change).
+
+**Evidence.** Temporary overrides (removed) logged the context: before, `w=0 h=0 img=148fbc0 pkt=148fc00`; after,
+`w=640 h=480 img=15e13c0 pkt=170d400` (= img + 1.2 MB), first DMA tag `0x10000003` (CNT), `a2=307200`. Screenshots (script
+`5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, 110 s) at 36-100 s show the whole intro movie (cliff, feet, the fall, the sea) and
+then the "Three Weeks Earlier / The Aegean Sea" title card: the movie ends and the game continues. `ps2x_tests` 639 pass;
+124 patches apply in order on a fresh pinned tree and equal the working tree.
+
+**Left (not done):** (1) one transition shot (~1 s, t=35 s in two runs) shows the last in-engine frame at half height in
+shifted strips: the display already uses the movie DISPFB/size before the first picture is uploaded (likely the ~8 s
+pre-roll); not checked against PCSX2. (2) The stub keeps callbacks across `sceMpegCreate`, and GoW creates the same
+handle twice and registers its callbacks again, so every video/audio packet is delivered twice (seen as duplicate
+`0x18A788` calls). libmpeg resets its callback table on create; an existing test asserts the current behaviour, so
+this was left as a separate change (check movie audio). (3) Retire `GOW_MPEG_DIAG`/`GOW_GIF_TRACE` once no longer needed.

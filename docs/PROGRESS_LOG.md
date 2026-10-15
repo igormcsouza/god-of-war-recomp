@@ -24,7 +24,7 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 
 ## Known issues
 
-1. Intro movie (MPEG/IPU): GS output turns to garbage ~5-10 frames after the movie starts (not at its end), 0 FPS. Root cause open. `GOW_SKIP_FMV=1` avoids it.
+1. ~~Intro movie garbage~~ fixed 2026-10-15 (deferred MPEG stream callbacks, see log below). Left: a ~1 s strip frame at the movie start; duplicated stream callbacks after the second `sceMpegCreate`.
 2. CPU fallbacks for `tex-feedback` / `z-alias` cost ~400 ms/s in gameplay.
 3. EE thread blocks on a mutex held by the GIF thread (GS queue backpressure).
 4. Sound is choppy while the game runs below real time (expected; `GOW_AUDIO=0` or launcher mute).
@@ -84,3 +84,4 @@ Open items, by the owner's priority order:
 
 Decisions awaiting the owner: start the HW renderer (needs a stronger model)? evaluate the PCSX2 bridge? resume the movie
 hunt with a stronger model? push the branch / open a PR / stay Linux-only?
+- 2026-10-15: Intro-movie garbage FIXED. Root cause: the `sceMpegDemuxPss[Ring]` stub queued the stream callbacks instead of running them before returning, so GoW read an empty video ring for the sequence header, sized the picture buffer 0x0, and every `sceMpegGetPicture` wrote 1.2 MB over the upload DMA packet and heap. Fix: `patches/ps2recomp-mpeg-sync-callbacks.patch` (synchronous callbacks + test). The whole intro plays and the game reaches the "Three Weeks Earlier" card. `ps2x_tests` 639 pass. Details in ESTADO.md.
