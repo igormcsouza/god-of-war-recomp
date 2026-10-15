@@ -328,3 +328,54 @@ slowest tile of each dispatch (fixed per-dispatch overhead is only ~7 us). CPU b
 Ideas that could still help: software-pipeline the texture fetch of primitive n+1 (textures are read-only inside a batch) with the fb/Z
 chain of primitive n (loses the Z-before-texture early-out, so measure); lanes mapped to (primitive, pixel) pairs for thin triangles; running
 independent small dispatches concurrently (no barrier between disjoint rects).
+
+## Pipeline stall profile (`PS2X_PIPE_STATS=1`, 2026-10-15)
+
+New opt-in counters (`patches/ps2recomp-pipeline.patch`, header `runtime/ps2_pipe_stats.h`): one `[pipe]` line per second, `name=ms/count`
+per stage. Gameplay (rainy fight, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050, defaults), steady state, per wall second:
+
+| Stage | ms/s | Meaning |
+|---|---|---|
+| `gs_busy` / `gs_idle` | 870-995 / 20-125 | GS worker executing chunks vs waiting for data: **saturated (92-98% busy)** |
+| of which Vulkan fence waits (`finish_ms`) | 345-460 | GS worker waits for the GPU (Present ends 48-59 runs/s, ~6-8 ms each) |
+| of which CPU fallback draws (`cpudraw_ms`) | 160-260 | `tex-feedback` sprites on the CPU |
+| GPU busy (`gpu_busy_ms`) | ~530-600 | GPU is ~55% busy: it idles while the worker does CPU work |
+| `publish_wait` | 550-700 | GIF front thread blocked, GS queue full (`qhigh`=8 chunks, the limit) |
+| `drain_wait` | 560-800 | render thread waiting for the GS (150-170 drains/s) |
+| `guest_wait` | 580-620 | EE idle waiting for its next guest deadline (vblank pacing): the EE is not the limit |
+| `ee_sync_vu1` / `ee_sync_front` | ~0 / ~0 | EE waits for the VU1 worker / GS front: negligible |
+| `ee_vsync_lock` (before fix) | 168 (60 calls/s) | EE blocked in `GS::notifyExternalVSync` on `m_stateMutex` |
+| `vu1_busy`, `front_busy` | 740-870, 580-850 | busy, but each on its own thread |
+| `fronthigh` | 20-50 | front queue depth (unbounded, never the limiter) |
+
+**Conclusion.** The dominant stall is the serial GS worker: ~95% busy, of which ~45% is waiting on the GPU fence and ~20% CPU
+fallbacks, with the GPU only ~55% busy. Everything upstream (GIF front, VU1, EE) waits on it; the EE is idle 60% of the time.
+The headless replay (56 FPS) does not show it because it never calls `Present` per vsync nor interleaves CPU fallbacks.
+
+**Changes shipped.**
+1. `GS::notifyExternalVSync` returns without touching `m_stateMutex` when no external observer is linked (atomic flag; Linux never links one).
+   `ee_vsync_lock` 168 -> 0 ms/s. `PS2X_VSYNC_LOCK=1` restores the old lock for A/B. Test: "VSync sin observador ...".
+2. Counters only (no behaviour change).
+
+**Tried and reverted.** Making `GSVulkanBackend::Flush()` / `Sync(Finish|Presentation)` not wait for the fence (the CPU backend
+versions are no-ops): `ps2x_tests` crashed in the Vulkan suite ("corrupted double-linked list"; passes with the wait), so some VRAM
+reader relies on those waits. It also did not help: the fence time just moved to `Present` (finish_ms 345-460 either way), because
+the GPU is on the critical path at every present. Raising `kMaxPrims` 16384 -> 65536: no measurable change, reverted.
+
+**FPS (3 runs x 40 s, window t=55-95 s, window-title FPS, scene varies with the pad script; avg of 13 samples):**
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| before (`PS2X_VSYNC_LOCK=1`) | 17.4 | 18.1 | 15.0 | 16.8 |
+| after (vsync lock removed; first two runs also had the reverted Flush/Sync + 64k-prim experiments) | 15.0 | 15.5 | 17.0 | 15.8 |
+| final build (one run) | 14.7 | | | |
+
+No gain within noise (~15-18 FPS both ways): removing the EE mutex wait does not help while the GS worker is saturated, as
+predicted in "Whole-frame profile on NVIDIA". Screenshot at t=62 s checked: ship deck, Kratos fighting soldiers, HUD, rain, correct.
+(The t=80 s shot was black, a fade in the pad script.) `ps2x_tests`: 634 pass + 1 fail `CodeGenerator :: VU0 macro mappings cover all
+S1/S2 enums` (CodeGenerator, not touched by this patch; not investigated).
+
+**Next steps (not done).** (1) Present without ending the GPU run: copy the display rect to a side image/buffer on the GPU and let
+the render thread read that, so the GS worker records the next batches while the GPU finishes (removes ~300-400 ms/s of fence wait,
+the GPU becomes the limit at ~55 -> ~90% busy). (2) A real ring for the prim/CLUT buffers (`record-ring`, `clut-ring` currently wait
+for all). (3) Move `tex-feedback` fallbacks to the GPU (~160-260 ms/s). (4) Find which reader needs the `Flush`/`Sync` fence before retrying that change.

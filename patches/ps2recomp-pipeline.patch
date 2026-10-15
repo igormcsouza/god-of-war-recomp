@@ -1,0 +1,281 @@
+--- a/ps2xRuntime/src/lib/gs/gs_frontend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_frontend.cpp
+@@ -1,4 +1,5 @@
+ #include "runtime/gs/gs_frontend.h"
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include "runtime/gs/gs_cpu_backend.h"
+ // GOW-Port: CPU de referencia por defecto; OpenGL/cola seleccionables.
+ #include "runtime/gs/gs_threaded_backend.h"
+@@ -162,6 +163,7 @@
+ {
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     m_externalObserver = std::move(observer);
++    m_externalObserverSet.store(static_cast<bool>(m_externalObserver), std::memory_order_release); // GOW-Port
+ }
+ 
+ bool GS::hasExternalObserver() const
+@@ -172,6 +174,12 @@
+ 
+ void GS::notifyExternalVSync(uint64_t tick, uint32_t field)
+ {
++    // GOW-Port: sin observador (caso normal) el EE no debe esperar al mutex que retiene el hilo GIF
++    // mientras la cola del GS esta llena. PS2X_VSYNC_LOCK=1 restaura el bloqueo anterior (A/B).
++    static const bool legacyLock = [] { const char *v = std::getenv("PS2X_VSYNC_LOCK"); return v && *v == '1'; }();
++    if (!legacyLock && !m_externalObserverSet.load(std::memory_order_acquire))
++        return;
++    ps2_pipe::Scope pipeScope(ps2_pipe::VsyncLock);
+     std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+     if (m_externalObserver && m_privRegs && field <= 1u)
+         m_externalObserver->vsync(*m_privRegs, tick, field);
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -1,3 +1,4 @@
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include "runtime/ps2_memory.h"
+ #include "runtime/ps2_address.h"
+ #include "runtime/gs/gs_frontend.h"
+@@ -345,6 +346,7 @@
+         std::vector<uint8_t> data;
+         {
+             std::unique_lock<std::mutex> lock(worker.mutex);
++            ps2_pipe::Scope pipeScope(ps2_pipe::Vu1Idle);
+             worker.workCv.wait(lock, [&] { return worker.stop || !worker.queue.empty(); });
+             if (worker.queue.empty())
+                 return; // stop
+@@ -352,6 +354,7 @@
+             worker.queue.pop_front();
+             worker.busy = true;
+         }
++        ps2_pipe::Scope pipeBusy(ps2_pipe::Vu1Busy);
+         processVIF1Data(data.data(), static_cast<uint32_t>(data.size()));
+         if (m_gifArbiter)
+             m_gifArbiter->drain();
+@@ -399,6 +402,8 @@
+     {
+         std::lock_guard<std::mutex> lock(front.mutex);
+         front.queue.push_back(std::move(front.filling));
++        if (ps2_pipe::enabled())
++            ps2_pipe::raise(ps2_pipe::g_frontHigh, front.queue.size());
+         if (!front.spare.empty())
+         {
+             front.filling = std::move(front.spare.back());
+@@ -423,13 +428,17 @@
+         bool last = false;
+         {
+             std::unique_lock<std::mutex> lock(front.mutex);
+-            front.workCv.wait(lock, [&] { return front.stop || !front.queue.empty(); });
++            {
++                ps2_pipe::Scope pipeScope(ps2_pipe::FrontIdle);
++                front.workCv.wait(lock, [&] { return front.stop || !front.queue.empty(); });
++            }
+             if (front.queue.empty())
+                 return; // stop
+             item = std::move(front.queue.front());
+             front.queue.pop_front();
+             front.busy = true;
+         }
++        ps2_pipe::Scope pipeBusy(ps2_pipe::FrontBusy);
+         for (size_t at = 0u; at + 5u <= item.size();)
+         {
+             uint32_t size = 0u;
+@@ -466,12 +475,14 @@
+         return;
+     {
+         std::unique_lock<std::mutex> lock(worker->mutex);
++        ps2_pipe::Scope pipeScope(ps2_pipe::SyncVu1);
+         worker->idleCv.wait(lock, [&] { return worker->queue.empty() && !worker->busy; });
+     }
+     if (worker->front)
+     {
+         Vu1Worker::Front &front = *worker->front;
+         std::unique_lock<std::mutex> lock(front.mutex);
++        ps2_pipe::Scope pipeScope(ps2_pipe::SyncFront);
+         front.idleCv.wait(lock, [&] { return front.queue.empty() && !front.busy; });
+     }
+ }
+--- a/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_threaded_backend.cpp
+@@ -1,6 +1,7 @@
+ // GOW-Port: adaptado de Taylor N. Albarnaz / LightVelox (GPL-3.0).
+ // Origen: PS2Recomp sotc-port, ac9efa070638ad3b3accd284de6f898d5ab271d1.
+ #include "runtime/gs/gs_threaded_backend.h"
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include "runtime/gs/gs_cpu_backend.h"
+ #include "runtime/gs/gs_gpu_backend.h"
+ #include "runtime/gs/gs_shared_present.h"
+@@ -178,9 +179,14 @@
+     std::vector<uint8_t> next;
+     {
+         std::unique_lock<std::mutex> lock(m_queueMutex);
+-        m_doneCv.wait(lock, [&]
+-                      { return m_stop || m_pending.size() < m_queueChunkLimit; });
++        {
++            ps2_pipe::Scope pipeScope(ps2_pipe::PublishWait);
++            m_doneCv.wait(lock, [&]
++                          { return m_stop || m_pending.size() < m_queueChunkLimit; });
++        }
+         m_pending.push_back(std::move(m_open));
++        if (ps2_pipe::enabled())
++            ps2_pipe::raise(ps2_pipe::g_qHigh, m_pending.size());
+         ++m_published;
+         if (!m_spare.empty())
+         {
+@@ -206,6 +212,7 @@
+         target = m_published;
+     }
+     std::unique_lock<std::mutex> lock(m_queueMutex);
++    ps2_pipe::Scope pipeScope(ps2_pipe::DrainWait);
+     m_doneCv.wait(lock, [&]
+                   { return m_completed >= target || m_stop; });
+ }
+@@ -220,6 +227,7 @@
+         std::vector<uint8_t> chunk;
+         {
+             std::unique_lock<std::mutex> lock(m_queueMutex);
++            ps2_pipe::Scope pipeScope(ps2_pipe::GsIdle);
+             m_workCv.wait(lock, [&]
+                           { return m_stop || !m_pending.empty(); });
+             if (m_stop)
+@@ -232,6 +240,7 @@
+         }
+         {
+             std::lock_guard<std::mutex> exec(m_execMutex);
++            ps2_pipe::Scope pipeScope(ps2_pipe::GsBusy);
+             Execute(chunk, draw);
+         }
+         {
+--- a/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
++++ b/ps2xRuntime/src/lib/Kernel/EeScheduler.cpp
+@@ -1,3 +1,4 @@
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include "runtime/ee_scheduler.h"
+ 
+ #include "ps2_log.h"
+@@ -1839,6 +1840,7 @@
+ 
+             if (now < pacingDeadline)
+             {
++                ps2_pipe::Scope pipePace(ps2_pipe::GuestWait);
+                 m_eventCv.wait_until(lock, pacingDeadline, [this]()
+                                      { return !m_events.empty() ||
+                                               m_stopRequested.load(std::memory_order_acquire); });
+@@ -2038,6 +2040,7 @@
+ void EeScheduler::waitForEvent()
+ {
+     ps2_perf::Scope perf(ps2_perf::Bucket::GuestWait);
++    ps2_pipe::Scope pipeGuestWait(ps2_pipe::GuestWait);
+     std::unique_lock lock(m_eventMutex);
+     if (!m_events.empty() || m_stopRequested.load(std::memory_order_acquire))
+     {
+--- a/ps2xTest/src/ps2_gs_external_tests.cpp
++++ b/ps2xTest/src/ps2_gs_external_tests.cpp
+@@ -59,6 +59,18 @@
+             t.IsTrue(gs.hasExternalObserver(),"reset conserva observador");
+             gs.notifyExternalVSync(19,0);t.Equals(observer->frames,2u,"VSync tras reset");
+         });
++        // GOW-Port: notifyExternalVSync consulta un atomico (sin m_stateMutex) cuando no hay observador.
++        tc.Run("VSync sin observador no entrega y se reanuda al enlazar",[](TestCase& t){
++            PS2Memory memory;t.IsTrue(memory.initialize(),"memoria inicializada");
++            GS gs;gs.init(memory.getGSVRAM(),PS2_GS_VRAM_SIZE,&memory.gs());
++            gs.notifyExternalVSync(1,0);
++            auto observer=std::make_shared<Observer>();gs.setExternalObserver(observer);
++            gs.notifyExternalVSync(2,1);t.Equals(observer->frames,1u,"entrega con observador");
++            gs.setExternalObserver({});gs.notifyExternalVSync(3,0);
++            t.Equals(observer->frames,1u,"desenlazado: sin entrega");
++            gs.setExternalObserver(observer);gs.reset();gs.notifyExternalVSync(4,0);
++            t.Equals(observer->frames,2u,"reenlazado y tras reset vuelve a entregar");
++        });
+         tc.Run("atajo PACKED rechaza sin consumir y permite fallback",[](TestCase& t){
+             PS2Memory memory;t.IsTrue(memory.initialize(),"memoria inicializada");
+             GS gs;gs.init(memory.getGSVRAM(),PS2_GS_VRAM_SIZE,&memory.gs());
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_pipe_stats.h
+@@ -0,0 +1,70 @@
++#pragma once
++// GOW-Port: contadores opt-in (PS2X_PIPE_STATS=1) de espera por etapa del pipeline EE->VU1->GIF->GS.
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <cstdlib>
++#include <thread>
++
++namespace ps2_pipe
++{
++enum Slot : int
++{
++    VsyncLock, SyncVu1, SyncFront, PublishWait, GsIdle, GsBusy, DrainWait, GuestWait,
++    Vu1Idle, Vu1Busy, FrontIdle, FrontBusy, SlotCount
++};
++inline const char *const kNames[SlotCount] = {"ee_vsync_lock", "ee_sync_vu1", "ee_sync_front", "publish_wait", "gs_idle",
++                                              "gs_busy", "drain_wait", "guest_wait", "vu1_idle", "vu1_busy",
++                                              "front_idle", "front_busy"};
++inline bool enabled()
++{
++    static const bool on = [] { const char *v = std::getenv("PS2X_PIPE_STATS"); return v && *v && *v != '0'; }();
++    return on;
++}
++inline std::atomic<uint64_t> g_ns[SlotCount];
++inline std::atomic<uint64_t> g_n[SlotCount];
++inline std::atomic<uint64_t> g_qHigh{0};
++inline std::atomic<uint64_t> g_frontHigh{0};
++inline void raise(std::atomic<uint64_t> &a, uint64_t v)
++{
++    uint64_t c = a.load(std::memory_order_relaxed);
++    while (v > c && !a.compare_exchange_weak(c, v, std::memory_order_relaxed)) {}
++}
++inline void startPrinter()
++{
++    static std::atomic<bool> started{false};
++    if (!enabled() || started.exchange(true))
++        return;
++    std::thread([] {
++        uint64_t prevNs[SlotCount] = {}, prevN[SlotCount] = {};
++        for (;;)
++        {
++            std::this_thread::sleep_for(std::chrono::seconds(1));
++            std::fprintf(stderr, "[pipe]");
++            for (int i = 0; i < SlotCount; ++i)
++            {
++                const uint64_t ns = g_ns[i].load(), n = g_n[i].load();
++                std::fprintf(stderr, " %s=%.0fms/%llu", kNames[i], double(ns - prevNs[i]) / 1e6, (unsigned long long)(n - prevN[i]));
++                prevNs[i] = ns; prevN[i] = n;
++            }
++            std::fprintf(stderr, " qhigh=%llu fronthigh=%llu\n", (unsigned long long)g_qHigh.exchange(0), (unsigned long long)g_frontHigh.exchange(0));
++        }
++    }).detach();
++}
++struct Scope
++{
++    Slot slot;
++    std::chrono::steady_clock::time_point t0;
++    explicit Scope(Slot s) : slot(s)
++    {
++        if (enabled()) { startPrinter(); t0 = std::chrono::steady_clock::now(); }
++    }
++    ~Scope()
++    {
++        if (!enabled()) return;
++        g_ns[slot].fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count()), std::memory_order_relaxed);
++        g_n[slot].fetch_add(1, std::memory_order_relaxed);
++    }
++};
++} // namespace ps2_pipe
+--- a/ps2xRuntime/include/runtime/gs/gs_frontend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_frontend.h
+@@ -5,6 +5,7 @@
+ #include <cstddef>
+ #include <cstdint>
+ #include <memory>
++#include <atomic>
+ #include <mutex>
+ #include <vector>
+ 
+@@ -205,6 +206,7 @@
+     uint32_t m_localMemorySize = 0u;
+     struct GSRegisters *m_privRegs = nullptr;
+     mutable std::recursive_mutex m_stateMutex;
++    std::atomic<bool> m_externalObserverSet{false}; // GOW-Port: consulta sin m_stateMutex
+     mutable std::mutex m_backendLifetimeMutex;
+     mutable std::mutex m_presentationMutex;
+ 
