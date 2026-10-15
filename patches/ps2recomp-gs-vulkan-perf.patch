@@ -58,7 +58,7 @@ index 52e7cf2..1eecbca 100644
  {
      return m_impl != nullptr;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-index c61d964..ab705de 100644
+index c61d964..784f988 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 @@ -122,12 +122,26 @@ uint blend(uint src, uint dst)
@@ -90,7 +90,131 @@ index c61d964..ab705de 100644
      if (2l * r > d || (2l * r == d && (q & 1l) != 0l))
          ++q;
      shift = s + 23;
-@@ -349,6 +363,20 @@ void shade(ivec2 xy)
+@@ -239,6 +253,8 @@ uint lookupClut(uint index)
+     return 0xFFFF00FFu;
+ }
+ 
++uint texRead(uint psm, uint base, uint bw, uint x, uint y);
++
+ uint samplePoint(int u, int v)
+ {
+     uint lo = P.clampLo;
+@@ -246,7 +262,7 @@ uint samplePoint(int u, int v)
+     u = wrapCoordinate(u, int(P.tsize & 0xFFFFu), lo & 3u, (lo >> 4u) & 0x3FFu, (lo >> 14u) & 0x3FFu);
+     v = wrapCoordinate(v, int(P.tsize >> 16u), (lo >> 2u) & 3u, (lo >> 24u) | ((hi & 3u) << 8u), (hi >> 2u) & 0x3FFu);
+     uint psm = P.tex >> 24u;
+-    uint raw = readPixel(psm, P.tex & 0x3FFFu, (P.tex >> 16u) & 0xFFu, uint(u), uint(v));
++    uint raw = texRead(psm, P.tex & 0x3FFFu, (P.tex >> 16u) & 0xFFu, uint(u), uint(v));
+     switch (psm)
+     {
+     case 0x00u: case 0x30u: case 0x01u: case 0x31u:
+@@ -317,6 +333,105 @@ float fabsQ(float q)
+     return abs(q) > 1.0e-8 ? q : 1.0;
+ }
+ 
++// GOW-Port: register-resident pixel state. Two write-back slots hold the 32-bit VRAM words of this thread's frame/Z pixel
++// (only 32/24-bit formats: one thread owns the whole word); everything else flushes and uses memory directly.
++const uint NOKEY = 0xFFFFFFFFu;
++uint k0 = NOKEY, k1 = NOKEY, v0, v1;
++bool d0 = false, d1 = false;
++uint nextEvict = 0u;
++
++void flushAll()
++{
++    if (d0) { vram[k0] = v0; d0 = false; }
++    if (d1) { vram[k1] = v1; d1 = false; }
++}
++
++void dropAll()
++{
++    flushAll();
++    k0 = NOKEY;
++    k1 = NOKEY;
++}
++
++// Slot lookup shared by pixel and texture reads; returns the current content of word wi.
++uint cachedWord(uint wi)
++{
++    if (k0 == wi) return v0;
++    if (k1 == wi) return v1;
++    return vram[wi];
++}
++
++void putWord(uint wi, uint value, bool loaded)
++{
++    if (k0 == wi) { v0 = value; d0 = true; return; }
++    if (k1 == wi) { v1 = value; d1 = true; return; }
++    if (k0 == NOKEY || (k1 != NOKEY && nextEvict == 0u))
++    {
++        if (d0) vram[k0] = v0;
++        k0 = wi; v0 = value; d0 = true; nextEvict = 1u;
++    }
++    else
++    {
++        if (d1) vram[k1] = v1;
++        k1 = wi; v1 = value; d1 = true; nextEvict = 0u;
++    }
++}
++
++bool cacheable(uint kind) { return kind == KIND_32 || kind == KIND_24; }
++
++uint targetRead(uint psm, uint base, uint bw, uint x, uint y)
++{
++    uint f = fmtOf(psm);
++    uint kind = FMT_KIND[f];
++    if (kind == KIND_INVALID)
++        return 0u;
++    if (!cacheable(kind))
++    {
++        flushAll();
++        return loadAt(f, locate(f, base, bw, x, y));
++    }
++    uint word = cachedWord(locate(f, base, bw, x, y).x >> 2u);
++    return kind == KIND_24 ? word & 0x00FFFFFFu : word;
++}
++
++void targetWrite(uint psm, uint base, uint bw, uint x, uint y, uint value)
++{
++    uint f = fmtOf(psm);
++    uint kind = FMT_KIND[f];
++    if (kind == KIND_INVALID)
++        return;
++    uvec2 loc = locate(f, base, bw, x, y);
++    if (!cacheable(kind))
++    {
++        dropAll();
++        storeAt(f, loc, value);
++        return;
++    }
++    uint wi = loc.x >> 2u;
++    if (kind == KIND_24)
++        value = (cachedWord(wi) & 0xFF000000u) | (value & 0x00FFFFFFu);
++    putWord(wi, value, true);
++}
++
++// Texture fetch: like readPixel, but sees the words this thread has not written back yet (own-pixel feedback).
++uint texRead(uint psm, uint base, uint bw, uint x, uint y)
++{
++    uint f = fmtOf(psm);
++    uint kind = FMT_KIND[f];
++    if (kind == KIND_INVALID)
++        return 0u;
++    uvec2 loc = locate(f, base, bw, x, y);
++    uint word = cachedWord(loc.x >> 2u);
++    switch (kind)
++    {
++    case KIND_32: return word;
++    case KIND_24: return word & 0x00FFFFFFu;
++    case KIND_16: return (word >> ((loc.x & 2u) * 8u)) & 0xFFFFu;
++    case KIND_8: return (word >> ((loc.x & 3u) * 8u)) & 0xFFu;
++    }
++    return (word >> ((loc.x & 3u) * 8u + loc.y)) & 0x0Fu;
++}
++
+ void shade(ivec2 xy)
+ {
+     uint mode = P.mode;
+@@ -349,6 +464,20 @@ void shade(ivec2 xy)
          }
      }
  
@@ -103,7 +227,7 @@ index c61d964..ab705de 100644
 +        return;
 +    if (ztst >= 2u)
 +    {
-+        uint stored = readPixel(zpsm, zbp, P.frame >> 16u, uint(xy.x), uint(xy.y));
++        uint stored = targetRead(zpsm, zbp, P.frame >> 16u, uint(xy.x), uint(xy.y));
 +        if (ztst == 2u ? z < stored : z <= stored)
 +            return;
 +    }
@@ -111,7 +235,13 @@ index c61d964..ab705de 100644
      if ((mode & M_TME) != 0u)
      {
          precise float texUf;
-@@ -413,18 +441,6 @@ void shade(ivec2 xy)
+@@ -408,28 +537,16 @@ void shade(ivec2 xy)
+     // Destination alpha test (passesDestinationAlphaTest): CT32 bit 31, CT16/CT16S bit 15; CT24 always passes.
+     if ((P.test & 0x4000u) != 0u && psm != 1u)
+     {
+-        uint rawDest = readPixel(psm, fbp, fbw, uint(xy.x), uint(xy.y));
++        uint rawDest = targetRead(psm, fbp, fbw, uint(xy.x), uint(xy.y));
+         bool destAlpha = ((rawDest >> (is16 ? 15u : 31u)) & 1u) != 0u;
          if (destAlpha != ((P.test & 0x8000u) != 0u))
              return;
      }
@@ -130,7 +260,25 @@ index c61d964..ab705de 100644
      bool abe = (P.alpha & A_ABE) != 0u;
      uint fb = 0u;
      if (P.fbmsk != 0u || abe || !writeAlpha)
-@@ -461,7 +477,24 @@ void main()
+     {
+-        uint raw = readPixel(psm, fbp, fbw, uint(xy.x), uint(xy.y));
++        uint raw = targetRead(psm, fbp, fbw, uint(xy.x), uint(xy.y));
+         fb = is16 ? rgba5551To8888(raw) : (psm == 1u ? (raw | 0x80000000u) : raw);
+     }
+     if (abe)
+@@ -443,9 +560,9 @@ void shade(ivec2 xy)
+     if (is16)
+         pixel = rgba8888To5551(pixel);
+     if (writeRgb || writeAlpha)
+-        writePixelRaw(psm, fbp, fbw, uint(xy.x), uint(xy.y), pixel);
++        targetWrite(psm, fbp, fbw, uint(xy.x), uint(xy.y), pixel);
+     if (writeDepth && (P.zbuf & 0x4000000u) != 0u)
+-        writePixelRaw(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
++        targetWrite(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
+ }
+ 
+ void main()
+@@ -461,7 +578,24 @@ void main()
      {
          curPrim = pc.first + k;
          if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y)
@@ -156,3 +304,11 @@ index c61d964..ab705de 100644
      }
      barrier();
      for (uint w = 0u; w < (pc.count + 31u) >> 5; ++w)
+@@ -476,6 +610,7 @@ void main()
+                 shade(xy);
+         }
+     }
++    flushAll();
+ }
+ )GLSL";
+ }
