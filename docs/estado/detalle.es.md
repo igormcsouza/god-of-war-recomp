@@ -8,13 +8,13 @@ Generado por `tools/estado/generar.py` a partir de `docs/estado/datos.toml` y `c
 
 | Librería | Funciones | Estado | Nota |
 |---|---:|---|---|
-| `libmpeg` | 103 | 🔧 Parcial | La intro FMV se decodifica por software y se presenta sin GOW_SKIP_FMV; falta verificar el resto de vídeos |
+| `libmpeg` | 103 | 🔧 Parcial | La intro FMV se decodifica por software y se reproduce entera (callbacks de flujo MPEG síncronos); falta verificar el resto de vídeos; GOW_SKIP_FMV omite los vídeos |
 | `libipu` | 5 | 🔧 Parcial | sceIpuInit corregido; la ruta MPEG por software funciona, sin verificar todas las operaciones de la IPU |
 | `libgraph` | 7 | ✅ Funciona |  |
 | `libdma` | 8 | ✅ Funciona |  |
 | `libcdvd` | 10 | ✅ Funciona | Lee la ISO original |
 | `libdbc` | 11 | 🔧 Parcial | RPC de dbcman y SIO2 verificados al cargar y guardar en tarjeta; los mandos SIO2 aún se ven desconectados |
-| `libpad2` | 13 | 🔧 Parcial | HLE del primer puerto (teclado o gamepad); presiones 0/255 |
+| `libpad2` | 13 | 🔧 Parcial | HLE del primer puerto (teclado o gamepad, mando autodetectado en Linux); presiones 0/255 |
 | `libvib` | 2 | ⏳ Pendiente | Sin vibración: el HLE no anuncia actuadores |
 | `libmc2` | 90 | 🔧 Parcial | Listar, cargar, guardar y recargar verificados con una copia de tarjeta PCSX2 de 8 MB con ECC; faltan formateo y reapertura en PCSX2 |
 | `libscf` | 14 | ✅ Funciona |  |
@@ -37,18 +37,18 @@ Generado por `tools/estado/generar.py` a partir de `docs/estado/datos.toml` y `c
 | EE | INTC: VSync e interrupción del GS | 2 | ✅ Funciona |  |
 | EE | Controlador DMA | 2 | ✅ Funciona | Las cadenas fromSPR/toSPR ya copian la paleta de huesos; formas de Kratos y enemigos verificadas en partida |
 | EE | Temporizadores | 1 | ✅ Funciona |  |
-| GS / VU | GS: primitivas y framebuffer | 3 | 🔧 Parcial | CPU/OpenGL conservados; barco, Kratos, enemigos y HUD visibles. Orden color/Z y alias por ancho/vuelta validados. Feedback inestable acotado a 33 envíos; snapshot opcional estable en 64 pasadas, aún distinto de CPU. Z de solo lectura retenido; profiler GPU por variante y frontera de consultas verificado; falta cobertura completa |
-| GS / VU | VIF1 y VU1 | 3 | 🔧 Parcial | Bloques compilados, flags persistentes, SSE de cuatro carriles, DIV compilado y flags confirmados al leerlos (intérprete 333 → 293 ms por cuadro); regresión FTZ/DAZ conserva underflow. Modelos y HUD visibles tras MMI/EFU/SPR. En partida cargada VU1 ocupa ~35 % del hilo del juego y la espera a la GPU ~31 %; falta certificar cobertura y rendimiento sostenido |
+| GS / VU | GS: primitivas y framebuffer | 3 | 🔧 Parcial | Referencia CPU y backend Vulkan compute (byte a byte idéntico a la CPU, por defecto en Linux) además de OpenGL en Windows; barco, Kratos, enemigos y HUD visibles; algunas primitivas con feedback de textura siguen en CPU; fallos visuales en orbes/partículas; falta cobertura completa |
+| GS / VU | VIF1 y VU1 | 3 | 🔧 Parcial | Microcódigo VU1 compilado a C++ (bloques con temporización estática, idéntico al intérprete en pruebas de grabación/reproducción); necesita una captura local del microcódigo; en partida el hilo de VU1 sigue siendo uno de los límites de velocidad; falta certificar cobertura |
 | GS / VU | GS: texturas, CLUT y fuentes | 2 | 🔧 Parcial | HUD visible; bilineal y nearest STQ CPU/OpenGL verificados, incluidos límites 16.16 con signo, con patrones procedurales de PCSX2 software; feedback GPU estable en modo experimental; lotes de texturas regionales optimizados y verificados en los 13 PSM; quedan pendientes la caché GS real y la cobertura de fuentes/CLUT |
 | GS / VU | GIF (PATH1-3) | 2 | ✅ Funciona |  |
 | GS / VU | IPU: vídeo FMV | 2 | 🔧 Parcial | La intro FMV funciona por decodificación MPEG por software; no demuestra emulación completa del hardware IPU |
 | IOP | CPU R3000A (intérprete) | 3 | ✅ Funciona | Planificador ocioso de Opus integrado y validado con GS/VU1: recuerda el próximo despertar; su perfil reduce IOP de ~1300–1500 a ~570–650 ms cada 5 s; falta una comparación de FPS sin compilaciones concurrentes |
-| IOP | SPU2: salida de audio | 3 | 🔧 Parcial | Bancos cargados y sonido continuo en tiempo emulado verificados; a ~2 fps se oye entrecortado; faltan reverb y ADMA |
+| IOP | SPU2: salida de audio | 3 | 🔧 Parcial | Bancos cargados y sonido continuo verificados; la música en streaming ya no se reinicia cada 0,36 s (latencia de lectura del CD y salto de bucle del SPU2 corregidos; comprobado por registro, no de oído); faltan reverb y ADMA |
 | IOP | Módulos IRX originales | 2 | ✅ Funciona |  |
 | IOP | SIF: RPC y DMA EE ↔ IOP | 2 | ✅ Funciona |  |
 | IOP | CDVD: lectura de la ISO original | 2 | ✅ Funciona |  |
 | IOP | Mando DualShock 2 | 2 | 🔧 Parcial | libpad2 por HLE (primer puerto); en el SIO2 emulado los mandos se ven desconectados |
 | IOP | SIO2: memory card | 2 | 🔧 Parcial | SIO2 y tarjeta de 8 MB con ECC: cargar, guardar y recargar verificados en el juego sobre una copia PCSX2; faltan formateo y reapertura en PCSX2 |
-| Linux | Port nativo para Linux | 2 | 🔧 Parcial | Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); backend Vulkan en fase A (primitivas sin textura en GPU); mandos pendientes |
+| Linux | Port nativo para Linux | 2 | 🔧 Parcial | Lanzador (extrae la ISO, detecta el mando, opción de omitir vídeos), GS por Vulkan (compute), VU1 compilada y compilación nativa funcionan; la VU1 compilada necesita una captura local del microcódigo; ~20-30 fps en partida (objetivo: 60); fallos visuales en orbes/partículas y un cuelgue tras la cinemática de la intro |
 
 * Funciones de las librerías estáticas de Sony enlazadas en SCUS_973.99 (config/funcmap.csv). Hardware: ponderado por componente.

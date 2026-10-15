@@ -6,7 +6,7 @@
 
 **Port nativo para PC de *God of War* (PS2, NTSC-U `SCUS-97399`) mediante recompilación estática de MIPS R5900 a C++.**
 
-![Plataforma](https://img.shields.io/badge/plataforma-Windows%20x64-0078D6?logo=windows&logoColor=white)
+![Plataforma](https://img.shields.io/badge/plataforma-Linux%20%7C%20Windows%20x64-0078D6?logo=linux&logoColor=white)
 ![Lenguaje](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Basado en](https://img.shields.io/badge/basado%20en-PS2Recomp-8A2BE2)
@@ -23,8 +23,11 @@
 
 ## Índice
 
+- [Propósito y objetivos](#propósito-y-objetivos)
+- [Mapa de estado](#mapa-de-estado)
 - [Qué es](#qué-es)
 - [Estado actual](#estado-actual)
+- [Linux (port nativo)](#linux-port-nativo)
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Requisitos](#requisitos)
 - [Compilar y ejecutar](#compilar-y-ejecutar)
@@ -32,11 +35,35 @@
 - [Documentación](#documentación)
 - [Créditos y licencia](#créditos-y-licencia)
 
+## Propósito y objetivos
+
+Un **port nativo y jugable de *God of War* (2005) para Linux** mediante recompilación estática, sobre
+[PS2Recomp](https://github.com/ran-j/PS2Recomp). Hitos, en orden:
+
+1. **60 FPS estables** en partida.
+2. Renderizado a **1080p** con escalado.
+
+Estado actual, con honestidad: el juego arranca desde tu propia ISO, reproduce la intro, llega a la partida y
+guardar funciona, pero en partida va a solo **~20-30 FPS** (RTX 5050), lejos de 60. Problemas conocidos: algunos
+fallos visuales en orbes y partículas, un cuelgue tras la cinemática de la intro, y los vídeos del juego aún
+necesitan una solución provisional (**Skip movies** en el lanzador / `GOW_SKIP_FMV=1`; la intro ya se reproduce,
+los demás vídeos y su audio están sin verificar).
+
+Este repositorio es un fork de [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp). El
+trabajo de Linux vive en la rama `linux-native-port`; los arreglos útiles para todos (por ejemplo el de los
+callbacks del flujo MPEG, PR #92 upstream) se envían a upstream como PRs pequeños y separados.
+
+## Mapa de estado
+
+<a href="docs/estado/detalle.es.md"><img src="docs/estado/mapa.es.svg" alt="Mapa de estado del port: funciones de las librerías del SDK de Sony y componentes del hardware de la PS2, coloreados por estado" width="100%"></a>
+
+Desglose por librería y por componente: [`docs/estado/detalle.es.md`](docs/estado/detalle.es.md). Se regenera a partir de `docs/estado/datos.toml` con `tools/estado/generar.py` (y automáticamente al subir a `main`).
+
 ## Qué es
 
 En lugar de emular la PlayStation 2 instrucción por instrucción, este proyecto **traduce el ejecutable
 original del juego (`SCUS_973.99`) a código C++** con [PS2Recomp](https://github.com/ran-j/PS2Recomp),
-y lo compila como un programa nativo de Windows enlazado contra un runtime que reimplementa el hardware
+y lo compila como un programa nativo (Linux o Windows) enlazado contra un runtime que reimplementa el hardware
 y el sistema operativo de la PS2 (kernel del EE, GS, DMA, CD/DVD…). El procesador de E/S (IOP) ejecuta
 los **módulos IRX originales** del juego (driver de sonido, cargador de datos…) en el intérprete R3000A de
 PS2Recomp.
@@ -54,11 +81,8 @@ Este repositorio contiene todo lo específico de God of War:
 
 ## Estado actual
 
-<a href="docs/estado/detalle.es.md"><img src="docs/estado/mapa.es.svg" alt="Mapa de estado del port: funciones de las librerías del SDK de Sony y componentes del hardware de la PS2, coloreados por estado" width="100%"></a>
+Estado e instrucciones de Linux: [Linux (port nativo)](#linux-port-nativo).
 
-Desglose por librería y por componente: [`docs/estado/detalle.es.md`](docs/estado/detalle.es.md). Se regenera a partir de `docs/estado/datos.toml` con `tools/estado/generar.py` (y automáticamente al subir a `main`).
-
-Linux (parcial): el lanzador y la extracción de la ISO funcionan; la compilación es parcial, el backend Vulkan y los mandos están pendientes. Véase [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) y [`docs/ESTADO.md`](docs/ESTADO.md).
 
 Compilación nativa para Windows (renderizador OpenGL) en un Ryzen 7 5800XT con una RX 5700 XT:
 
@@ -96,6 +120,53 @@ quedan diferencias CPU/OpenGL y cobertura gráfica por comprobar. Ver [rendimien
 [renderizado](docs/COMPARACION_PCSX2.md), [FMV y audio](docs/FMV_Y_AUDIO.md), [memory card](docs/MEMORY_CARD.md) y
 [`docs/ESTADO.md`](docs/ESTADO.md) para los controles y sus límites.
 
+## Linux (port nativo)
+
+El port de Linux es nativo (sin Wine). Windows se mantiene compatible en la medida de lo posible.
+
+- **Vulkan es obligatorio.** El GS (gráficos) se rasteriza con un backend Vulkan compute cuya salida es idéntica byte a
+  byte a la del renderer de referencia en CPU ([`docs/VULKAN.md`](docs/VULKAN.md)); es el valor por defecto en Linux,
+  con el renderer CPU como respaldo.
+- **Microcódigo VU1 compilado.** Los programas de VU1 se compilan a C++ al compilar, a partir de una **captura local**
+  del microcódigo del propio juego (nunca se sube al repositorio); sin ella se usa el intérprete, más lento.
+- **Lanzador** (`tools/linux/gow_launcher.py`): localiza tu ISO (`GOW_ISO`, la recordada, o un escaneo de `~/Games` y
+  `~/Downloads`), la valida, **extrae automáticamente el ELF y los módulos IRX** a `~/.cache/gow-one-recomp/` y abre
+  una ventana de ajustes (pantalla completa, filtro de escalado, GPU, mando, silenciar, **Skip movies**…). Detalles:
+  [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md).
+- **Los mandos se autodetectan** (con conexión en caliente); el lanzador permite elegir uno concreto.
+
+**Requisitos:** Linux x86-64, GPU y controlador compatibles con Vulkan, Python 3 (`python3-tk` para la ventana), Git,
+CMake, Ninja, un compilador C++20, las bibliotecas de desarrollo de PS2Recomp (X11, OpenGL, FFmpeg),
+`glslangValidator` y cabeceras de Vulkan, y tu propia ISO **NTSC-U `SCUS-97399`**.
+
+**Compilar y ejecutar** (detalles en [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md)):
+
+```sh
+# 1. extrae el ELF de tu ISO (también la valida) y compila el runner
+python3 tools/linux/gow_launcher.py --iso "/ruta/God of War.iso" --prepare-only
+GOW_ELF=/ruta/a/SCUS_973.99 python3 scripts/compilar_linux.py
+
+# 2. opcional pero recomendado: compilar el microcódigo VU1 (captúralo una vez jugando y recompila)
+GOW_VU1_CAPTURA=~/vu1_micro <juega unos minutos>
+GOW_VU1_MICROCODIGO=~/vu1_micro python3 scripts/compilar_linux.py
+
+# 3. jugar
+python3 tools/linux/gow_launcher.py --runner /ruta/a/ps2EntryRunner   # ventana; --last la omite
+```
+
+**Variables de entorno útiles** (la mayoría son opciones del lanzador):
+
+| Variable | Efecto |
+|---|---|
+| `GOW_ISO`, `GOW_ISO_DIRS` | Ruta de la ISO / carpetas extra donde buscar |
+| `GOW_SKIP_FMV=1` | Omite los vídeos pre-renderizados |
+| `GOW_AUDIO=0` | Silencia (el SPU2 se sigue emulando) |
+| `GOW_FULLSCREEN=1`, `GOW_SCALE_FILTER=nearest\|sharp-bilinear`, `GOW_WINDOW_SCALE=<n>` | Opciones de pantalla (F11 alterna pantalla completa) |
+| `PS2X_VK_DEVICE=<índice o nombre>` | Elige la GPU Vulkan (por defecto, la discreta primero) |
+| `GOW_PAD_INDEX=<n>` | Elige un mando (por defecto, automático) |
+| `PS2X_GS_BACKEND=cpu` | Fuerza el renderer CPU |
+| `GOW_DEBUG_UI=1` | Superposición de depuración |
+
 ## Estructura del repositorio
 
 ```
@@ -127,10 +198,13 @@ quedan diferencias CPU/OpenGL y cobertura gráfica por comprobar. Ver [rendimien
 └── tools/
     ├── ci/                       # Ayudas de la CI (orden de parches, config, pruebas)
     ├── extraer_capa2.ps1         # Extrae la capa 1 de una ISO DVD-9 de PS2
+    ├── linux/gow_launcher.py     # Lanzador de Linux: detección/extracción de la ISO, ventana de ajustes
     └── estado/generar.py         # Generador del mapa de estado
 ```
 
 ## Requisitos
+
+Esta sección y la siguiente describen la compilación para Windows; para Linux véase [arriba](#linux-port-nativo).
 
 - Windows 10/11 x64
 - [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) con la carga de trabajo **C++** (incluye CMake y Ninja)
@@ -209,6 +283,9 @@ Más detalles en [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 - [`docs/CONTROLES.md`](docs/CONTROLES.md) — controles y pruebas del mando y del menú
 - [`docs/RENDERIZADO.md`](docs/RENDERIZADO.md) — renderers CPU/CPU con hilo/OpenGL opcionales y comparaciones
 - [`docs/RENDIMIENTO.md`](docs/RENDIMIENTO.md) — mediciones de rendimiento, hilos opcionales y optimizaciones de VU1
+- [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md), [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) — lanzador de Linux, manejo de la ISO y compilación (en inglés)
+- [`docs/VULKAN.md`](docs/VULKAN.md) — backend GS Vulkan (en inglés)
+- [`docs/PROGRESS_LOG.md`](docs/PROGRESS_LOG.md), [`docs/NEXT_STEPS_PLAN.md`](docs/NEXT_STEPS_PLAN.md) — registro de progreso de Linux y plan hacia los 60 FPS (en inglés)
 - [`AGENTS.md`](AGENTS.md) — convenciones del proyecto para colaboradores y agentes
 - [`docs/ESTADO.md`](docs/ESTADO.md) — estado actual, registro de la investigación, problemas conocidos y próximos pasos
 

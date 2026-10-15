@@ -942,7 +942,7 @@
 <text class="badge-t" x="498.2" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">SIF</text>
 <rect class="ok" x="535.9" y="194.1" width="73.4" height="63.5"><title>CDVD: lectura de la ISO original</title></rect>
 <text class="badge-t" x="572.6" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">CDVD</text>
-<rect class="parcial" x="461.5" y="258.6" width="62.8" height="111.9"><title>SPU2: salida de audio — Bancos cargados y sonido continuo en tiempo emulado verificados; a ~2 fps se oye entrecortado; faltan reverb y ADMA</title></rect>
+<rect class="parcial" x="461.5" y="258.6" width="62.8" height="111.9"><title>SPU2: salida de audio — Bancos cargados y sonido continuo verificados; la música en streaming ya no se reinicia cada 0,36 s (latencia de lectura del CD y salto de bucle del SPU2 corregidos; comprobado por registro, no de oído); faltan reverb y ADMA</title></rect>
 <rect x="461.5" y="258.6" width="62.8" height="111.9" fill="url(#rayas)" pointer-events="none"/>
 <text class="badge-v-oscuro" x="492.9" y="318.4" font-size="11" text-anchor="middle" pointer-events="none">SPU2</text>
 <rect class="parcial" x="525.3" y="258.6" width="84" height="55.4"><title>Mando DualShock 2 — libpad2 por HLE (primer puerto); en el SIO2 emulado los mandos se ven desconectados</title></rect>
@@ -965,10 +965,10 @@
 <text class="badge-t" x="709.3" y="360.5" font-size="11" text-anchor="middle" pointer-events="none">Timers</text>
 <rect class="ok" x="753.6" y="113.5" width="51" height="91"><title>GIF (PATH1-3)</title></rect>
 <text class="badge-t" x="779.1" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GIF</text>
-<rect class="parcial" x="805.6" y="113.5" width="76.9" height="91"><title>GS: primitivas y framebuffer — CPU/OpenGL conservados; barco, Kratos, enemigos y HUD visibles. Orden color/Z y alias por ancho/vuelta validados. Feedback inestable acotado a 33 envíos; snapshot opcional estable en 64 pasadas, aún distinto de CPU. Z de solo lectura retenido; profiler GPU por variante y frontera de consultas verificado; falta cobertura completa</title></rect>
+<rect class="parcial" x="805.6" y="113.5" width="76.9" height="91"><title>GS: primitivas y framebuffer — Referencia CPU y backend Vulkan compute (byte a byte idéntico a la CPU, por defecto en Linux) además de OpenGL en Windows; barco, Kratos, enemigos y HUD visibles; algunas primitivas con feedback de textura siguen en CPU; fallos visuales en orbes/partículas; falta cobertura completa</title></rect>
 <rect x="805.6" y="113.5" width="76.9" height="91" fill="url(#rayas)" pointer-events="none"/>
 <text class="badge-v-oscuro" x="844" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GS</text>
-<rect class="parcial" x="753.6" y="205.5" width="91.8" height="76.3"><title>VIF1 y VU1 — Bloques compilados, flags persistentes, SSE de cuatro carriles, DIV compilado y flags confirmados al leerlos (intérprete 333 → 293 ms por cuadro); regresión FTZ/DAZ conserva underflow. Modelos y HUD visibles tras MMI/EFU/SPR. En partida cargada VU1 ocupa ~35 % del hilo del juego y la espera a la GPU ~31 %; falta certificar cobertura y rendimiento sostenido</title></rect>
+<rect class="parcial" x="753.6" y="205.5" width="91.8" height="76.3"><title>VIF1 y VU1 — Microcódigo VU1 compilado a C++ (bloques con temporización estática, idéntico al intérprete en pruebas de grabación/reproducción); necesita una captura local del microcódigo; en partida el hilo de VU1 sigue siendo uno de los límites de velocidad; falta certificar cobertura</title></rect>
 <rect x="753.6" y="205.5" width="91.8" height="76.3" fill="url(#rayas)" pointer-events="none"/>
 <text class="badge-v-oscuro" x="799.5" y="247.5" font-size="11" text-anchor="middle" pointer-events="none">VIF1/VU1</text>
 <rect class="parcial" x="753.6" y="282.8" width="91.8" height="50.5"><title>GS: texturas, CLUT y fuentes — HUD visible; bilineal y nearest STQ CPU/OpenGL verificados, incluidos límites 16.16 con signo, con patrones procedurales de PCSX2 software; feedback GPU estable en modo experimental; lotes de texturas regionales optimizados y verificados en los 13 PSM; quedan pendientes la caché GS real y la cobertura de fuentes/CLUT</title></rect>
@@ -977,7 +977,7 @@
 <rect class="parcial" x="846.4" y="205.5" width="36.1" height="127.8"><title>IPU: vídeo FMV — La intro FMV funciona por decodificación MPEG por software; no demuestra emulación completa del hardware IPU</title></rect>
 <rect x="846.4" y="205.5" width="36.1" height="127.8" fill="url(#rayas)" pointer-events="none"/>
 <text class="badge-v-oscuro" x="864.4" y="273.3" font-size="11" text-anchor="middle" pointer-events="none">IPU</text>
-<rect class="parcial" x="753.6" y="336.4" width="128.9" height="34.1"><title>Port nativo para Linux — Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); backend Vulkan en fase A (primitivas sin textura en GPU); mandos pendientes</title></rect>
+<rect class="parcial" x="753.6" y="336.4" width="128.9" height="34.1"><title>Port nativo para Linux — Lanzador (extrae la ISO, detecta el mando, opción de omitir vídeos), GS por Vulkan (compute), VU1 compilada y compilación nativa funcionan; la VU1 compilada necesita una captura local del microcódigo; ~20-30 fps en partida (objetivo: 60); fallos visuales en orbes/partículas y un cuelgue tras la cinemática de la intro</title></rect>
 <rect x="753.6" y="336.4" width="128.9" height="34.1" fill="url(#rayas)" pointer-events="none"/>
 <text class="badge-v-oscuro" x="818" y="357.3" font-size="11" text-anchor="middle" pointer-events="none">Linux</text>
 <rect class="chip" x="462" y="114" width="27.8" height="15" rx="2" pointer-events="none"/>
