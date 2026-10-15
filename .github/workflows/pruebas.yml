@@ -223,7 +223,7 @@ jobs:
           include("${CMAKE_SOURCE_DIR}/../gow/tools/ci/pruebas_vu1.cmake")
           CMAKE
           python3 ../gow/scripts/compilar_linux.py --runtime-only --work-dir "$PWD"
-          ninja -C build gow_gs_replay_test gow_gs_replay gow_gs_replay_checkpoints_test gow_gs_finish_async_test gow_gs_feedback_generator gow_gs_feedback_dump_test gow_vu1_compiled_test gow_vu1_fmac_test
+          ninja -C build gow_gs_replay_test gow_gs_replay gow_gs_replay_checkpoints_test gow_gs_finish_async_test gow_gs_feedback_generator gow_gs_feedback_dump_test gow_vu1_compiled_test gow_vu1_fmac_test gow_vu1_block_test
 
       # src/gow_overrides.cpp solo se compila de verdad junto al codigo generado del juego (Windows). Aqui se
       # comprueba contra las cabeceras del runtime ya parcheado, declarando las sub_* que usa.
@@ -267,6 +267,9 @@ jobs:
 
       - name: Probar todas las FMAC de VU1 compiladas frente al interprete con valores limite
         run: PS2Recomp/build/gow_vu1_fmac_test 200
+
+      - name: Probar bloques VU1 sinteticos (esperas, colas, saltos) compilados frente al interprete
+        run: PS2Recomp/build/gow_vu1_block_test 8
 
       - name: Ejecutar la suite
         working-directory: PS2Recomp

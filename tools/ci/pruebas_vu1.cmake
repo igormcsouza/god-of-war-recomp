@@ -44,3 +44,25 @@ target_include_directories(gow_vu1_fmac_test PRIVATE "${CMAKE_SOURCE_DIR}/ps2xRu
 if(NOT MSVC)
     target_compile_options(gow_vu1_fmac_test PRIVATE -ffp-contract=off)
 endif()
+
+# GOW-Port: programas sinteticos de varios bloques (esperas, colas, saltos, memoria) compilados frente al interprete.
+set(GOW_VU1_BLOCK_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../tests/vu1_block_test.cpp")
+add_executable(gow_vu1_block_fixture "${GOW_VU1_BLOCK_SOURCE}")
+target_link_libraries(gow_vu1_block_fixture PRIVATE ps2_runtime)
+set(GOW_VU1_BLOCK_DIR "${CMAKE_BINARY_DIR}/gow_vu1_block")
+set(GOW_VU1_BLOCK_PARTS)
+foreach(part RANGE 0 12)
+    list(APPEND GOW_VU1_BLOCK_PARTS "${GOW_VU1_BLOCK_DIR}/programa${part}.cpp")
+endforeach()
+add_custom_command(OUTPUT ${GOW_VU1_BLOCK_PARTS}
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${GOW_VU1_BLOCK_DIR}/img"
+    COMMAND "$<TARGET_FILE:gow_vu1_block_fixture>" --write "${GOW_VU1_BLOCK_DIR}/img"
+    COMMAND "$<TARGET_FILE:gow_vu1_generator>" "${GOW_VU1_BLOCK_DIR}" "${GOW_VU1_BLOCK_DIR}/img"
+    DEPENDS gow_vu1_block_fixture gow_vu1_generator
+    VERBATIM)
+add_executable(gow_vu1_block_test "${GOW_VU1_BLOCK_SOURCE}" ${GOW_VU1_BLOCK_PARTS})
+target_link_libraries(gow_vu1_block_test PRIVATE ps2_runtime)
+target_include_directories(gow_vu1_block_test PRIVATE "${CMAKE_SOURCE_DIR}/ps2xRuntime/src/lib/vu")
+if(NOT MSVC)
+    target_compile_options(gow_vu1_block_test PRIVATE -ffp-contract=off)
+endif()
