@@ -1,0 +1,41 @@
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
+@@ -1392,13 +1392,24 @@
+     template <class T, bool DeadFlags, bool Plain = false, bool Chained = false>
+     static VU1_STEP_INLINE bool step(VU1Interpreter &vu, C &c) { return vu.stepPairT<T, DeadFlags, Plain, Chained>(c); }
+     static bool interpret(VU1Interpreter &vu, C &c) { return vu.stepInterpreted(c); }
+-    // GOW-Port: temporización estática (stepPairStaticT). Condiciones de entrada que no dependen del bloque: sin
+-    // XGKICK activo y ninguna cola (Q, P, stores) que venza antes de exitCycle, el ciclo en que acaba el prefijo.
++    // GOW-Port: temporización estática (stepPairStaticT). Entre pares el bloque hace lo mismo que el final de stepPairT:
++    // avanza el ciclo, confirma las colas que vencen (Q, P, stores) y avanza el PATH1 de XGKICK. El primer par solo
++    // confirma las colas, como el comienzo de stepPairT.
+     static VU1_STEP_INLINE uint64_t cycle(const VU1Interpreter &vu) { return vu.m_cycle; }
+-    static VU1_STEP_INLINE bool staticEntry(const VU1Interpreter &vu, uint64_t exitCycle)
++    static VU1_STEP_INLINE void staticFirst(VU1Interpreter &vu)
+     {
+-        return !vu.m_xgkick.active && vu.m_nextCommitCycle > exitCycle;
++        if (vu.m_cycle >= vu.m_nextCommitCycle)
++            vu.commitReadyPipelines();
+     }
++    static VU1_STEP_INLINE void staticTick(VU1Interpreter &vu, uint64_t cycle)
++    {
++        vu.m_cycle = cycle;
++        if (cycle >= vu.m_nextCommitCycle)
++            vu.commitReadyPipelines();
++        if (cycle >= vu.m_xgkickEvent)
++            vu.xgkickAdvanceTo(cycle);
++    }
++    static void staticAdvance(VU1Interpreter &vu, uint64_t cycle) { vu.advanceTo(cycle); }
+     static VU1_STEP_INLINE uint64_t vfReady(const VU1Interpreter &vu, uint32_t reg, uint32_t lane) { return vu.m_vfReady[reg][lane]; }
+     static VU1_STEP_INLINE uint64_t viReady(const VU1Interpreter &vu, uint32_t reg) { return vu.m_viReady[reg]; }
+     static VU1_STEP_INLINE uint64_t accReady(const VU1Interpreter &vu, uint32_t lane) { return vu.m_accReady[lane]; }
+@@ -1407,7 +1418,7 @@
+     static VU1_STEP_INLINE void setAccReady(VU1Interpreter &vu, uint32_t lane, uint64_t v) { vu.m_accReady[lane] = v; }
+     static VU1_STEP_INLINE void staticExit(VU1Interpreter &vu, uint64_t cycle, uint32_t pc)
+     {
+-        vu.m_cycle = cycle;
++        staticTick(vu, cycle);
+         vu.m_state.pc = pc;
+     }
+     template <class T, bool DeadFlags>
