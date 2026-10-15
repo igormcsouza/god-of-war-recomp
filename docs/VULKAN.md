@@ -51,8 +51,9 @@ Patch: `patches/ps2recomp-gs-vulkan.patch` (applied last). Code: `GSVulkanBacken
 - **Shaders.** `gs_vulkan_shader_export` (a build-time tool) writes `kCommon` plus the kernel to a
   `.comp` file. `glslangValidator -V` compiles that file to a SPIR-V header that is embedded in the
   runtime. There is no runtime dependency on glslang.
-- **Device.** One process-wide `VkInstance`/`VkDevice`. The default device prefers integrated, then
-  discrete, then CPU (llvmpipe). `PS2X_VK_DEVICE=<index>` forces a device. Each backend owns its VRAM
+- **Device.** One process-wide `VkInstance`/`VkDevice`. The default device prefers discrete, then
+  integrated, then CPU (llvmpipe). `PS2X_VK_DEVICE=<index or name substring>` forces a device (see
+  "Device selection" below). Each backend owns its VRAM
   buffer, command buffer and fence.
 
 ## Selection and build
@@ -130,3 +131,27 @@ test, a GPU compositor for `Present`.
   now print their CPU wait: `LoadClut=144(350ms)`.
 - **Tile culling.** Each 8x8 workgroup tests the batch's rectangles against its tile cooperatively (shared bitmask, up to 1024
   prims) and each thread walks only the hits, in order. Output is byte-identical (ps2x_tests 630/630).
+
+## Device selection (2026-10-14)
+
+The runtime logs every Vulkan device (`[gow-gs] Vulkan device N: name (type T)`) and the chosen one
+(`[gow-gs] Vulkan device: name (index N, discrete|integrated|cpu[, forced])`). The default order is discrete,
+integrated, virtual, CPU. `PS2X_VK_DEVICE=<index>` or `PS2X_VK_DEVICE=<substring>` (case-insensitive, against the
+device name) forces one; a value that matches no usable device logs a warning and uses the default order.
+Host VRAM is imported with `VK_EXT_external_memory_host`, so a discrete GPU works without a copy path of its own.
+The launcher's `gpu` setting maps to this variable. `PS2X_VK_DEVICE` must be set before the first backend starts.
+
+Measured on the Intel RPL-P iGPU vs the NVIDIA RTX 5050 Laptop (Linux, X11, `GOW_DELTA_DIAG=1`
+`GOW_PERF_FRAME_PC=0x001837B8`, `PS2X_GS_VULKAN_STATS=1`, steady state of the intro/menu scene, ~11 s windows):
+
+| Device | FPS (vid::Flip/s) | GPU ms per second (sum of `gow-gs-vk-gpu` gpu_ms) | Zero-copy import |
+|---|---|---|---|
+| NVIDIA RTX 5050 (default now) | 16.9 | ~102 | yes |
+| Intel RPL-P | 7.1 | ~262-283 | yes |
+
+The presentation path (CPU compositor + raylib/OpenGL texture upload) works unchanged on either device and the
+menu screenshot (`GOW_SCREENSHOT_AT`) is correct on NVIDIA. `ps2x_tests` (631 with the new fallback test, all pass
+on the NVIDIA default) includes both "Vulkan VRAM equals CPU VRAM" byte-identical tests. Observation, not
+investigated: on Intel, runs started with `GOW_SCREENSHOT_AT` set together with `PS2X_GS_VULKAN_STATS=1`
+closed the window cleanly after about 15 s (no screenshot written), while the same Intel run without
+`GOW_SCREENSHOT_AT` ran the full 40-50 s. NVIDIA runs with it were fine.

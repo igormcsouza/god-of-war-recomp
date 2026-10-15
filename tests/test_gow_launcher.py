@@ -186,6 +186,13 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(env, {"GOW_FULLSCREEN": "1", "GOW_DEBUG_UI": "1", "GOW_PAD_INDEX": "0",
                                "PS2X_GS_RASTER_THREADS": "3"})
 
+    def test_gpu_env_mapping(self) -> None:
+        self.assertNotIn("PS2X_VK_DEVICE", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, gpu="NVIDIA")),
+                         {"PS2X_VK_DEVICE": "NVIDIA"})
+        with patch.object(launcher.subprocess, "run", side_effect=FileNotFoundError):
+            self.assertEqual(launcher.detect_gpus(), [])
+
     def test_mute_audio_env_mapping(self) -> None:
         self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True)),

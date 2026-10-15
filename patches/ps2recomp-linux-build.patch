@@ -1,0 +1,35 @@
+diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
+index 2bb2271..9f5cbdc 100644
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -683,3 +683,12 @@ endif()
+ install(DIRECTORY include/
+     DESTINATION include
+ )
++
++# GOW-Port include: the generated code includes <ps2_recompiled_functions.h> from src/runner.
++target_include_directories(ps2EntryRunner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/runner)
++
++# GOW-Port: PS2X_RUNNER_O1=ON compiles the (huge) generated runner at -O1 for practical build times (Linux helper).
++option(PS2X_RUNNER_O1 "Compile ps2EntryRunner at -O1 in Release (GCC/Clang)" OFF)
++if(PS2X_RUNNER_O1 AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
++    target_compile_options(ps2EntryRunner PRIVATE $<$<CONFIG:Release>:-O1>)
++endif()
+diff --git a/ps2xRuntime/cmake/ReleaseMode.cmake b/ps2xRuntime/cmake/ReleaseMode.cmake
+index 92ef0d5..c8fc3f7 100644
+--- a/ps2xRuntime/cmake/ReleaseMode.cmake
++++ b/ps2xRuntime/cmake/ReleaseMode.cmake
+@@ -34,9 +34,10 @@ function(EnableFastReleaseMode TargetName)
+         endif()
+     endif()
+ 
+-    if(IPO_SUPPORTED)
++    # GOW-Port: PS2X_DISABLE_IPO=ON skips link-time optimization (impractical link time for the generated runner).
++    if(IPO_SUPPORTED AND NOT PS2X_DISABLE_IPO)
+         set_property(TARGET ${TargetName} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+-    else()
++    elseif(NOT IPO_SUPPORTED)
+         message(WARNING "Interprocedural optimization not supported: ${ipo_error}")
+     endif()
+ endfunction()
+\ No newline at end of file

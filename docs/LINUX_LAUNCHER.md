@@ -27,6 +27,7 @@ ISO, otherwise a prompt, otherwise an error asking for `--iso`).
 | Controller | Lists pads found in `/proc/bus/input/devices`; choosing one exports `GOW_PAD_INDEX`, "Auto" leaves it unset. |
 | Debug UI | `GOW_DEBUG_UI=1`. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
+| GPU | `gpu` setting, `Auto` by default (discrete GPU first, then integrated). Any other value is a device index or a name substring and sets `PS2X_VK_DEVICE`. The list comes from `vulkaninfo --summary` (empty if it is not installed; you can still type a value). |
 
 `--mute` forces audio off for a single run, with or without the window (and works with `--iso`
 and `--last`). It is not saved: the settings file keeps the checkbox value.

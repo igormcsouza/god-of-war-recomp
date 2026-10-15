@@ -1,5 +1,5 @@
 diff --git a/ps2xRuntime/CMakeLists.txt b/ps2xRuntime/CMakeLists.txt
-index ffca57d..a3c2937 100644
+index ffca57d..2bb2271 100644
 --- a/ps2xRuntime/CMakeLists.txt
 +++ b/ps2xRuntime/CMakeLists.txt
 @@ -519,6 +519,34 @@ if(WIN32)
@@ -37,18 +37,6 @@ index ffca57d..a3c2937 100644
  target_link_libraries(ps2EntryRunner
      PRIVATE
      ps2_runtime
-@@ -655,3 +683,11 @@ endif()
- install(DIRECTORY include/
-     DESTINATION include
- )
-+
-+# GOW-Port include (Linux build helper)
-+target_include_directories(ps2EntryRunner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/runner)
-+
-+# GOW-Port: moderate runner optimization for practical first builds
-+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-+    target_compile_options(ps2EntryRunner PRIVATE $<$<CONFIG:Release>:-O1>)
-+endif()
 diff --git a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h b/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
 index 444aad7..ec413f6 100644
 --- a/ps2xRuntime/include/runtime/gs/gs_cpu_backend.h
@@ -148,10 +136,10 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..a9a6506
+index 0000000..bfb35f9
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,1115 @@
+@@ -0,0 +1,1140 @@
 +// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
 +// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
@@ -168,6 +156,7 @@ index 0000000..a9a6506
 +#include <algorithm>
 +#include <array>
 +#include <bitset>
++#include <cctype>
 +#include <cmath>
 +#include <chrono>
 +#include <cstdio>
@@ -290,35 +279,59 @@ index 0000000..a9a6506
 +        vkEnumeratePhysicalDevices(s.instance, &count, nullptr);
 +        std::vector<VkPhysicalDevice> devices(count);
 +        vkEnumeratePhysicalDevices(s.instance, &count, devices.data());
-+        // Integrated first: VRAM round-trips through host memory in phase A. PS2X_VK_DEVICE=<n> overrides.
-+        const VkPhysicalDeviceType order[] = {VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU, VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU,
++        // GOW-Port: explicit device choice. Default prefers discrete, then integrated, virtual, CPU. VRAM is host memory
++        // (imported zero-copy with VK_EXT_external_memory_host), so any device works. PS2X_VK_DEVICE=<index or
++        // case-insensitive substring of the device name> forces one; no match falls back to the default with a warning.
++        const VkPhysicalDeviceType order[] = {VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU, VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
 +                                              VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU, VK_PHYSICAL_DEVICE_TYPE_CPU};
-+        const char *forced = std::getenv("PS2X_VK_DEVICE");
-+        for (size_t pass = 0; pass < std::size(order) && !s.phys; ++pass)
-+            for (uint32_t i = 0; i < count && !s.phys; ++i)
-+            {
-+                VkPhysicalDeviceProperties props{};
-+                VkPhysicalDeviceFeatures features{};
-+                vkGetPhysicalDeviceProperties(devices[i], &props);
-+                vkGetPhysicalDeviceFeatures(devices[i], &features);
-+                if (forced && *forced ? i != static_cast<uint32_t>(std::atoi(forced)) : props.deviceType != order[pass])
-+                    continue;
-+                if (!features.shaderInt64)
-+                    continue;
-+                uint32_t families = 0;
-+                vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, nullptr);
-+                std::vector<VkQueueFamilyProperties> familyProps(families);
-+                vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, familyProps.data());
-+                for (uint32_t f = 0; f < families && !s.phys; ++f)
-+                    if (familyProps[f].queueFlags & VK_QUEUE_COMPUTE_BIT)
-+                    {
-+                        s.phys = devices[i];
-+                        s.family = f;
-+                        s.timestampBits = familyProps[f].timestampValidBits;
-+                        s.timestampPeriod = props.limits.timestampPeriod;
-+                        std::fprintf(stderr, "[gow-gs] Vulkan device: %s\n", props.deviceName);
-+                    }
-+            }
++        const char *forcedEnv = std::getenv("PS2X_VK_DEVICE");
++        std::string forced = forcedEnv ? forcedEnv : "";
++        const auto lower = [](std::string v) { for (char &c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return v; };
++        const bool forcedIsIndex = !forced.empty() && forced.find_first_not_of("0123456789") == std::string::npos;
++        for (uint32_t i = 0; i < count; ++i)
++        {
++            VkPhysicalDeviceProperties props{};
++            vkGetPhysicalDeviceProperties(devices[i], &props);
++            std::fprintf(stderr, "[gow-gs] Vulkan device %u: %s (type %d)\n", i, props.deviceName, static_cast<int>(props.deviceType));
++        }
++        for (int attempt = 0; attempt < 2 && !s.phys; ++attempt)
++        {
++            const bool useForced = attempt == 0 && !forced.empty();
++            if (attempt == 1 && !forced.empty())
++                std::fprintf(stderr, "[gow-gs] PS2X_VK_DEVICE=%s matched no usable device; using the default choice\n", forced.c_str());
++            for (size_t pass = 0; pass < std::size(order) && !s.phys; ++pass)
++                for (uint32_t i = 0; i < count && !s.phys; ++i)
++                {
++                    VkPhysicalDeviceProperties props{};
++                    VkPhysicalDeviceFeatures features{};
++                    vkGetPhysicalDeviceProperties(devices[i], &props);
++                    vkGetPhysicalDeviceFeatures(devices[i], &features);
++                    if (useForced ? (forcedIsIndex ? i != static_cast<uint32_t>(std::atoi(forced.c_str()))
++                                                   : lower(props.deviceName).find(lower(forced)) == std::string::npos)
++                                  : props.deviceType != order[pass])
++                        continue;
++                    if (!features.shaderInt64)
++                        continue;
++                    uint32_t families = 0;
++                    vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, nullptr);
++                    std::vector<VkQueueFamilyProperties> familyProps(families);
++                    vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families, familyProps.data());
++                    for (uint32_t f = 0; f < families && !s.phys; ++f)
++                        if (familyProps[f].queueFlags & VK_QUEUE_COMPUTE_BIT)
++                        {
++                            s.phys = devices[i];
++                            s.family = f;
++                            s.timestampBits = familyProps[f].timestampValidBits;
++                            s.timestampPeriod = props.limits.timestampPeriod;
++                            std::fprintf(stderr, "[gow-gs] Vulkan device: %s (index %u, %s%s)\n", props.deviceName, i,
++                                         props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? "discrete"
++                                         : props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated"
++                                         : props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU            ? "cpu"
++                                                                                                      : "other",
++                                         useForced ? ", forced" : "");
++                        }
++                }
++        }
 +        if (!s.phys)
 +            return "no Vulkan device with compute and shaderInt64";
 +        vkGetPhysicalDeviceMemoryProperties(s.phys, &s.memory);
@@ -1902,10 +1915,10 @@ index 26c2de7..85c1fb1 100644
      runGpuUploadRingTests();
 diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
 new file mode 100644
-index 0000000..ed6f5b2
+index 0000000..2b5bbf7
 --- /dev/null
 +++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
-@@ -0,0 +1,356 @@
+@@ -0,0 +1,382 @@
 +// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
 +#include "MiniTest.h"
 +#include "runtime/gs/gs_cpu_backend.h"
@@ -2228,6 +2241,32 @@ index 0000000..ed6f5b2
 +            GSVulkanBackend imported;
 +            t.IsTrue(renderAligned(imported) == reference, "Host-imported VRAM equals the CPU reference");
 +            t.IsTrue(reference != noise(), "The scene changed VRAM");
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
++#endif
++        });
++        // GOW-Port: PS2X_VK_DEVICE that matches no device must fall back to the default choice, not disable the backend.
++        test.Run("Unmatched PS2X_VK_DEVICE falls back to the default device", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            GSVulkanBackend reference;
++            if (!reference.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++#ifdef _WIN32
++            _putenv_s("PS2X_VK_DEVICE", "no-such-gpu-zzz");
++#else
++            setenv("PS2X_VK_DEVICE", "no-such-gpu-zzz", 1);
++#endif
++            GSVulkanBackend fallback;
++#ifdef _WIN32
++            _putenv_s("PS2X_VK_DEVICE", "");
++#else
++            unsetenv("PS2X_VK_DEVICE");
++#endif
++            t.IsTrue(fallback.IsReady(), "Backend is ready with an unmatched device name");
 +#else
 +            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
 +            t.IsTrue(true, "skipped");

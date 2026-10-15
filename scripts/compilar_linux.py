@@ -67,35 +67,6 @@ def prepare_checkout(checkout: Path) -> None:
             raise RuntimeError(f"Could not apply or verify {patch.name}: {check.stderr.strip()}")
 
 
-def ensure_runner_include(checkout: Path) -> None:
-    cmake = checkout / "ps2xRuntime/CMakeLists.txt"
-    text = cmake.read_text(encoding="utf-8")
-    marker = "# GOW-Port include (Linux build helper)"
-    if marker not in text:
-        text += f"\n{marker}\ntarget_include_directories(ps2EntryRunner PRIVATE ${'{'}CMAKE_CURRENT_SOURCE_DIR{'}'}/src/runner)\n"
-        cmake.write_text(text, encoding="utf-8")
-
-    text = cmake.read_text(encoding="utf-8")
-    optimization_marker = "# GOW-Port: moderate runner optimization for practical first builds"
-    if optimization_marker not in text:
-        text += (f"\n{optimization_marker}\n"
-                 "if(CMAKE_CXX_COMPILER_ID MATCHES \"GNU|Clang\")\n"
-                 "    target_compile_options(ps2EntryRunner PRIVATE $<$<CONFIG:Release>:-O1>)\n"
-                 "endif()\n")
-        cmake.write_text(text, encoding="utf-8")
-
-
-def ensure_release_ipo_disabled(checkout: Path) -> None:
-    """Disable runtime Release IPO, which otherwise makes the generated runner link impractical."""
-    release = checkout / "ps2xRuntime/cmake/ReleaseMode.cmake"
-    text = release.read_text(encoding="utf-8")
-    marker = "# GOW-Port: IPO disabled by Linux build helper"
-    line = "    set_property(TARGET ${TargetName} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)"
-    if marker not in text and line in text:
-        text = text.replace(line, f"    {marker}\n    # {line.strip()}")
-        release.write_text(text, encoding="utf-8")
-
-
 def prefer_shared_ffmpeg(build: Path) -> None:
     """Prefer shared FFmpeg libraries when pkg-config resolves local extracted development packages."""
     ninja = build / "build.ninja"
@@ -153,10 +124,9 @@ def main() -> int:
                 raise RuntimeError(f"Required tool not found: {tool}")
         prepare_checkout(checkout)
         build = checkout / "build"
-        ensure_release_ipo_disabled(checkout)
         logs = "ON" if opts.traces else "OFF"
         run(["cmake", "-S", str(checkout), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_BUILD_STUDIO=OFF",
+             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_DISABLE_IPO=ON", "-DPS2X_RUNNER_O1=ON", "-DPS2X_BUILD_STUDIO=OFF",
              "-DCMAKE_FIND_LIBRARY_SUFFIXES=.so", "-DPKG_CONFIG_USE_STATIC_LIBS=OFF", "-UFFMPEG_*",
              f"-DPS2X_ENABLE_RUNTIME_LOGS={logs}", f"-DPS2X_ENABLE_AGRESSIVE_LOGS={logs}",
              f"-DPS2X_ENABLE_IOP_RPC_TRACE={logs}", "-DPS2X_ENABLE_RUNNER_UNITY_BUILD=ON", "-DPS2X_ENABLE_RUNNER_PCH=ON",
@@ -167,7 +137,6 @@ def main() -> int:
             return 0
 
         elf = find_elf(opts.elf)
-        ensure_runner_include(checkout)
         work = ROOT / "build-linux"
         generated = work / "generado"
         if generated.exists():
