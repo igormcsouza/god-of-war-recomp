@@ -7095,3 +7095,10 @@ See `docs/VULKAN.md` ("Feedback, DATE and tight texture boxes on the GPU") for t
 
 Remaining fallbacks: `z-alias` (~200/s gameplay, ~500/s intro; Z32 and CT32 swizzle differently, so it needs the CPU row order),
 a few non-provable `tex-feedback` strips, lines/points. `ps2x_tests` 634 pass, patch chain verified on a fresh pinned tree.
+
+## Vulkan z-alias on the GPU (2026-10-15, English)
+
+See docs/VULKAN.md "Frame/Z alias on the GPU": `z-alias` fallbacks ~300/s -> 0 in the gameplay fight (CPU fallbacks ~630 -> ~220/s,
+`cpudraw_ms` ~255 -> ~150), byte-identical in the Vulkan-vs-CPU test; window FPS unchanged (~13 on this heavy scene,
+GPU-bound, `finish_ms` ~540 ms/s). Top costs now: GPU dispatch time, `tex-feedback` CPU fallbacks, `record-ring`/`Flush()` run ends.
+gdb sampling and the intro re-profile were not obtained. A/B switch: `GOW_VK_NO_ZALIAS=1`.

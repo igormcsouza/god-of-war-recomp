@@ -224,3 +224,33 @@ Changes in `patches/ps2recomp-gs-vulkan.patch` (`gs_vulkan_backend.cpp`, shader,
 Screenshots of the new build show correct bloom/rain/HUD; same-moment comparison with the CPU backend is not possible
 (the pad script and loading are wall-clock, the CPU backend runs at 4 FPS), so exactness rests on the byte-identical tests.
 Thread CPU% was not measured. Next: `z-alias` is now the biggest fallback (~200/s gameplay, ~500/s intro).
+
+## Frame/Z alias on the GPU (2026-10-15)
+
+- The shader already addressed the frame with its PSM and Z with the Z PSM (separate `readPixel`/`writePixelRaw`), so the
+  only danger of `z-alias` is two different pixels owning one VRAM word. `frameZAliasSafe` (host, per primitive) proves
+  it at 8x8-block level for CT32/CT24 frame + Z32/Z24: both share the column layout and differ only in the block table,
+  so a frame block may equal a Z block only of the same pixel block (one thread owns the word, write order frame then Z
+  as on the CPU). Any other match, 16-bit formats, or more than 20,000 blocks keep the CPU fallback. Textured reads of
+  frame/Z pages of an aliasing primitive stay on the CPU (`tex-feedback`). Batch rules need no change: frames/depths
+  page overlap already ends the batch.
+- `GOW_VK_NO_ZALIAS=1` (or `GOW_VK_NO_FBOPT=1`) restores the fallback for A/B.
+- Test: four extra aliasing sprites in the feedback scene (one block, 64x16 strip, CT24/Z24, Z only tested) must run on
+  the GPU byte-identical (15 GPU primitives); the old multi-block aliases still fall back. `ps2x_tests` 634 pass.
+
+| Gameplay (ship fight, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, 30 s at ~55-85 s) | before (`GOW_VK_NO_ZALIAS=1`) | after |
+|---|---|---|
+| `z-alias` fallbacks/s | ~300 | 0 |
+| CPU fallback prims/s | ~630 | ~220 (`tex-feedback` ~210, line/point ~13) |
+| `cpudraw_ms`/s | ~255 | ~150 |
+| window FPS | 13.8 (12.8 without the 20 FPS outliers) | 12.8 |
+
+FPS did not move: this scene is heavier than the earlier 22.7 FPS measurement (same binary family, both A/B runs ~13)
+and is GPU-bound, not fallback-bound. Thread CPU (10 s): EE `GameThread` 72-77%, `GSThread` 47-49%, two more game
+threads 38-40% / 11%; others idle. Stats: `finish_ms` ~540 ms/s (EE waiting for the GPU), `gpu_busy` ~600+ ms/s.
+gdb sampling could not be done: `ptrace_scope=1` forbids attach and the gdb-launched run never produced samples in
+the budget; the EE/GIF mutex share is NOT measured.
+Top costs (estimates, unverified): (1) GPU time per frame, ~600 ms/s busy and `finish_ms` ~540 ms/s: dispatch walk
+(`walk_Mpx` >> `covered_Mpx`), a better tile/primitive culling is worth most (maybe +20-40%); (2) remaining `tex-feedback`
+CPU fallbacks ~210/s, ~150 ms/s of `cpudraw_ms` (+5-10%); (3) `record-ring` and `Flush()` run ends (~100 ms/s each, +3-5%).
+Intro/title was not re-profiled (out of budget).
