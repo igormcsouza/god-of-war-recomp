@@ -1,0 +1,45 @@
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -70,11 +70,12 @@
+     constexpr uint32_t kAbe = 0x10000u; // PrimRecord::alpha flags
+     constexpr uint32_t kPabe = 0x20000u;
+     constexpr uint32_t kColclamp = 0x40000u;
+-    // ponytail: fixed record ring per GPU run (~3.4 MB); a full ring ends the run.
+-    constexpr uint32_t kMaxPrims = 16384u;
++    // ponytail: fixed record ring per GPU run (~15 MB); a full ring ends the run. GOW-Port: 16384 -> 65536 records (a rainy
++    // frame has ~15k), with 128 command buffers of 512 primitives to fill it.
++    constexpr uint32_t kMaxPrims = 65536u;
+     constexpr uint32_t kMaxBatch = 2048u;
+     constexpr uint32_t kQueriesPerCmd = 1056u; // begin/end of the command buffer + a begin/end pair per dispatch (stats only)
+-    constexpr uint32_t kMaxCmds = 32u;      // command buffers per GPU run (partial submissions)
++    constexpr uint32_t kMaxCmds = 128u;     // command buffers per GPU run (partial submissions)
+     constexpr uint32_t kSubmitEvery = 512u; // primitives between partial submissions
+ 
+     struct Push
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -428,11 +428,11 @@
+         return out;
+     }
+ 
+-    // 1500 small sprites on a grid: no shared page hazard, so they form one batch of 1500 primitives.
+-    std::vector<GSPrimitiveBatch> bigBatchScene()
++    // Small sprites on a grid: no shared page hazard, so they form batches of up to kMaxBatch primitives.
++    std::vector<GSPrimitiveBatch> bigBatchScene(int count = 1500)
+     {
+         std::vector<GSPrimitiveBatch> out;
+-        for (int k = 0; k < 1500; ++k)
++        for (int k = 0; k < count; ++k)
+         {
+             auto s = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);
+             const float x = float(4 + 16 * (k % 38)), y = float(4 + 16 * (k / 38 % 27));
+@@ -662,6 +662,7 @@
+                 {"twelve distant sprites", cornerScene(), 1},
+                 {"primitives at x = 2047", wideScene(), 1},
+                 {"1500 sprites in one batch", bigBatchScene(), 1},
++                {"20000 sprites (past the old 16384 record ring), 2048 per batch", bigBatchScene(20000), 10},
+             };
+             for (const Case &c : cases)
+             {
