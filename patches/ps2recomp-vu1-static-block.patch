@@ -1,0 +1,114 @@
+--- a/ps2xRuntime/include/runtime/ps2_vu1.h
++++ b/ps2xRuntime/include/runtime/ps2_vu1.h
+@@ -400,6 +400,9 @@
+     template <class T, bool DeadFlags, bool Plain = false, bool Chained = false>
+     bool stepPairT(StepContext &context);
+     bool blockPreconditions(StepContext &context, uint32_t pc, const uint32_t *words, size_t bytes) const;
++    // GOW-Port: par de un bloque con temporización estática (ver stepPairStaticT en ps2_vu1_compiled.inl).
++    template <class T, bool DeadFlags>
++    void stepPairStaticT(StepContext &context, uint64_t cycle);
+     bool stepInterpreted(StepContext &context);
+     bool compiledPrologue(StepContext &context);
+     CompiledProgramFn compiledProgramFor(uint8_t *vuCode, uint32_t codeSize, PS2Memory *memory);
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
+@@ -1323,6 +1323,72 @@
+     return !context.programEnded;
+ }
+ 
++// GOW-Port: temporización estática de bloques. El generador (tools/vu1/generar_vu1.cpp) calcula, para un prefijo
++// del bloque sin saltos, finales, DIV/EFU/XGKICK ni instrucciones inferiores fuera de línea, el ciclo de cada par
++// respecto al de entrada (las esperas entre pares del bloque son constantes). Si al entrar ningún registro leído
++// desde fuera del prefijo está pendiente más allá de su par, no hay XGKICK activo y ninguna cola vence antes del
++// final del prefijo, cada par hace lo mismo que stepPairT salvo las comprobaciones de espera, el avance de ciclo,
++// las colas y la tabla de listos (m_vfReady...), que el bloque deja en su estado final al terminar el prefijo.
++// Solo hace falta fijar m_cycle (lo usan las colas de flags y los CLIP). Lo demás es una copia de stepPairT.
++template <class T, bool DeadFlags>
++VU1_STEP_INLINE void VU1Interpreter::stepPairStaticT(StepContext &context, uint64_t cycle)
++{
++    constexpr const DecodedInstructionPair &k = T::value;
++    m_cycle = cycle;
++
++    constexpr uint32_t viWrites = k.lowerUsage.viWrite & 0xFFFEu;
++    constexpr uint32_t writtenVi = viWrites != 0u ? static_cast<uint32_t>(std::countr_zero(viWrites)) : 0u;
++    int32_t oldVi = 0;
++    if constexpr (writtenVi != 0u)
++        oldVi = m_state.vi[writtenVi];
++
++    constexpr bool lowerNop = k.lower == 0x00000000u || k.lower == 0x8000033Cu;
++    if constexpr (k.iBit)
++    {
++        upperT<k.upper, DeadFlags>();
++        float immediate = 0.0f;
++        constexpr uint32_t lowerBits = k.lower;
++        std::memcpy(&immediate, &lowerBits, sizeof(immediate));
++        m_state.i = normalizeOperand(immediate);
++    }
++    else if constexpr (k.upperVfShadowReg != 0u)
++    {
++        constexpr uint32_t sh = k.upperVfShadowReg;
++        float oldVf[4];
++        float upperVf[4];
++        std::memcpy(oldVf, m_state.vf[sh], sizeof(oldVf));
++        upperT<k.upper, DeadFlags>();
++        std::memcpy(upperVf, m_state.vf[sh], sizeof(upperVf));
++        std::memcpy(m_state.vf[sh], oldVf, sizeof(oldVf));
++        lowerT<k.lower>(context, k.upper);
++        std::memcpy(m_state.vf[sh], upperVf, sizeof(upperVf));
++    }
++    else
++    {
++        upperT<k.upper, DeadFlags>();
++        if constexpr (!lowerNop)
++            lowerT<k.lower>(context, k.upper);
++    }
++
++    if constexpr (vu1c::clearBranchBackup<T>())
++        m_viBranchBackupValid = false;
++    if constexpr (writtenVi != 0u)
++        m_state.vi[writtenVi] = static_cast<int16_t>(m_state.vi[writtenVi]);
++    if constexpr (writtenVi != 0u && k.lowerUsage.delaysNextBranchRead)
++    {
++        m_viBranchBackupValue = oldVi;
++        m_viBranchBackupReg = static_cast<uint8_t>(writtenVi);
++        m_viBranchBackupValid = true;
++    }
++    constexpr bool mayWriteVf0 = vu1c::upperMayWriteVf0(k.upper) ||
++                                 (!k.iBit && (!vu1c::lowerInline(k.lower) || vu1c::lowerInlineWritesVf0(k.lower)));
++    constexpr bool mayWriteVi0 = !k.iBit && !vu1c::lowerInline(k.lower);
++    if constexpr (mayWriteVf0)
++        vu1StoreVf0(m_state.vf[0]);
++    if constexpr (mayWriteVi0)
++        m_state.vi[0] = 0;
++}
++
+ // Acceso del código generado (repartido en varios archivos) a lo que necesita del intérprete.
+ struct VU1CompiledAccess
+ {
+@@ -1332,6 +1398,26 @@
+     template <class T, bool DeadFlags, bool Plain = false, bool Chained = false>
+     static VU1_STEP_INLINE bool step(VU1Interpreter &vu, C &c) { return vu.stepPairT<T, DeadFlags, Plain, Chained>(c); }
+     static bool interpret(VU1Interpreter &vu, C &c) { return vu.stepInterpreted(c); }
++    // GOW-Port: temporización estática (stepPairStaticT). Condiciones de entrada que no dependen del bloque: sin
++    // XGKICK activo y ninguna cola (Q, P, stores) que venza antes de exitCycle, el ciclo en que acaba el prefijo.
++    static VU1_STEP_INLINE uint64_t cycle(const VU1Interpreter &vu) { return vu.m_cycle; }
++    static VU1_STEP_INLINE bool staticEntry(const VU1Interpreter &vu, uint64_t exitCycle)
++    {
++        return !vu.m_xgkick.active && vu.m_nextCommitCycle > exitCycle;
++    }
++    static VU1_STEP_INLINE uint64_t vfReady(const VU1Interpreter &vu, uint32_t reg, uint32_t lane) { return vu.m_vfReady[reg][lane]; }
++    static VU1_STEP_INLINE uint64_t viReady(const VU1Interpreter &vu, uint32_t reg) { return vu.m_viReady[reg]; }
++    static VU1_STEP_INLINE uint64_t accReady(const VU1Interpreter &vu, uint32_t lane) { return vu.m_accReady[lane]; }
++    static VU1_STEP_INLINE void setVfReady(VU1Interpreter &vu, uint32_t reg, uint32_t lane, uint64_t v) { vu.m_vfReady[reg][lane] = v; }
++    static VU1_STEP_INLINE void setViReady(VU1Interpreter &vu, uint32_t reg, uint64_t v) { vu.m_viReady[reg] = v; }
++    static VU1_STEP_INLINE void setAccReady(VU1Interpreter &vu, uint32_t lane, uint64_t v) { vu.m_accReady[lane] = v; }
++    static VU1_STEP_INLINE void staticExit(VU1Interpreter &vu, uint64_t cycle, uint32_t pc)
++    {
++        vu.m_cycle = cycle;
++        vu.m_state.pc = pc;
++    }
++    template <class T, bool DeadFlags>
++    static VU1_STEP_INLINE void stepStatic(VU1Interpreter &vu, C &c, uint64_t cycle) { vu.stepPairStaticT<T, DeadFlags>(c, cycle); }
+     static uint32_t pc(const VU1Interpreter &vu) { return vu.m_state.pc; }
+     static VU1_STEP_INLINE bool block(const VU1Interpreter &vu, C &c, uint32_t pc, const uint32_t *words, size_t bytes)
+     {
