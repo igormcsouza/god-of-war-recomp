@@ -10,8 +10,12 @@ python3 tools/linux/gow_launcher.py \
   --runner "/path/to/ps2EntryRunner"
 ```
 
-If `--iso` is omitted, the settings window opens (see `docs/LINUX_LAUNCHER.md`; needs `python3-tk`). A terminal prompt is used when a
-graphical display is unavailable. If `--runner` is omitted, the launcher looks for
+If `--iso` is omitted, the launcher uses `GOW_ISO`, then the ISO saved from an earlier
+successful run, then scans `~/Games/Sony Playstation 2`, `~/Games`, `~/Downloads` (and
+`GOW_ISO_DIRS`) for a valid image. Only one match is used without asking; several matches
+open a picker. If nothing resolves, the settings window opens (needs `python3-tk`), or a
+terminal prompt when no graphical display is available. See `docs/LINUX_LAUNCHER.md`.
+`--last` skips the window and launches the resolved ISO. If `--runner` is omitted, the launcher looks for
 `bin/ps2EntryRunner` in the repository; `GOW_RUNNER` can also specify its path. To
 validate and prepare the files without starting the game:
 
@@ -34,7 +38,7 @@ ISO size, modification time, or file identity creates a new cache entry. The ori
 ISO stays in place; the launcher passes its absolute path through `GOW_ISO` so the
 IOP can read sectors from it.
 
-Run the synthetic tests without game files:
+Run the synthetic tests without game files (no display needed):
 
 ```sh
 python3 -m unittest discover -s tests -p test_gow_launcher.py

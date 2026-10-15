@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -138,7 +139,8 @@ class LauncherTest(unittest.TestCase):
         runner.write_text("#!/bin/sh\nexit 0\n")
         runner.chmod(0o755)
         with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()), \
-             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache)}), \
+             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache),
+                                     "XDG_CONFIG_HOME": str(self.root / "cfg")}), \
              patch.object(launcher.subprocess, "call", return_value=7) as call:
             self.assertEqual(launcher.main(["--iso", str(self.iso), "--runner", str(runner)]), 7)
         args, kwargs = call.call_args
@@ -152,7 +154,8 @@ class LauncherTest(unittest.TestCase):
         import hashlib
 
         with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()), \
-             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache)}), \
+             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache),
+                                     "XDG_CONFIG_HOME": str(self.root / "cfg")}), \
              patch.object(launcher.subprocess, "call") as call, \
              patch.object(launcher.subprocess, "run") as run, \
              patch.object(launcher.subprocess, "Popen") as popen:
@@ -245,6 +248,151 @@ class SettingsTest(unittest.TestCase):
                 self.assertEqual(launcher.main(["--last", "--runner", str(runner)]), 0)
                 win.assert_not_called()
             self.assertEqual(call.call_args[1]["env"]["GOW_DEBUG_UI"], "1")
+
+
+class FakeTTY:
+    def isatty(self) -> bool:
+        return True
+
+
+class IsoResolutionTest(unittest.TestCase):
+    """ISO resolution and remembering. HOME is a temp dir, so the default scan dirs are inside it,
+    and the environment is cleared (no DISPLAY): nothing here needs a display or the real home."""
+
+    def setUp(self) -> None:
+        import hashlib
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.cfg = self.root / "cfg"
+        self.settings = self.cfg / "gow-one-recomp" / "settings.json"
+        self.runner = self.root / "runner"
+        self.runner.write_text("#!/bin/sh\n")
+        self.runner.chmod(0o755)
+        sha = hashlib.sha256(b"\x7fELF" + b"recomp-fixture").hexdigest()
+        patcher = patch.object(launcher, "ELF_SHA256", sha)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def env(self, **extra: str):
+        base = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.cfg),
+                "XDG_CACHE_HOME": str(self.root / "cache")}
+        return patch.dict(os.environ, dict(base, **extra), clear=True)
+
+    def valid(self, relative: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        make_iso(path)
+        return path
+
+    def run_main(self, *args: str) -> tuple[int, object]:
+        with self.env(), patch.object(launcher.subprocess, "call", return_value=0) as call:
+            code = launcher.main([*args, "--runner", str(self.runner)])
+        return code, call
+
+    def saved_iso(self) -> object:
+        return json.loads(self.settings.read_text())["iso"]
+
+    def test_saved_iso_is_used_without_prompt(self) -> None:
+        iso = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso)), self.settings)
+        with patch.object(launcher, "_choose_iso", side_effect=AssertionError("prompted")):
+            code, call = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(iso.resolve()))
+
+    def test_gow_iso_env_wins_and_is_remembered(self) -> None:
+        saved = self.valid("saved.iso")
+        other = self.valid("other.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(GOW_ISO=str(other)), patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(other.resolve()))
+        self.assertEqual(self.saved_iso(), str(other.resolve()))
+
+    def test_invalid_gow_iso_env_falls_back_to_saved(self) -> None:
+        saved = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(GOW_ISO=str(self.root / "missing.iso")), \
+             patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(saved.resolve()))
+
+    def test_single_scan_match_is_used_and_saved(self) -> None:
+        found = self.valid("home/Games/Sony Playstation 2/God of War.iso")
+        (self.home / "Downloads").mkdir()
+        (self.home / "Downloads" / "not-gow.iso").write_bytes(b"\0" * 4096)  # not an ISO: skipped
+        with patch.object(launcher, "_choose_iso", side_effect=AssertionError("prompted")):
+            code, call = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(found.resolve()))
+        self.assertEqual(self.saved_iso(), str(found.resolve()))
+
+    def test_several_matches_need_a_choice(self) -> None:
+        self.valid("home/Games/a.iso")
+        second = self.valid("home/Downloads/b.iso")
+        with patch.object(launcher.sys, "stdin", io.StringIO("")):  # not a terminal
+            code, call = self.run_main("--last")
+        self.assertEqual(code, 1)
+        call.assert_not_called()
+        self.assertFalse(self.settings.exists())
+        with patch.object(launcher.sys, "stdin", FakeTTY()), patch("builtins.input", return_value="2"):
+            code, call = self.run_main("--last")
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(second.resolve()))
+        self.assertEqual(self.saved_iso(), str(second.resolve()))
+
+    def test_window_is_prefilled_and_skipped_by_last(self) -> None:
+        saved = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(DISPLAY=":0"), patch.object(launcher, "settings_window", return_value=None) as win:
+            self.assertEqual(launcher.main(["--runner", str(self.runner)]), 1)
+        self.assertEqual(win.call_args[0][0]["iso"], str(saved))
+        with self.env(DISPLAY=":0"), patch.object(launcher, "settings_window") as win, \
+             patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        win.assert_not_called()
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(saved.resolve()))
+
+    def test_iso_flag_is_remembered_and_one_run_flags_are_not(self) -> None:
+        iso = self.valid("disc.iso")
+        self.settings.parent.mkdir(parents=True)
+        self.settings.write_text(json.dumps({"debug_ui": True, "mute_audio": False, "future": 1}))
+        code, call = self.run_main("--iso", str(iso), "--mute")
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_AUDIO"], "0")
+        saved = json.loads(self.settings.read_text())
+        self.assertEqual(saved, {"debug_ui": True, "mute_audio": False, "future": 1,
+                                 "iso": str(iso.resolve())})
+
+    def test_scan_finds_valid_isos_within_depth_and_skips_hidden(self) -> None:
+        base = self.root / "t"
+        ok = self.valid("t/ok.iso")
+        mid = self.valid("t/sub/mid.iso")
+        self.valid("t/.hidden/h.iso")
+        self.valid("t/sub/deep/d.iso")  # depth 3: outside the depth-2 scan
+        make_iso(base / "bad.iso", boot="SLUS_000.00")
+        (base / "notes.txt").write_text("x")
+        self.assertEqual(launcher.scan_isos([(base, 2)]), [ok.resolve(), mid.resolve()])
+
+    def test_scan_is_capped(self) -> None:
+        first = self.valid("t/a.iso")
+        self.valid("t/b.iso")
+        with patch.object(launcher, "MAX_SCAN_ENTRIES", 1):
+            self.assertEqual(launcher.scan_isos([(self.root / "t", 1)]), [first.resolve()])
+
+    def test_scan_dirs_include_gow_iso_dirs(self) -> None:
+        with self.env(GOW_ISO_DIRS=f"{self.root}/x:{self.root}/y"):
+            dirs = launcher.scan_dirs()
+        self.assertEqual(dirs[-2:], [(self.root / "x", 3), (self.root / "y", 3)])
+        self.assertIn((self.home / "Games", 1), dirs)
 
 
 if __name__ == "__main__":
