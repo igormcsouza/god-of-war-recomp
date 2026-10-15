@@ -1,25 +1,48 @@
 # Linux launcher: settings window
 
 `tools/linux/gow_launcher.py` opens a Tk settings window when a display is available
-(`DISPLAY` or `WAYLAND_DISPLAY`) and neither `--iso`, `--prepare-only`, `--no-gui` nor
-`--last` is given. ISO preparation and validation are described in `docs/LINUX_ISO.md`.
+(`DISPLAY` or `WAYLAND_DISPLAY`) and neither `--iso`, `--prepare-only` nor `--no-gui`/`--last`
+is given. ISO preparation and validation are described in `docs/LINUX_ISO.md`.
 
 ```sh
-python3 tools/linux/gow_launcher.py            # settings window
-python3 tools/linux/gow_launcher.py --last     # no window, saved settings (alias: --no-gui)
-python3 tools/linux/gow_launcher.py --iso X.iso --runner R   # unchanged CLI flow
+python3 tools/linux/gow_launcher.py            # settings window, ISO field prefilled
+python3 tools/linux/gow_launcher.py --last     # no window: resolved ISO + saved settings (alias: --no-gui)
+python3 tools/linux/gow_launcher.py --iso X.iso --runner R   # explicit ISO, no window
 python3 tools/linux/gow_launcher.py --last --mute            # saved settings, audio muted this run only
 ```
 
 Tk is not part of every Python install. On Debian/Ubuntu install `python3-tk`. If Tk or
-the display is unavailable, the launcher silently falls back to the terminal flow (saved
-ISO, otherwise a prompt, otherwise an error asking for `--iso`).
+the display is unavailable, the launcher falls back to the terminal flow (resolved ISO,
+otherwise a numbered list or a prompt, otherwise an error asking for `--iso`).
+
+## ISO resolution
+
+Without `--iso` the launcher picks the ISO in this order:
+
+1. `GOW_ISO` environment variable, if it is a supported ISO (otherwise a note is printed and the next source is used).
+2. The `iso` saved in `settings.json`, if the file still exists and passes the header check.
+3. A scan for `*.iso` files in `~/Games/Sony Playstation 2` (depth 3), `~/Games` (depth 1) and
+   `~/Downloads` (depth 1), plus any colon-separated directories in `GOW_ISO_DIRS` (depth 3).
+   Only files that pass the check count. Hidden entries and symlinked directories are skipped,
+   and the scan stops after 2000 directory entries.
+
+One match is used without asking. Several matches: the window prefills the first one; in a
+terminal a numbered list is shown (Enter takes 1, or type a path); without a terminal `--last`
+fails and asks for `--iso`. No match: the normal flow (window, then picker or prompt).
+
+Each ISO that is successfully validated and prepared is saved as `iso` in `settings.json`,
+whichever way it was chosen (window, `--iso`, terminal, `GOW_ISO`). Only that key is written:
+the other saved settings and unknown keys are kept, and one-run flags such as `--mute` are never
+saved. A later start with no `--iso` therefore loads the game without asking.
+
+The header check reads only the ISO sectors that describe the root directory and
+`SYSTEM.CNF`; it does not extract or hash files.
 
 ## Window
 
 | Control | Effect |
 |---|---|
-| ISO + Browse | Validated on Play with the normal ELF SHA-256 check; the error text is shown in red. The last ISO is remembered. |
+| ISO + Browse | Prefilled with the resolved ISO (see above). Validated on Play with the normal ELF SHA-256 check; the error text is shown in red. |
 | Fullscreen | Exports `GOW_FULLSCREEN=1`. **Pending runtime support**: the runtime does not read it yet. |
 | Show FPS | Stored only (applies with the Vulkan backend). The window title already shows FPS. |
 | Internal resolution 1x/2x/3x | Stored only (applies with the Vulkan backend). |
@@ -36,9 +59,10 @@ The `mute_audio` key defaults to `false` when missing, so settings files written
 added still load.
 
 Settings are saved on Play in `${XDG_CONFIG_HOME:-~/.config}/gow-one-recomp/settings.json`.
-Invalid or unknown values are ignored on load. The `--iso` CLI path does not write the file.
-Only the window (Play) writes it; the Tk window itself has no automated test (the settings,
-env mapping and `--last` flow are tested without a display).
+Invalid or unknown values are ignored on load. The ISO path is also written after any
+successful preparation (see "ISO resolution"), without changing the other keys. The Tk window
+itself has no automated test; the settings, env mapping, ISO resolution and `--last` flow are
+tested without a display.
 
 ## Flatpak feasibility (read-only analysis)
 

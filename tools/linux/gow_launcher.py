@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections import deque
 from dataclasses import dataclass
 
 
@@ -328,12 +329,32 @@ def load_settings(path: Path | None = None) -> dict:
     return result
 
 
-def save_settings(settings: dict, path: Path | None = None) -> None:
-    path = path or settings_path()
+def _write_settings_file(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(settings, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
+
+
+def save_settings(settings: dict, path: Path | None = None) -> None:
+    _write_settings_file(settings, path or settings_path())
+
+
+def remember_iso(iso: Path, path: Path | None = None) -> None:
+    """Save only the ISO path. Every other key in the file is kept, including keys this version
+    does not know. One-run flags such as --mute never reach this function."""
+    path = path or settings_path()
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    if not isinstance(saved, dict):
+        saved = {}
+    saved["iso"] = str(iso)
+    try:
+        _write_settings_file(saved, path)
+    except OSError as exc:
+        print(f"Warning: could not save the ISO path: {exc}", file=sys.stderr)
 
 
 def settings_to_env(settings: dict) -> dict[str, str]:
@@ -386,6 +407,100 @@ def validate_iso(path: str) -> str:
         return ""
     except (IsoError, OSError) as exc:
         return str(exc)
+
+
+MAX_SCAN_ENTRIES = 2000  # directory entries visited per launch, so a huge folder cannot stall startup
+DEFAULT_SCAN_DIRS = (("~/Games/Sony Playstation 2", 3), ("~/Games", 1), ("~/Downloads", 1))  # (dir, depth)
+
+
+def _probe_iso(path: Path) -> bool:
+    """Header, SYSTEM.CNF and ELF presence only: no extraction, no hashing, no bulk reads."""
+    try:
+        with IsoImage(path) as iso:
+            _selected_files(iso)
+        return True
+    except (IsoError, OSError):
+        return False
+
+
+def _usable(path: Path) -> bool:
+    try:
+        return path.is_file() and _probe_iso(path)
+    except OSError:
+        return False
+
+
+def scan_dirs() -> list[tuple[Path, int]]:
+    dirs = [(Path(p).expanduser(), depth) for p, depth in DEFAULT_SCAN_DIRS]
+    dirs += [(Path(p).expanduser(), 3) for p in os.environ.get("GOW_ISO_DIRS", "").split(":") if p.strip()]
+    return dirs
+
+
+def scan_isos(dirs: list[tuple[Path, int]]) -> list[Path]:
+    """Breadth-first search for valid ISOs. Hidden entries and symlinked directories are skipped,
+    and the walk stops after MAX_SCAN_ENTRIES entries. Results keep discovery order."""
+    queue = deque(dirs)
+    seen: set[Path] = set()
+    found: list[Path] = []
+    visited = 0
+    while queue and visited < MAX_SCAN_ENTRIES:
+        folder, depth = queue.popleft()
+        try:
+            with os.scandir(folder) as it:
+                entries = sorted(it, key=lambda e: e.name)
+        except OSError:
+            continue
+        for entry in entries:
+            visited += 1
+            if visited > MAX_SCAN_ENTRIES:
+                break
+            if entry.name.startswith("."):
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if depth > 1:
+                        queue.append((Path(entry.path), depth - 1))
+                elif entry.name.lower().endswith(".iso") and entry.is_file():
+                    path = Path(entry.path).resolve()
+                    if path not in seen:
+                        seen.add(path)
+                        if _probe_iso(path):
+                            found.append(path)
+            except OSError:
+                continue
+    return found
+
+
+def resolve_iso(settings: dict) -> tuple[Path | None, list[Path]]:
+    """ISO to use without --iso: GOW_ISO, then the saved one, then the scan.
+    Returns (path, []) when one is known, (None, matches) when several are valid, (None, []) if none."""
+    env = os.environ.get("GOW_ISO", "").strip()
+    if env:
+        if _usable(Path(env).expanduser()):
+            return Path(env).expanduser(), []
+        print(f"GOW_ISO ignored: {env} is not a supported ISO", file=sys.stderr)
+    saved = settings.get("iso")
+    if saved and _usable(Path(saved).expanduser()):
+        return Path(saved).expanduser(), []
+    matches = scan_isos(scan_dirs())
+    if len(matches) == 1:
+        return matches[0], []
+    return None, matches
+
+
+def _pick_candidate(candidates: list[Path]) -> Path:
+    """Several valid ISOs were found: numbered list on a terminal (Enter takes the first)."""
+    if not sys.stdin.isatty():
+        raise IsoError("several supported ISOs found; choose one with --iso: "
+                       + ", ".join(str(p) for p in candidates))
+    for number, path in enumerate(candidates, 1):
+        print(f"  {number}. {path}")
+    answer = input(f"ISO [1-{len(candidates)}, Enter = 1, or a path]: ").strip()
+    if not answer:
+        return candidates[0]
+    if answer.isdigit() and 1 <= int(answer) <= len(candidates):
+        return candidates[int(answer) - 1]
+    return Path(answer)
 
 
 def settings_window(settings: dict) -> dict | None:
@@ -472,30 +587,40 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--runner", type=Path, help="prebuilt native ps2EntryRunner")
     parser.add_argument("--prepare-only", action="store_true", help="validate and prepare the cache without launching")
     parser.add_argument("--no-gui", "--last", dest="no_gui", action="store_true",
-                        help="skip the settings window and use the saved settings")
+                        help="skip the settings window and launch with the resolved ISO and saved settings")
     parser.add_argument("--mute", action="store_true",
                         help="mute audio for this run only (not saved; sets GOW_AUDIO=0)")
     args = parser.parse_args(argv)
     try:
         settings = load_settings()
-        gui = not (args.no_gui or args.iso or args.prepare_only) and bool(
-            os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        iso_path: Path | None = args.iso
+        candidates: list[Path] = []
+        if iso_path is None:
+            iso_path, candidates = resolve_iso(settings)
+        display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+        # --last skips the window, unless nothing resolved: then the normal flow asks for an ISO.
+        gui = (display and args.iso is None and not args.prepare_only
+               and (not args.no_gui or (iso_path is None and not candidates)))
         if gui:
+            first = iso_path or (candidates[0] if candidates else None)
+            prefill = dict(settings, iso=str(first)) if first else settings
             try:
-                chosen = settings_window(settings)
+                chosen = settings_window(prefill)
             except Exception:  # python3-tk missing or no usable display: terminal flow.
-                chosen = settings
-                gui = False
+                pass
             else:
                 if chosen is None:
                     return 1
                 settings = chosen
                 save_settings(settings)
+                iso_path = Path(settings["iso"])
         if args.mute:  # one-run override, applied after saving so the file keeps the window value.
             settings = dict(settings, mute_audio=True)
-        iso_path = args.iso or (Path(settings["iso"]) if settings["iso"] else None) or _choose_iso()
+        if iso_path is None:
+            iso_path = _pick_candidate(candidates) if candidates else _choose_iso()
         runner = None if args.prepare_only else _runner_path(args.runner)
         elf = prepare(iso_path)
+        remember_iso(iso_path.expanduser().resolve())
         if args.prepare_only:
             print(f"Prepared: {elf}")
             return 0
