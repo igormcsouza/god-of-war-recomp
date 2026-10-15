@@ -6808,3 +6808,142 @@ steps), the game starts and renders on NVIDIA and Intel (`GOW_SCREENSHOT_AT=30` 
 `ps2x_tests` reports 631 passed, 0 failed. A from-scratch rebuild in the separate clone was not done. A full
 `compilar_linux.py` run was not repeated (it regenerates the runner); only the cmake/ninja steps it performs.
 
+
+## Whole-frame profile on NVIDIA RTX 5050 (Linux, 2026-10-14)
+
+Question: with the RTX 5050 (now the default device; log line `Vulkan device: NVIDIA GeForce RTX 5050 Laptop GPU (index 1,
+discrete)`, so no `PS2X_VK_DEVICE` was needed) the intro/title runs at ~17 FPS and the GPU is mostly idle. What limits it?
+Config: defaults (Vulkan GS, GS thread, compiled VU1, `PS2X_VU1_HILO=1`, `PS2X_GS_FRENTE=1`, `GOW_GS_FINISH_ASINCRONO=1`),
+`PS2X_GS_VULKAN_STATS=1 GOW_DELTA_DIAG=1 GOW_PERF_FRAME_PC=0x001837B8`, launcher `--no-gui`. Counters are averages of the
+per-second stats lines of the steady intro/title scene (25 s, no debugger); per-thread CPU is `/proc/PID/task/*/stat`
+over 30 s (t = 50-80 s); stacks are 100 gdb samples of every thread (`thread apply all bt`, SIGUSR2 every 0.4 s, run
+started under gdb, window t = 24-65 s so it stays inside the same 250k-prims/s scene; a first gdb run that drifted into
+the next scene was discarded). gdb stops slow the process down, so use the samples for *where* threads are, and the
+non-gdb counters for *how much*. Not used: `GOW_SCREENSHOT_AT` (it can close the window; not needed here).
+
+**Result in one line: the GS worker thread is the limiter. It is CPU-saturated by software fallbacks plus fence waits;
+the GIF thread blocks on its full queue while holding `GS::m_stateMutex`, and the EE then blocks on that mutex.**
+
+**Throughput.** 17.2 FPS (`vid::Flip`/s), guest speed 0.77 game-s/wall-s (0.66-0.93; last delta 0.05-0.067 s, i.e. ~15-20
+Hz game ticks). So guest speed is no longer "far below 1" (it was 0.07-0.4 before the threading defaults and the discrete
+GPU), but the frame rate is still 3.5x under 60. GPU: ~250k prims/s, ~1,950 dispatches/s, avg 0.116 ms, **gpu_busy
+~230 ms/s** (the "~100 ms/s" in `docs/VULKAN.md` came from a lighter window; either way the GPU is 10-23% busy).
+
+**Per-thread CPU (30 s, % of one core).**
+
+| Thread | CPU | State in gdb samples |
+|---|---|---|
+| GS worker (`GSThread`, `GSThreadedBackend::WorkerLoop`) | **63.9%** | never idle in the clean window: ~55% of samples in CPU fallbacks, ~24% in fence waits, ~5% record/submit, ~5% CPU compositor |
+| EE (`EeScheduler::run`) | 32.7% | **81/100 samples blocked** in `lll_mutex_lock` <- `GS::notifyExternalVSync` <- `EeScheduler::processEvent` |
+| VU1 worker (`vu1WorkerLoop`) | 24.9% | 65% waiting on its condvar, 35% in compiled `vu1c_gen::*` |
+| GIF front (`gsFrontLoop`) | 3.3% | 78/100 samples in `GSThreadedBackend::PublishLocked` <- `Enqueue` <- `GS::vertexKick` (queue full) |
+| Render/main thread | 2.1% | blocked in `GSThreadedBackend::Drain` (`Sync`/`Flush`/`Present` from `latchHostPresentationFrame`), ~85% of samples |
+| 3 raster-pool workers | 1.6% each | idle (the sprite fallbacks do not use them) |
+| IOP/CD/disk, audio, Vulkan driver helper threads | <0.5% | idle / `ppoll` |
+
+**What exactly each thing waits on.**
+- GS worker: does `GSCpuBackend::DrawSprite` -> `SampleTexture`/`ReadTexture`/`WritePixel` on its own thread, and
+  `vkWaitForFences` in `GSVulkanBackend::Finish` (`LoadClut` ~15 samples, `Present` 5, `BeginTransfer` 2).
+- GIF thread: waits in `PublishLocked` on `m_doneCv` for `m_pending.size() < m_queueChunkLimit` (the GS worker is behind),
+  **inside `GS::processGIFPacket`/`vertexKick`, which hold `m_stateMutex`**.
+- EE: needs `m_stateMutex` for `notifyExternalVSync` (taken at every guest vblank, `GS::notifyExternalVSync` locks the
+  recursive mutex for a trivial observer call). Joint state per sample: EE blocked + GIF queue-full + GS busy in ~75%
+  of samples; in only 4% is the GS worker idle. (An earlier, contaminated run in a different scene showed the opposite
+  phase: 38% of samples EE running with everything else idle; the EE-bound phase exists but the steady intro is GS-bound.)
+- Render thread: waits for the GS queue to drain on every new vblank tick (`Drain`); it does not hold `m_stateMutex`, and
+  it is not on the EE critical path.
+
+**Costs, per second of wall time (no debugger).**
+
+| Cost | Amount | Notes |
+|---|---|---|
+| CPU fallbacks (GS thread) | **~611-629 ms/s** | `tex-feedback` ~1,020-1,080 prims/s, `z-alias` ~255-270 prims/s, `line/point` ~16/s; ~1,300 prims/s, ~0.47 ms each (large sprites) |
+| Fence waits, total (`finish_ms`) | **~267-281 ms/s** | `LoadClut` 385-398 ends/s = 160-184 ms; `BeginTransfer` 92-96/s = 22-25 ms; `Present` 15/s = 24 ms; `Sync` 29/s = 18-20 ms; `Flush` 10/s = 14-17 ms; `tex-feedback` ends 144-151/s = 17 ms |
+| `record_ms` (Vulkan record/submit) | 3-6 ms/s | negligible |
+| GPU busy | ~230 ms/s | overlapped with the CPU; only matters through the fences |
+| VU1 worker | ~250 ms/s CPU | on its own thread, not limiting now |
+| EE | ~327 ms/s CPU (+ blocked) | within the running part: guest code, IOP/SPU2 emulation (`runCycles`, `Spu2::*`), `advanceEeTimers`, `syncVu1Worker` |
+| GIF thread / render thread | ~33 / ~21 ms/s | negligible |
+| CPU compositor (`PresentFromLocalMemory`, on the GS worker) | ~30-60 ms/s | 3-6% of GS samples |
+
+GS worker budget: 611-629 (fallbacks) + 267-281 (fences) + record/composite ~50 = ~930-960 ms/s: saturated, which
+matches 63.9% CPU plus the blocked fence time.
+
+**Frame pacing / present.** Nothing caps at 17. `SetTargetFPS(60)` (`ps2_runtime.cpp:815`) is the only pacing call; there
+is no `FLAG_VSYNC` and no swap-interval setting, so presenting could allow 60. The guest vblank is cycle-driven by
+`EeScheduler`. The render thread is mostly blocked in the GS drain, not in `EndDrawing`. FPS is limited upstream.
+
+**Amdahl-style estimates** (current 17.2 FPS; the GS worker is the serial bottleneck at ~930 ms/s; the next stage is the
+EE/VU1 pair at 327 + 249 ms/s of CPU, serial 576 ms/s if EE and VU1 never overlap, 327 ms/s if they do; these are
+upper bounds from throughput, not measurements):
+
+| If removed | New GS load | Achievable FPS |
+|---|---|---|
+| CPU fallbacks (-620 ms/s) | ~310 ms/s | **~30 (EE+VU1 serial) to ~45-50 (overlapped)** |
+| Fallbacks cut 4x by spreading rows over the idle raster workers | ~480 ms/s | ~30 |
+| All fence waits (-270 ms/s) | ~660 ms/s | ~26 |
+| `LoadClut` fences only (-170 ms/s) | ~760 ms/s | ~22 |
+| `BeginTransfer`+`Present`+`Sync`+`Flush`+feedback ends (-95 ms/s) | ~835 ms/s | ~19 |
+| Fallbacks and fences both | ~50 ms/s | EE/VU1-bound: ~30-50 |
+| EE<->GIF mutex coupling fixed alone | unchanged | ~17-19 (GS is still saturated; the EE just stalls later) |
+| VU1 worker / GIF / render thread / present path | unchanged | no change now |
+
+**Top 3 optimizations.**
+1. **Draw the fallbacks off the critical path** (-620 ms/s on the GS worker, ~17 -> ~30+ FPS). Cheapest first step, low-medium:
+   `DrawSprite` for `tex-feedback`/`z-alias` sprites is single-threaded while three raster workers sit idle; split the
+   sprite by rows across the pool (the output is independent per row when there is no feedback overlap). Proper fix,
+   medium-high: copy the source rectangle to a scratch buffer and draw on the GPU (`tex-feedback`), and give `z-alias`
+   the CPU row order inside the dispatch.
+2. **Remove the `LoadClut` (and `BeginTransfer`) fence waits** (-170 to -200 ms/s, ~+25%). Medium: per-primitive CLUT
+   version/snapshot ring so `LoadClut` does not end the run; transfers proceed when their pages do not overlap pending GPU
+   pages. 385-398 run ends/s are the dominant fence cost.
+3. **Decouple the EE from the GIF thread's lock** (low-medium). Make `notifyExternalVSync` not take `m_stateMutex` (its own
+   small mutex or a queued event), and do not hold `m_stateMutex` across the `PublishLocked` wait (publish after
+   releasing, or reserve space first). On its own it gains little because the GS worker stays saturated, but once 1 and 2
+   are done the EE/VU1 pair (EE 327 ms/s incl. IOP/SPU2 emulation, VU1 250 ms/s) becomes the ceiling (~30-50 FPS) and
+   this stall (81% of EE samples now) would otherwise cap it.
+
+Raw data kept only in the scratchpad (stats lines, gdb samples); nothing from the game was copied. Processes were killed
+after the runs. No change to `patches/` or `src/`.
+
+## Flat-polygon garbage / "0.0 FPS" after the intro movie (2026-10-14, Linux, NVIDIA RTX 5050) - bisect, root cause open
+
+**Video** (`2026-10-14 22-23-16.mkv`, 1080p60): FMV Kratos-on-cliff plays at 12-16 FPS until 26.0 s; at 26.0-26.5 s
+one frame is a half-height strip image with shifted tiles (title 3.0 FPS), and from 27.5 s the window is a flat salmon
+polygon + dark triangle at 0.0 FPS (later: magenta, blue, green, white, noise).
+
+**Reproduced** with the default config: `GOW_PAD_TEST=1` (Start at 5 s, X at 12/20/28... s) via
+`gow_launcher.py --no-gui`; menu -> difficulty -> intro movie. Timeline of that run (s after launch): flames FMV 31-34,
+Kratos on cliff 34-37, strip frame ~40, flat polygons from 43, then magenta/noise until the end (100 s).
+`[gow-pad2:test] movie=3 -> 10` and the sound stream stop (`cmd=0x3e`) show up just before the strip frame, i.e. the
+transition is the **end of the intro movie (MPEG/IPU path)**, not the title or a scene load.
+
+**What the process is doing:** not hung. EE `GameThread` ~87% CPU, the GS receives thousands of garbage line/point
+prims per frame (`PS2X_GS_VULKAN_STATS=1`: `line/point=6058` per run), no vid flips. gdb (run under gdb, interrupt at
+~105 s): the EE stack is in `sub_00188B80` (movie player) -> `sub_0026D330`/`sub_0026CDB8`; VU1 worker and GS front
+thread idle on their condvars (no lost wake-up, no mutex deadlock). No jump to a bad address was logged.
+
+| Variant (env only, Vulkan unless noted) | Garbage after the movie? |
+|---|---|
+| defaults (VU1 HILO, front thread, async FINISH, GS thread, import, compiled VU1) | yes |
+| `PS2X_GS_BACKEND=cpu` | yes (74 s) |
+| `PS2X_VU1_HILO=0` | yes |
+| `PS2X_GS_FRENTE=0` | yes |
+| `GOW_GS_FINISH_ASINCRONO=0` | yes |
+| `PS2X_GS_THREAD=0` | yes |
+| `PS2X_VK_NO_IMPORT=1` | yes |
+| `GOW_VU1_SIN_COMPILAR=1` (interpreter) | yes |
+| all of the above off at once, Vulkan | **no garbage, but the movie is slow and had not ended by 110 s (inconclusive)** |
+| `GOW_SKIP_FMV=1` | **no**: cliff scene is then in-engine, ship level and HUD reached, 26/26 screenshots fine |
+
+Conclusion: not caused by the Vulkan backend, zero-copy import, compiled VU1 or any of the Linux threading defaults
+(each one off alone does not fix it, and the CPU backend shows it too). It is tied to the movie-end path: the movie
+decode/presentation (`PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp`, `patches/ps2recomp-mpeg-*.patch`) works for the
+start of the clip but breaks near its end; earlier runs only validated the first seconds of the intro movie, and all
+long runs used `GOW_SKIP_FMV=1`. No `[MPEG:CdStreamEof]` or decoder errors are logged. I did not change `patches/`.
+The "all off" row cannot separate a thread race from frame-rate dependence (the movie plays slower there).
+
+Next: (1) rerun "all off" for 200+ s to see whether the movie ends cleanly at low speed (if yes: a race/underrun that
+depends on EE speed vs the IOP CD stream); (2) log `[MPEG]` state (`ended`, `producerEof`, decoded frame count) at the
+transition and compare with the CPU backend; (3) check what the game does with the last decoded picture (strip frame =
+partially copied picture; flat polygons = sprites sampling garbage), via `GOW_RENDER_DIAG`.
