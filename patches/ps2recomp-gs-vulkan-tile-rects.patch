@@ -1,0 +1,178 @@
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -230,16 +230,16 @@
+             s.getHostPointerProps = reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
+                 vkGetDeviceProcAddr(s.device, "vkGetMemoryHostPointerPropertiesEXT"));
+ 
+-        VkDescriptorSetLayoutBinding bindings[4]{};
+-        for (uint32_t i = 0; i < 4; ++i)
++        VkDescriptorSetLayoutBinding bindings[5]{};
++        for (uint32_t i = 0; i < 5; ++i)
+         {
+-            bindings[i].binding = i; // 0 = VRAM, 1 = swizzle tables, 2 = CLUT (kCommon), 3 = primitive records
++            bindings[i].binding = i; // 0 = VRAM, 1 = swizzle tables, 2 = CLUT (kCommon), 3 = primitive records, 4 = packed rects
+             bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+             bindings[i].descriptorCount = 1;
+             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+         }
+         VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+-        setInfo.bindingCount = 4;
++        setInfo.bindingCount = 5;
+         setInfo.pBindings = bindings;
+         VkPushConstantRange range{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(Push)};
+         VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+@@ -694,6 +694,11 @@
+     VkBuffer prims = VK_NULL_HANDLE;
+     VkDeviceMemory primsMemory = VK_NULL_HANDLE;
+     PrimRecord *primsMapped = nullptr;
++    // GOW-Port: dense copy of every record's rectangle (x0 | y0 << 16, x1 | y1 << 16): the kernel's tile scan reads these
++    // coalesced instead of one strided PrimRecord per primitive.
++    VkBuffer rects = VK_NULL_HANDLE;
++    VkDeviceMemory rectsMemory = VK_NULL_HANDLE;
++    uint32_t *rectsMapped = nullptr;
+     VkBuffer clut = VK_NULL_HANDLE;
+     VkDeviceMemory clutMemory = VK_NULL_HANDLE;
+     void *clutMapped = nullptr;
+@@ -825,13 +830,15 @@
+ 
+     bool create()
+     {
+-        void *primsVoid = nullptr;
++        void *primsVoid = nullptr, *rectsVoid = nullptr;
+         if (!makeHostBuffer(s, GSSwizzle::kMemorySize, vram, vramMemory, &mapped) ||
+             !makeHostBuffer(s, kMaxPrims * sizeof(PrimRecord), prims, primsMemory, &primsVoid) ||
++            !makeHostBuffer(s, kMaxPrims * 2u * sizeof(uint32_t), rects, rectsMemory, &rectsVoid) ||
+             !makeHostBuffer(s, kClutVersions * 512u * sizeof(uint16_t), clut, clutMemory, &clutMapped))
+             return false;
+         primsMapped = static_cast<PrimRecord *>(primsVoid);
+-        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4};
++        rectsMapped = static_cast<uint32_t *>(rectsVoid);
++        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5};
+         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+         poolInfo.maxSets = 1;
+         poolInfo.poolSizeCount = 1;
+@@ -844,10 +851,10 @@
+         setInfo.pSetLayouts = &s.setLayout;
+         if (vkAllocateDescriptorSets(s.device, &setInfo, &set) != VK_SUCCESS)
+             return false;
+-        VkDescriptorBufferInfo buffers[4] = {{vram, 0, VK_WHOLE_SIZE}, {s.swizzle, 0, VK_WHOLE_SIZE},
+-                                             {clut, 0, VK_WHOLE_SIZE}, {prims, 0, VK_WHOLE_SIZE}};
+-        VkWriteDescriptorSet writes[4]{};
+-        for (uint32_t i = 0; i < 4; ++i)
++        VkDescriptorBufferInfo buffers[5] = {{vram, 0, VK_WHOLE_SIZE}, {s.swizzle, 0, VK_WHOLE_SIZE},
++                                             {clut, 0, VK_WHOLE_SIZE}, {prims, 0, VK_WHOLE_SIZE}, {rects, 0, VK_WHOLE_SIZE}};
++        VkWriteDescriptorSet writes[5]{};
++        for (uint32_t i = 0; i < 5; ++i)
+         {
+             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+             writes[i].dstSet = set;
+@@ -856,7 +863,7 @@
+             writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+             writes[i].pBufferInfo = &buffers[i];
+         }
+-        vkUpdateDescriptorSets(s.device, 4, writes, 0, nullptr);
++        vkUpdateDescriptorSets(s.device, 5, writes, 0, nullptr);
+ 
+         VkCommandPoolCreateInfo poolCreate{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+         poolCreate.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+@@ -990,10 +997,10 @@
+             vkDestroyBuffer(s.device, vram, nullptr);
+         if (vramMemory)
+             vkFreeMemory(s.device, vramMemory, nullptr);
+-        for (VkBuffer buffer : {prims, clut})
++        for (VkBuffer buffer : {prims, clut, rects})
+             if (buffer)
+                 vkDestroyBuffer(s.device, buffer, nullptr);
+-        for (VkDeviceMemory memory : {primsMemory, clutMemory})
++        for (VkDeviceMemory memory : {primsMemory, clutMemory, rectsMemory})
+             if (memory)
+                 vkFreeMemory(s.device, memory, nullptr);
+     }
+@@ -1502,6 +1509,8 @@
+     impl.batchReads |= reads;
+     impl.batchFrames |= frames;
+     impl.batchDepths |= depths;
++    impl.rectsMapped[impl.primCount * 2u] = static_cast<uint32_t>(rec.rect[0]) | (static_cast<uint32_t>(rec.rect[1]) << 16u);
++    impl.rectsMapped[impl.primCount * 2u + 1u] = static_cast<uint32_t>(rec.rect[2]) | (static_cast<uint32_t>(rec.rect[3]) << 16u);
+     impl.primsMapped[impl.primCount++] = rec;
+     ++impl.batchCount;
+     ++m_gpuPrimitives;
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+@@ -57,6 +57,8 @@
+     int zd[2];       // triangles: integer Z(v1) - Z(v0), Z(v2) - Z(v0), |d| < 2^28
+ };
+ layout(std430, binding = 3) readonly buffer PrimBuffer { Prim prims[]; };
++// GOW-Port: dense rectangles of the same records (x0 | y0 << 16, x1 | y1 << 16), read by the tile scan.
++layout(std430, binding = 4) readonly buffer RectBuffer { uvec2 rects[]; };
+ // A dispatch covers the union rectangle (origin) of a batch of primitives [first, first + count) that may
+ // run in any workgroup order against each other; each pixel is owned by one thread, which applies the
+ // batch's primitives in order.
+@@ -597,6 +599,12 @@
+     return zlo >= 0l && zhi <= 0xFFFFFFFFl;
+ }
+ 
++bool tileHit(uint idx, ivec2 tile0)
++{
++    uvec2 r = rects[idx];
++    return int(r.x & 0xFFFFu) <= tile0.x + 7 && int(r.y & 0xFFFFu) >= tile0.x && int(r.x >> 16u) <= tile0.y + 7 && int(r.y >> 16u) >= tile0.y;
++}
++
+ void main()
+ {
+     ivec2 xy = ivec2(pc.originX, pc.originY) + ivec2(gl_GlobalInvocationID.xy);
+@@ -621,7 +629,7 @@
+     for (uint k = gl_LocalInvocationIndex; k < pc.count; k += 64u)
+     {
+         curPrim = pc.first + k;
+-        if (!(P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y) || deadPrim())
++        if (!tileHit(curPrim, tile0) || deadPrim())
+             continue;
+         uint ztst = (P.zbuf >> 24u) & 3u;
+         int64_t zlo, zhi;
+@@ -643,7 +651,7 @@
+     for (uint k = gl_LocalInvocationIndex; k < pc.count; k += 64u)
+     {
+         curPrim = pc.first + k;
+-        if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y && !deadPrim())
++        if (tileHit(curPrim, tile0) && !deadPrim())
+         {
+             bool outside = false;
+             if ((P.mode & M_TRIANGLE) != 0u)
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -411,6 +411,23 @@
+         return out;
+     }
+ 
++    // Primitives at the far edge of a 2048-wide frame: the kernel's packed rectangles hold 16-bit coordinates.
++    std::vector<GSPrimitiveBatch> wideScene()
++    {
++        std::vector<GSPrimitiveBatch> out;
++        auto s = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);
++        s.state.context.frame = {100, 32, GS_PSM_CT32, 0};
++        s.state.context.scissor = {0, 2047, 0, 447};
++        vertex(s, 0, 2000.0f, 10.0f, 0); vertex(s, 1, 2047.0f, 40.0f, 0x80A05030u);
++        out.push_back(s);
++        auto t = prim(GS_PRIM_TRIANGLE, GS_PSM_CT32, true);
++        t.state.context.frame = {100, 32, GS_PSM_CT32, 0};
++        t.state.context.scissor = {0, 2047, 0, 447};
++        vertex(t, 0, 1990.0f, 100.0f, 0xFF2040C0u); vertex(t, 1, 2047.0f, 120.0f, 0x80C04020u); vertex(t, 2, 2010.0f, 440.0f, 0x40FF8040u);
++        out.push_back(t);
++        return out;
++    }
++
+     template <typename Backend>
+     std::vector<uint8_t> render(Backend &backend)
+     {
+@@ -629,6 +646,7 @@
+                 {"Z tested only, same pages read as texture", zTextureScene(false), 1},
+                 {"Z written, same pages read as texture", zTextureScene(true), 2},
+                 {"twelve distant sprites", cornerScene(), 1},
++                {"primitives at x = 2047", wideScene(), 1},
+             };
+             for (const Case &c : cases)
+             {

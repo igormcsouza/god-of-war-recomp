@@ -143,6 +143,7 @@ $vu1ReplayPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-replay.patch'
 $vu1StaticBlockPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-static-block.patch'
 $gsVulkanZReadPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-zread.patch'
 $gsVulkanBatchSpanPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-batch-span.patch'
+$gsVulkanTileRectsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-tile-rects.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -310,6 +311,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ReplayPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StaticBlockPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanZReadPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanBatchSpanPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanTileRectsPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
