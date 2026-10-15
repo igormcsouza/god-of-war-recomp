@@ -6,7 +6,7 @@
 
 **A native PC port of *God of War* (PS2, NTSC-U `SCUS-97399`) built by statically recompiling MIPS R5900 code to C++.**
 
-![Platform](https://img.shields.io/badge/platform-Windows%20x64-0078D6?logo=windows&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x64-0078D6?logo=linux&logoColor=white)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-8A2BE2)
@@ -23,8 +23,11 @@
 
 ## Contents
 
+- [Purpose and goals](#purpose-and-goals)
+- [Status map](#status-map)
 - [What is this?](#what-is-this)
 - [Current status](#current-status)
+- [Linux (native port)](#linux-native-port)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
@@ -32,11 +35,34 @@
 - [Documentation](#documentation)
 - [Credits and license](#credits-and-license)
 
+## Purpose and goals
+
+A **playable, native Linux port of *God of War* (2005)** through static recompilation, on top of
+[PS2Recomp](https://github.com/ran-j/PS2Recomp). Milestones, in order:
+
+1. **A steady 60 FPS** in gameplay.
+2. **1080p** rendering with upscaling.
+
+Honest state today: the game boots from your own ISO, plays through the intro and into gameplay, and saves work,
+but gameplay runs at only **~20-30 FPS** (RTX 5050), well short of 60. Known issues: some visual glitches on
+orbs and particles, a hang after the intro cutscene, and the in-game movies still need a skip workaround
+(**Skip movies** in the launcher / `GOW_SKIP_FMV=1`; the intro now plays, other movies and their audio are unverified).
+
+This repository is a fork of [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp). The Linux
+work lives on the `linux-native-port` branch; fixes that are useful to everyone (for example the MPEG stream-callback
+fix, upstream PR #92) are sent upstream as small, separate PRs.
+
+## Status map
+
+<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
+
+Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
+
 ## What is this?
 
 Instead of emulating the PlayStation 2 one instruction at a time, this project **translates the game's
 original executable (`SCUS_973.99`) into C++** with [PS2Recomp](https://github.com/ran-j/PS2Recomp) and
-compiles it as a native Windows program, linked against a runtime that reimplements the PS2 hardware and
+compiles it as a native program (Linux or Windows), linked against a runtime that reimplements the PS2 hardware and
 operating system (EE kernel, GS, DMA, CD/DVD…). The I/O processor (IOP) runs the game's **original IRX
 modules** (sound driver, data streamer…) on PS2Recomp's R3000A interpreter.
 
@@ -53,11 +79,8 @@ This repository holds everything that is specific to God of War:
 
 ## Current status
 
-<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
+Linux status and instructions: [Linux (native port)](#linux-native-port).
 
-Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
-
-Linux (partial): the launcher and ISO extraction work; the build is partial, the Vulkan backend and controllers are pending. See [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) and [`docs/ESTADO.md`](docs/ESTADO.md).
 
 Native Windows build (OpenGL renderer) on a Ryzen 7 5800XT with an RX 5700 XT:
 
@@ -95,6 +118,53 @@ need further checks. See [performance](docs/RENDIMIENTO.md), [rendering](docs/CO
 [FMV and audio](docs/FMV_Y_AUDIO.md), [memory card](docs/MEMORY_CARD.md) and
 [`docs/ESTADO.md`](docs/ESTADO.md) for the checks and their limits.
 
+## Linux (native port)
+
+The Linux port is native: no Wine. Windows is kept compatible on a best-effort basis.
+
+- **Vulkan is required.** The GS (graphics) is rasterized by a Vulkan compute backend whose output is byte-identical
+  to the CPU reference renderer ([`docs/VULKAN.md`](docs/VULKAN.md)); it is the default on Linux, with the CPU
+  renderer as fallback.
+- **Compiled VU1 microcode.** VU1 programs are compiled to C++ at build time from a **local capture** of the game's own
+  microcode (never committed); without it the slower interpreter is used.
+- **Launcher** (`tools/linux/gow_launcher.py`): finds your ISO (`GOW_ISO`, remembered, or a scan of `~/Games`,
+  `~/Downloads`), validates it, **extracts the ELF and IRX modules automatically** to `~/.cache/gow-one-recomp/`, and
+  opens a settings window (fullscreen, scaling filter, GPU, controller, mute, **Skip movies**…). Details:
+  [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md).
+- **Controllers** are autodetected (hotplug supported); the launcher can pick a specific one.
+
+**Requirements:** x86-64 Linux, a Vulkan-capable GPU and driver, Python 3 (`python3-tk` for the window), Git, CMake,
+Ninja, a C++20 compiler, the PS2Recomp development libraries (X11, OpenGL, FFmpeg), `glslangValidator` and Vulkan
+headers, and your own **NTSC-U `SCUS-97399`** ISO.
+
+**Build and run** (details in [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md)):
+
+```sh
+# 1. extract the ELF from your ISO (also validates it), then build the runner
+python3 tools/linux/gow_launcher.py --iso "/path/God of War.iso" --prepare-only
+GOW_ELF=/path/to/SCUS_973.99 python3 scripts/compilar_linux.py
+
+# 2. optional but recommended: compile VU1 microcode (capture once while playing, then rebuild)
+GOW_VU1_CAPTURA=~/vu1_micro <run the game for a few minutes>
+GOW_VU1_MICROCODIGO=~/vu1_micro python3 scripts/compilar_linux.py
+
+# 3. play
+python3 tools/linux/gow_launcher.py --runner /path/to/ps2EntryRunner   # window; --last skips it
+```
+
+**Useful environment variables** (most are launcher options):
+
+| Variable | Effect |
+|---|---|
+| `GOW_ISO`, `GOW_ISO_DIRS` | ISO path / extra folders to scan |
+| `GOW_SKIP_FMV=1` | Skip the pre-rendered movies |
+| `GOW_AUDIO=0` | Mute (SPU2 is still emulated) |
+| `GOW_FULLSCREEN=1`, `GOW_SCALE_FILTER=nearest\|sharp-bilinear`, `GOW_WINDOW_SCALE=<n>` | Display options (F11 toggles fullscreen) |
+| `PS2X_VK_DEVICE=<index or name>` | Pick the Vulkan GPU (default: discrete first) |
+| `GOW_PAD_INDEX=<n>` | Pick a controller (default: auto) |
+| `PS2X_GS_BACKEND=cpu` | Force the CPU renderer |
+| `GOW_DEBUG_UI=1` | Debug overlay |
+
 ## Repository layout
 
 ```
@@ -126,12 +196,15 @@ need further checks. See [performance](docs/RENDIMIENTO.md), [rendering](docs/CO
 └── tools/
     ├── ci/                       # CI helpers (patch order, config/test checks)
     ├── extraer_capa2.ps1         # Extracts layer 1 of a PS2 DVD-9 ISO
+    ├── linux/gow_launcher.py     # Linux launcher: ISO detection/extraction, settings window
     └── estado/generar.py         # Status map generator
 ```
 
 > Script and folder names are in Spanish, the project's original language.
 
 ## Requirements
+
+This section and the next describe the Windows build; for Linux see [above](#linux-native-port).
 
 - Windows 10/11 x64
 - [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) with the **C++** workload (includes CMake and Ninja)
@@ -211,6 +284,9 @@ The technical documentation is currently written in Spanish:
 - [`docs/CONTROLES.md`](docs/CONTROLES.md) — controls and menu/input tests
 - [`docs/RENDERIZADO.md`](docs/RENDERIZADO.md) — optional CPU/threaded CPU/OpenGL renderers and comparisons
 - [`docs/RENDIMIENTO.md`](docs/RENDIMIENTO.md) — performance measurements, optional threads and VU1 optimizations
+- [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md), [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) — Linux launcher, ISO handling and build (English)
+- [`docs/VULKAN.md`](docs/VULKAN.md) — Vulkan GS backend (English)
+- [`docs/PROGRESS_LOG.md`](docs/PROGRESS_LOG.md), [`docs/NEXT_STEPS_PLAN.md`](docs/NEXT_STEPS_PLAN.md) — Linux progress log and the plan towards 60 FPS (English)
 - [`AGENTS.md`](AGENTS.md) — project conventions for contributors and coding agents
 - [`docs/ESTADO.md`](docs/ESTADO.md) — current status, investigation log, known issues and next steps
 

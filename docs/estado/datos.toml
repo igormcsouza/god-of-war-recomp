@@ -18,7 +18,7 @@ hasta = 0x0029BBA4
 nombre = "libmpeg"
 inicio = 0x0026F228
 estado = "parcial"
-nota = { es = "La intro FMV se decodifica por software y se presenta sin GOW_SKIP_FMV; falta verificar el resto de vídeos", en = "The FMV intro is software-decoded and displayed without GOW_SKIP_FMV; other videos remain unverified", pt = "A intro FMV é decodificada por software e exibida sem GOW_SKIP_FMV; os demais vídeos ainda precisam ser verificados" }
+nota = { es = "La intro FMV se decodifica por software y se reproduce entera (callbacks de flujo MPEG síncronos); falta verificar el resto de vídeos; GOW_SKIP_FMV omite los vídeos", en = "The FMV intro is software-decoded and plays through (synchronous MPEG stream callbacks); other videos remain unverified; GOW_SKIP_FMV skips movies", pt = "A intro FMV é decodificada por software e toca inteira (callbacks de fluxo MPEG síncronos); os demais vídeos ainda precisam ser verificados; GOW_SKIP_FMV pula os vídeos" }
 
 [[librerias.grupo]]
 nombre = "libipu"
@@ -52,7 +52,7 @@ nota = { es = "RPC de dbcman y SIO2 verificados al cargar y guardar en tarjeta; 
 nombre = "libpad2"
 inicio = 0x0027B7E8
 estado = "parcial"
-nota = { es = "HLE del primer puerto (teclado o gamepad); presiones 0/255", en = "HLE for the first port (keyboard or gamepad); pressures 0/255", pt = "HLE da primeira porta (teclado ou gamepad); pressões 0/255" }
+nota = { es = "HLE del primer puerto (teclado o gamepad, mando autodetectado en Linux); presiones 0/255", en = "HLE for the first port (keyboard or gamepad, controller autodetected on Linux); pressures 0/255", pt = "HLE da primeira porta (teclado ou gamepad, controle autodetectado no Linux); pressões 0/255" }
 
 [[librerias.grupo]]
 nombre = "libvib"
@@ -175,14 +175,14 @@ nombre = "GS / VU"
   nombre = { es = "GS: primitivas y framebuffer", en = "GS: primitives and framebuffer", pt = "GS: primitivas e framebuffer" }
   estado = "parcial"
   peso = 3
-  nota = { es = "CPU/OpenGL conservados; barco, Kratos, enemigos y HUD visibles. Orden color/Z y alias por ancho/vuelta validados. Feedback inestable acotado a 33 envíos; snapshot opcional estable en 64 pasadas, aún distinto de CPU. Z de solo lectura retenido; profiler GPU por variante y frontera de consultas verificado; falta cobertura completa", en = "CPU/OpenGL retained; ship, Kratos, enemies and HUD visible. Color/Z ordering and width/wrap aliases validated. Unstable feedback narrowed to 33 submissions; optional snapshot stable over 64 passes, still different from CPU. Read-only depth optimization withheld; per-variant GPU profiling and query boundary verified; coverage remains incomplete", pt = "CPU/OpenGL mantidos; barco, Kratos, inimigos e HUD visíveis. Ordem cor/Z e aliases por largura/volta validados. Feedback instável limitado a 33 envios; snapshot opcional estável em 64 passagens, ainda diferente da CPU. Z de somente leitura retido; profiler GPU por variante e limite de consultas verificado; falta cobertura completa" }
+  nota = { es = "Referencia CPU y backend Vulkan compute (byte a byte idéntico a la CPU, por defecto en Linux) además de OpenGL en Windows; barco, Kratos, enemigos y HUD visibles; algunas primitivas con feedback de textura siguen en CPU; fallos visuales en orbes/partículas; falta cobertura completa", en = "CPU reference and a Vulkan compute backend (byte-identical to the CPU, default on Linux) plus OpenGL on Windows; ship, Kratos, enemies and HUD visible; some texture-feedback primitives still fall back to the CPU; visual glitches on orbs/particles; coverage remains incomplete", pt = "Referência CPU e backend Vulkan compute (idêntico byte a byte à CPU, padrão no Linux) além de OpenGL no Windows; barco, Kratos, inimigos e HUD visíveis; algumas primitivas com feedback de textura ainda usam a CPU; falhas visuais em orbes/partículas; falta cobertura completa" }
 
   [[hardware.grupo.componente]]
   corto = "VIF1/VU1"
   nombre = { es = "VIF1 y VU1", en = "VIF1 and VU1", pt = "VIF1 e VU1" }
   estado = "parcial"
   peso = 3
-  nota = { es = "Bloques compilados, flags persistentes, SSE de cuatro carriles, DIV compilado y flags confirmados al leerlos (intérprete 333 → 293 ms por cuadro); regresión FTZ/DAZ conserva underflow. Modelos y HUD visibles tras MMI/EFU/SPR. En partida cargada VU1 ocupa ~35 % del hilo del juego y la espera a la GPU ~31 %; falta certificar cobertura y rendimiento sostenido", en = "Compiled blocks, persistent flags, four-lane SSE, compiled DIV and flags committed when read (interpreter 333 → 293 ms per frame); FTZ/DAZ regression preserves underflow. Models and HUD visible after MMI/EFU/SPR fixes. In loaded gameplay VU1 takes ~35% of the game thread and waiting on the GPU ~31%; coverage and sustained performance remain unverified", pt = "Blocos compilados, flags persistentes, SSE de quatro vias, DIV compilado e flags confirmados ao serem lidos (interpretador 333 → 293 ms por quadro); regressão FTZ/DAZ preserva underflow. Modelos e HUD visíveis após MMI/EFU/SPR. Em partida carregada a VU1 ocupa ~35 % da thread do jogo e a espera pela GPU ~31 %; falta verificar cobertura e rendimento sustentado" }
+  nota = { es = "Microcódigo VU1 compilado a C++ (bloques con temporización estática, idéntico al intérprete en pruebas de grabación/reproducción); necesita una captura local del microcódigo; en partida el hilo de VU1 sigue siendo uno de los límites de velocidad; falta certificar cobertura", en = "VU1 microcode compiled to C++ (blocks with static timing, bit-identical to the interpreter in record/replay tests); needs a local microcode capture; in gameplay the VU1 thread is still one of the speed limits; coverage remains unverified", pt = "Microcódigo VU1 compilado para C++ (blocos com temporização estática, idêntico ao interpretador em testes de gravação/reprodução); precisa de uma captura local do microcódigo; na partida a thread da VU1 ainda é um dos limites de velocidade; falta verificar a cobertura" }
 
   [[hardware.grupo.componente]]
   corto = "Tex/CLUT"
@@ -219,7 +219,7 @@ nombre = "IOP"
   nombre = { es = "SPU2: salida de audio", en = "SPU2: audio output", pt = "SPU2: saída de áudio" }
   estado = "parcial"
   peso = 3
-  nota = { es = "Bancos cargados y sonido continuo en tiempo emulado verificados; a ~2 fps se oye entrecortado; faltan reverb y ADMA", en = "Bank loading and continuous sound in emulated time verified; at ~2 fps playback stutters; reverb and ADMA are missing", pt = "Carregamento de bancos e som contínuo em tempo emulado verificados; a ~2 fps o áudio tem cortes; faltam reverb e ADMA" }
+  nota = { es = "Bancos cargados y sonido continuo verificados; la música en streaming ya no se reinicia cada 0,36 s (latencia de lectura del CD y salto de bucle del SPU2 corregidos; comprobado por registro, no de oído); faltan reverb y ADMA", en = "Bank loading and continuous sound verified; streamed music no longer restarts every 0.36 s (CD read latency and SPU2 loop-jump fixes; verified from logs, not by ear); reverb and ADMA are missing", pt = "Carregamento de bancos e som contínuo verificados; a música em streaming não reinicia mais a cada 0,36 s (latência de leitura do CD e salto de loop do SPU2 corrigidos; verificado por log, não de ouvido); faltam reverb e ADMA" }
 
   [[hardware.grupo.componente]]
   corto = "IRX"
@@ -261,4 +261,4 @@ nombre = "Linux"
   nombre = { es = "Port nativo para Linux", en = "Native Linux port", pt = "Port nativo para Linux" }
   estado = "parcial"
   peso = 2
-  nota = { es = "Lanzador y extracción de la ISO funcionan; compilación parcial (solo runtime verificado en CI); backend Vulkan en fase A (primitivas sin textura en GPU); mandos pendientes", en = "Launcher and ISO extraction work; the build is partial (only the runtime is verified in CI); Vulkan backend in phase A (untextured primitives on the GPU); controllers pending", pt = "Lançador e extração da ISO funcionam; compilação parcial (só o runtime é verificado no CI); backend Vulkan na fase A (primitivas sem textura na GPU); controles pendentes" }
+  nota = { es = "Lanzador (extrae la ISO, detecta el mando, opción de omitir vídeos), GS por Vulkan (compute), VU1 compilada y compilación nativa funcionan; la VU1 compilada necesita una captura local del microcódigo; ~20-30 fps en partida (objetivo: 60); fallos visuales en orbes/partículas y un cuelgue tras la cinemática de la intro", en = "Launcher (extracts the ISO, detects the controller, option to skip movies), Vulkan (compute) GS, compiled VU1 and the native build work; the compiled VU1 needs a local microcode capture; ~20-30 fps in gameplay (goal: 60); visual glitches on orbs/particles and a hang after the intro cutscene", pt = "Lançador (extrai a ISO, detecta o controle, opção de pular vídeos), GS por Vulkan (compute), VU1 compilada e compilação nativa funcionam; a VU1 compilada precisa de uma captura local do microcódigo; ~20-30 fps na partida (meta: 60); falhas visuais em orbes/partículas e um travamento após a cutscene da intro" }
