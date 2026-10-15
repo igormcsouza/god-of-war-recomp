@@ -410,3 +410,30 @@ worker keeps recording the next frame while the GPU finishes. Per-slot fences av
 
 **t=80 s black screenshot:** the CPU backend (`PS2X_GS_BACKEND=cpu`, ~3 FPS, so a different game time) is black at t=80 s too, so it is
 not a Vulkan bug; most likely the pad script's fade/transition. t=62 s Vulkan shot is the normal rain fight.
+
+
+### Lazy host sync + two-phase Present (2026-10-15, `patches/ps2recomp-gs-lazy-sync.patch`, registered after the pipeline patch)
+
+Implemented the plan above in the frontend, with the Vulkan `Flush/Sync/Present` methods left exact. `GSRasterBackend::LazyHostSync()` (Vulkan: true,
+`PS2X_VK_LAZY_SYNC=0` disables) lets the frontend skip `Flush()` and `Sync(Presentation|Finish)` (the latter inside `GSThreadedBackend::Sync`); every
+host access (transfer, CLUT load, CPU fallback, ReadVram, ConsumeLocalToHost) still ends the GPU run. `Present` is two-phase: the worker records a GPU copy of
+VRAM into one of 3 staging slots (`BeginPresent`, empty submit with a per-slot fence), the render thread waits on that fence and composes with
+`GSCpuBackend::PresentFromLocalMemory` (`PendingPresent::Resolve`). `PS2X_VK_SYNC_PRESENT=1` keeps the old synchronous Present. New test: "Vulkan two-phase
+Present equals CPU Present and host reads see lazy GPU work" (staged frame equals CPU frame at BeginPresent time although the GPU keeps drawing; ReadVram after an unflushed run).
+`ps2x_tests`: 637 pass, 0 failed.
+
+Gameplay (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050, 3 runs x 40 s, window-title FPS):
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| before (`PS2X_VK_LAZY_SYNC=0`) | 14.5 | 14.5 | 14.8 | 14.6 |
+| after | 16.8 | 15.2 | 15.0 | 15.7 |
+
+`PS2X_PIPE_STATS=1` / `PS2X_GS_VULKAN_STATS=1` (steady state, per second): GPU runs 181-187 -> 63-79; `Flush()` 142 ms (46 runs) -> 0, `Sync()` 98-131 ms (58) -> 20-31 ms (Sync(reason) 20/s
+is a different reason than Finish/Presentation), `Present` 64-70 ms (41) -> 4-16 ms (2-4 runs; 3600 two-phase presents per 40 s), BeginTransfer 31-63 ms (10-14) -> 0.
+GS worker: gs_idle 14-27 -> 146-261 ms/s, gs_busy 970-988 -> 732-856 ms/s, drain_wait 719-766 -> 233-291 ms/s. Remaining wait: `record-ring` 20-36 runs/s, 235-345 ms/s
+(was 9-12, 58-77): with fewer early run ends the 16384-prim ring fills and the worker waits for the whole run, so the GPU is now the critical path.
+Gameplay screenshots at t=62/75/90 s (after) checked by eye: rain fight, Kratos, soldiers, HUD, correct, not stale or torn. Not done (budget): title-screen shot and the replay bench
+(the replay wrapper does not forward `LazyHostSync`, so it exercises the old path and is unaffected).
+
+Next: a real ring for the prim buffer (two halves, per-half fence) so `record-ring` stops waiting for the whole run.
