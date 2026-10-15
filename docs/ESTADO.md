@@ -6988,3 +6988,35 @@ and in-place same-pixel strips are race-free when the UV-to-pixel map is the ide
 scratch-copy dispatch; at minimum split fallback rows across the idle raster workers. (2) `z-alias` (~190 run ends/s in
 the intro). (3) EE vs the GIF mutex (not touched). GPU alone is ~425 ms/s in gameplay, so fallbacks must go before more
 GPU-side work pays off.
+
+## Intro movie garbage is not an end-of-stream problem (2026-10-15, Linux, NVIDIA RTX 5050) - root cause still open
+
+Added `GOW_MPEG_DIAG=1` (`patches/ps2recomp-mpeg-diag.patch`, registered last in `compilar.ps1`): logs `[gow-mpeg]`
+lines for `sceMpegIsEnd` and `sceMpegGetPicture` (flags, queue depth, frame size, return address), capped at 4000 lines.
+Default `GOW_PAD_TEST=1` and a custom script (`GOW_PAD_GUION='5:start,12:x,20:x,28:x'`) were run for 45-100 s with
+`GOW_SCREENSHOT_AT`; all PNGs were looked at.
+
+Findings (they correct the previous section, which assumed an end-of-movie failure):
+- **The movie never ends in these runs.** 856 `sceMpegGetPicture` calls by 100 s (about 10 fps), `streamEnded=0`,
+  `seqEnd=0`, `failed=0`, `cdEof=0`, decoded queue steady at 6-7 frames, size always 640x480, one image address
+  (`0x148fbc0`), `sceMpegIsEnd` is never called, no `[sceCdStStart]`/`[sceCdStRead]` lines (the game streams the PSS
+  through the IOP, not `sceCdSt*`). So EOF/flush handling is not involved.
+- **The failure starts 5-10 frames after the first picture** (clean cliff scene at served<=3, strip frame at
+  served~10, flat salmon/magenta polygons from ~served 90, noise later).
+- **Not input, not audio:** no X press after the movie start (script above) gives the same result; `GOW_AUDIO=0` too.
+  The `sound cmd=0x3e` seen right after frame 2 is the stream start, not an end.
+- **The visible cliff picture is not our decoded buffer.** With a temporary hack that skipped
+  `writeDecodedFrameToGuest`, and then filled the 640x480x4 buffer with 0x40, the screen still showed the same cliff
+  picture and the same strip/garbage progression. So the picture and the corruption come from another path
+  (in-engine cutscene or game-side drawing); `GOW_SKIP_FMV=1` avoids the corruption by removing the movie's concurrent
+  work (IOP stream, MPEG callbacks, GetPicture waits), not because of what we decode.
+- `sub_00188B80` is a 16 KB-chunk stream reader state machine (state word at `0x30DE38`, ring base `+0x14`), polled in
+  a loop; the 87% EE CPU there is that poll plus the IOP sound RPC `cmd=0x40` (alternating `0x77640` / `0x1079640`).
+  The guest passes `a2=0` to `sceMpegGetPicture` (computed with a three-operand `mult` + `mflo`; worth checking the
+  `mult rd=$zero` form in the recompiler); the stub ignores it.
+
+Next steps (not done): (1) trace writes into guest RAM during the movie (IOP->EE SIF DMA targets of the PSS stream and
+sound-stream reads vs the ring at `[0x30DE10+0x14]`), looking for a write outside the ring; (2) diff the GIF packets
+of clean and strip frames (`PS2X_GS_DIAG`, CPU backend); (3) check the recompiled `mult $zero,rs,rt`.
+Verified: all patches apply in order on a fresh pinned clone and the result equals the working tree. `ps2x_tests` were
+not rerun (diagnostic-only change; the runner builds). Game processes were killed after the runs.

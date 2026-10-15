@@ -24,13 +24,14 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 
 ## Known issues
 
-1. Intro movie (MPEG/IPU) end-of-stream corrupts the GS output (garbage polygons, 0 FPS). `GOW_SKIP_FMV=1` avoids it.
+1. Intro movie (MPEG/IPU): GS output turns to garbage ~5-10 frames after the movie starts (not at its end), 0 FPS. Root cause open. `GOW_SKIP_FMV=1` avoids it.
 2. CPU fallbacks for `tex-feedback` / `z-alias` cost ~400 ms/s in gameplay.
 3. EE thread blocks on a mutex held by the GIF thread (GS queue backpressure).
 4. Sound is choppy while the game runs below real time (expected; `GOW_AUDIO=0` or launcher mute).
 
 ## Decisions taken by the lead (defaults, review these)
 
-(none yet)
+- Intro-movie hunt: kept only opt-in diagnostics (`GOW_MPEG_DIAG=1`, `patches/ps2recomp-mpeg-diag.patch`). The end-of-stream hypothesis was disproved and no root cause was found within budget, so no behaviour change was shipped.
 
 ## Log
+- 2026-10-15: Intro-movie garbage hunt. Garbage starts ~5-10 frames after the MPEG starts, not at the end, and the visible picture is NOT our decoded buffer. Root cause still open; see ESTADO.md 'Intro movie garbage is not an end-of-stream problem'. Added `GOW_MPEG_DIAG`.
