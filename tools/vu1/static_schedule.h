@@ -176,7 +176,8 @@ namespace vu1s
         for (size_t w = 0; w < words.size(); ++w)
             o << (w ? ", " : "") << "0x" << std::hex << words[w] << "u" << std::dec;
         o << "};\n"
-          << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words)))\n            return 0;\n"
+          << "        static VU1CompiledAccess::BlockCheck check;\n"
+          << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words), check))\n            return 0;\n"
           << "        const uint64_t base = VU1CompiledAccess::cycle(vu);\n"
           << "        if (!g_staticOn || !VU1CompiledAccess::staticEntry(vu, base + " << pl.span << "u)";
         for (const Slot &s : pl.liveIns)

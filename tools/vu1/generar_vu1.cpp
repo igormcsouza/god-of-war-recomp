@@ -446,7 +446,8 @@ int main(int argc, char **argv)
             for (size_t w = 0; w < words.size(); ++w)
                 body << (w ? ", " : "") << "0x" << std::hex << words[w] << "u" << std::dec;
             body << "};\n"
-                 << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words)))\n            return 0;\n"
+                 << "        static VU1CompiledAccess::BlockCheck check;\n"
+          << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words), check))\n            return 0;\n"
                  << "        g_blockPairs += " << length << "u;\n";
             std::vector<std::string> stepText, stepTypes;
             for (size_t i = 0; i < length; ++i)

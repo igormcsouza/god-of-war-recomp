@@ -1,0 +1,68 @@
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl b/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_compiled.inl
+@@ -1038,26 +1038,20 @@
+     entry.readyCycle = m_cycle + kFmacLatency;
+ }
+ 
+-VU1_STEP_INLINE bool VU1Interpreter::blockPreconditions(StepContext &context, uint32_t pc, const uint32_t *words, size_t bytes) const
++VU1_STEP_INLINE bool VU1Interpreter::blockPreconditions(StepContext &context, uint32_t pc, const uint32_t *words, size_t bytes,
++                                                        BlockCheck &check) const
+ {
+     if (m_state.branchPending || m_state.ebit || m_state.haltAfterDelaySlot || m_stopRequested)
+         return false;
+     if (m_cycle + 16384u >= context.budgetEnd || pc + bytes > context.codeSize)
+         return false;
+     // GOW-Port: la micromemoria no cambia mientras no cambie su generación (compiledProgramFor la apunta al
+-    // empezar cada ejecución); se recuerda el resultado de comparar cada bloque en vez de repetir el memcmp.
+-    struct Entry
+-    {
+-        const uint32_t *words;
+-        uint64_t generation;
+-        bool matches;
+-    };
+-    static Entry cache[2048];
+-    Entry &entry = cache[(reinterpret_cast<uintptr_t>(words) >> 3) & 2047u];
+-    if (entry.words == words && entry.generation == m_compiledGeneration)
+-        return entry.matches;
++    // empezar cada ejecución); cada bloque guarda su propio resultado de comparar (antes, una tabla con hash
++    // compartida por todos los bloques).
++    if (check.generation == m_compiledGeneration)
++        return check.matches;
+     const bool matches = std::memcmp(context.vuCode + pc, words, bytes) == 0;
+-    entry = {words, m_compiledGeneration, matches};
++    check = {m_compiledGeneration, matches};
+     return matches;
+ }
+ 
+@@ -1419,9 +1413,10 @@
+     template <class T, bool DeadFlags>
+     static VU1_STEP_INLINE void stepStatic(VU1Interpreter &vu, C &c, uint64_t cycle) { vu.stepPairStaticT<T, DeadFlags>(c, cycle); }
+     static uint32_t pc(const VU1Interpreter &vu) { return vu.m_state.pc; }
+-    static VU1_STEP_INLINE bool block(const VU1Interpreter &vu, C &c, uint32_t pc, const uint32_t *words, size_t bytes)
++    using BlockCheck = VU1Interpreter::BlockCheck;
++    static VU1_STEP_INLINE bool block(const VU1Interpreter &vu, C &c, uint32_t pc, const uint32_t *words, size_t bytes, BlockCheck &check)
+     {
+-        return vu.blockPreconditions(c, pc, words, bytes);
++        return vu.blockPreconditions(c, pc, words, bytes, check);
+     }
+ };
+ 
+diff --git a/ps2xRuntime/include/runtime/ps2_vu1.h b/ps2xRuntime/include/runtime/ps2_vu1.h
+--- a/ps2xRuntime/include/runtime/ps2_vu1.h
++++ b/ps2xRuntime/include/runtime/ps2_vu1.h
+@@ -399,7 +399,13 @@
+     uint64_t readyCycleT() const;
+     template <class T, bool DeadFlags, bool Plain = false, bool Chained = false>
+     bool stepPairT(StepContext &context);
+-    bool blockPreconditions(StepContext &context, uint32_t pc, const uint32_t *words, size_t bytes) const;
++    // GOW-Port: resultado de comparar las palabras de un bloque con la micromemoria, por bloque y generación.
++    struct BlockCheck
++    {
++        uint64_t generation = ~0ull - 1u;
++        bool matches = false;
++    };
++    bool blockPreconditions(StepContext &context, uint32_t pc, const uint32_t *words, size_t bytes, BlockCheck &check) const;
+     // GOW-Port: par de un bloque con temporización estática (ver stepPairStaticT en ps2_vu1_compiled.inl).
+     template <class T, bool DeadFlags>
+     void stepPairStaticT(StepContext &context, uint64_t cycle);
