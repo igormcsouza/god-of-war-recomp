@@ -55,7 +55,15 @@ callbacks del flujo MPEG, PR #92 upstream) se envían a upstream como PRs peque�
 
 ## Mapa de estado
 
-<a href="docs/estado/detalle.es.md"><img src="docs/estado/mapa.es.svg" alt="Mapa de estado del port: funciones de las librerías del SDK de Sony y componentes del hardware de la PS2, coloreados por estado" width="100%"></a>
+**Linux (este fork)**
+
+<a href="docs/estado/detalle.es.md"><img src="docs/estado/mapa.linux.es.svg" alt="Mapa de estado del port: funciones de las librerías del SDK de Sony y componentes del hardware de la PS2, coloreados por estado - Linux" width="100%"></a>
+
+**Windows (upstream, no se mantiene aquí)**
+
+<a href="docs/estado/detalle.es.md"><img src="docs/estado/mapa.windows.es.svg" alt="Mapa de estado del port: funciones de las librerías del SDK de Sony y componentes del hardware de la PS2, coloreados por estado - Windows" width="100%"></a>
+
+El mapa de Linux es el que se mantiene en este fork. Parte de la misma base que el mapa de upstream (Windows) y solo difiere donde hay evidencia propia de Linux (GS Vulkan, lanzador, compilación nativa, velocidad, cuelgue tras la cinemática de la intro).
 
 Desglose por librería y por componente: [`docs/estado/detalle.es.md`](docs/estado/detalle.es.md). Se regenera a partir de `docs/estado/datos.toml` con `tools/estado/generar.py` (y automáticamente al subir a `main`).
 

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="424" viewBox="0 0 900 424" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-labelledby="titulo-estado">
-<title id="titulo-estado">Estado: librerías* 65.4%, hardware 57.8%</title>
+<title id="titulo-estado">Estado · Windows: librerías* 65.4%, hardware 57.8%</title>
 <style>
   .fondo { fill: #ffffff; }
   .borde { stroke: #d0d7de; }
@@ -29,7 +29,7 @@
 </style>
 <defs><pattern id="rayas" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="rayado" x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" stroke-opacity=".55"/></pattern></defs>
 <rect class="fondo" width="900" height="424" rx="6"/>
-<text class="t1" x="16" y="34" font-size="24" font-weight="600">Estado</text>
+<text class="t1" x="16" y="34" font-size="24" font-weight="600">Estado · Windows</text>
 <line class="borde" x1="16" y1="44" x2="884" y2="44" stroke-width="1"/>
 <rect class="badge-k" x="16" y="56" width="88" height="22" rx="3"/>
 <rect class="parcial" x="104" y="56" width="52" height="22" rx="3"/>

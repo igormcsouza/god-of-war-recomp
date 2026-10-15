@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="900" height="424" viewBox="0 0 900 424" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-labelledby="titulo-estado">
-<title id="titulo-estado">Status: libraries* 65.4%, hardware 57.8%</title>
+<title id="titulo-estado">Status · Linux: bibliotecas* 65.4%, hardware 53.8%</title>
 <style>
   .fondo { fill: #ffffff; }
   .borde { stroke: #d0d7de; }
@@ -29,19 +29,19 @@
 </style>
 <defs><pattern id="rayas" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line class="rayado" x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" stroke-opacity=".55"/></pattern></defs>
 <rect class="fondo" width="900" height="424" rx="6"/>
-<text class="t1" x="16" y="34" font-size="24" font-weight="600">Status</text>
+<text class="t1" x="16" y="34" font-size="24" font-weight="600">Status · Linux</text>
 <line class="borde" x1="16" y1="44" x2="884" y2="44" stroke-width="1"/>
-<rect class="badge-k" x="16" y="56" width="88" height="22" rx="3"/>
-<rect class="parcial" x="104" y="56" width="52" height="22" rx="3"/>
-<rect class="parcial" x="104" y="56" width="4" height="22"/>
-<text class="badge-t" x="60" y="71" font-size="12" text-anchor="middle">libraries*</text>
-<text class="badge-v-oscuro" x="130" y="71" font-size="12" font-weight="600" text-anchor="middle">65.4%</text>
-<rect class="badge-k" x="164" y="56" width="73.6" height="22" rx="3"/>
-<rect class="parcial" x="237.6" y="56" width="52" height="22" rx="3"/>
-<rect class="parcial" x="237.6" y="56" width="4" height="22"/>
-<text class="badge-t" x="200.8" y="71" font-size="12" text-anchor="middle">hardware</text>
-<text class="badge-v-oscuro" x="263.6" y="71" font-size="12" font-weight="600" text-anchor="middle">57.8%</text>
-<text class="t1" x="16" y="102" font-size="14">Sony SDK libraries*: 65.4% (423/647)</text>
+<rect class="badge-k" x="16" y="56" width="102.4" height="22" rx="3"/>
+<rect class="parcial" x="118.4" y="56" width="52" height="22" rx="3"/>
+<rect class="parcial" x="118.4" y="56" width="4" height="22"/>
+<text class="badge-t" x="67.2" y="71" font-size="12" text-anchor="middle">bibliotecas*</text>
+<text class="badge-v-oscuro" x="144.4" y="71" font-size="12" font-weight="600" text-anchor="middle">65.4%</text>
+<rect class="badge-k" x="178.4" y="56" width="73.6" height="22" rx="3"/>
+<rect class="parcial" x="252" y="56" width="52" height="22" rx="3"/>
+<rect class="parcial" x="252" y="56" width="4" height="22"/>
+<text class="badge-t" x="215.2" y="71" font-size="12" text-anchor="middle">hardware</text>
+<text class="badge-v-oscuro" x="278" y="71" font-size="12" font-weight="600" text-anchor="middle">53.8%</text>
+<text class="t1" x="16" y="102" font-size="14">Bibliotecas do SDK da Sony*: 65.4% (423/647)</text>
 <rect class="grupo" x="16" y="112" width="424" height="260"/>
 <rect class="ok" x="17.5" y="113.5" width="11.6" height="11.7"><title>libc · sub_00289200 (148 B)</title></rect>
 <rect class="ok" x="30.1" y="113.5" width="11.6" height="11.7"><title>libc · sub_00289294 (172 B)</title></rect>
@@ -932,68 +932,77 @@
 <text class="t1" x="362.9" y="251" font-size="11" pointer-events="none">libm</text>
 <rect class="chip" x="317.4" y="338.9" width="47.6" height="15" rx="2" pointer-events="none"/>
 <text class="t1" x="321.4" y="349.9" font-size="11" pointer-events="none">libdbc</text>
-<text class="t1" x="460" y="102" font-size="14">PS2 hardware: 57.8%</text>
+<text class="t1" x="460" y="102" font-size="14">Hardware do PS2: 53.8%</text>
 <rect class="grupo" x="460" y="112" width="424" height="260"/>
-<rect class="ok" x="461.5" y="113.5" width="88.3" height="79.6"><title>R3000A CPU (interpreter) — Opus idle scheduler integrated and validated with GS/VU1: caches the next wake-up; its profile reduces IOP from ~1300–1500 to ~570–650 ms per 5 s; an FPS comparison without concurrent builds remains pending</title></rect>
-<text class="badge-t" x="505.6" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">R3000A</text>
-<rect class="ok" x="550.8" y="113.5" width="58.5" height="79.6"><title>Original IRX modules</title></rect>
-<text class="badge-t" x="580" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">IRX</text>
-<rect class="ok" x="461.5" y="194.1" width="73.4" height="63.5"><title>SIF: EE ↔ IOP RPC and DMA</title></rect>
-<text class="badge-t" x="498.2" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">SIF</text>
-<rect class="ok" x="535.9" y="194.1" width="73.4" height="63.5"><title>CDVD: reading the original ISO</title></rect>
-<text class="badge-t" x="572.6" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">CDVD</text>
-<rect class="parcial" x="461.5" y="258.6" width="62.8" height="111.9"><title>SPU2: audio output — Bank loading and continuous sound verified; streamed music no longer restarts every 0.36 s (CD read latency and SPU2 loop-jump fixes; verified from logs, not by ear); reverb and ADMA are missing</title></rect>
-<rect x="461.5" y="258.6" width="62.8" height="111.9" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="492.9" y="318.4" font-size="11" text-anchor="middle" pointer-events="none">SPU2</text>
-<rect class="parcial" x="525.3" y="258.6" width="84" height="55.4"><title>DualShock 2 controller — libpad2 via HLE (first port); controllers read as disconnected on the emulated SIO2</title></rect>
-<rect x="525.3" y="258.6" width="84" height="55.4" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="567.3" y="290.2" font-size="11" text-anchor="middle" pointer-events="none">Pad</text>
-<rect class="parcial" x="525.3" y="315.1" width="84" height="55.4"><title>SIO2: memory card — SIO2 and 8 MB card with ECC: loading, saving and reloading verified in-game on a PCSX2 copy; formatting and reopening in PCSX2 remain unverified</title></rect>
-<rect x="525.3" y="315.1" width="84" height="55.4" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="567.3" y="346.6" font-size="11" text-anchor="middle" pointer-events="none">MC</text>
-<rect class="ok" x="612.3" y="113.5" width="138.3" height="85"><title>R5900 CPU (recompiled to C++)</title></rect>
-<text class="badge-t" x="681.4" y="159.8" font-size="11" text-anchor="middle" pointer-events="none">R5900</text>
-<rect class="ok" x="612.3" y="199.5" width="82.6" height="85"><title>Kernel: threads, semaphores and alarms</title></rect>
-<text class="badge-t" x="653.6" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">Kernel</text>
-<rect class="ok" x="695.9" y="199.5" width="54.7" height="85"><title>FPU (COP1) and MMI instructions</title></rect>
-<text class="badge-t" x="723.2" y="245.8" font-size="11" text-anchor="middle" pointer-events="none">FPU/MMI</text>
-<rect class="ok" x="612.3" y="285.5" width="54.7" height="85"><title>INTC: VSync and GS interrupt</title></rect>
-<text class="badge-t" x="639.6" y="331.9" font-size="11" text-anchor="middle" pointer-events="none">INTC</text>
-<rect class="ok" x="668" y="285.5" width="82.6" height="56.3"><title>DMA controller — fromSPR/toSPR chains now copy the bone palette; Kratos and enemy shapes verified in gameplay</title></rect>
-<text class="badge-t" x="709.3" y="317.5" font-size="11" text-anchor="middle" pointer-events="none">DMAC</text>
-<rect class="ok" x="668" y="342.8" width="82.6" height="27.7"><title>Timers</title></rect>
-<text class="badge-t" x="709.3" y="360.5" font-size="11" text-anchor="middle" pointer-events="none">Timers</text>
-<rect class="ok" x="753.6" y="113.5" width="51" height="91"><title>GIF (PATH1-3)</title></rect>
-<text class="badge-t" x="779.1" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GIF</text>
-<rect class="parcial" x="805.6" y="113.5" width="76.9" height="91"><title>GS: primitives and framebuffer — CPU reference and a Vulkan compute backend (byte-identical to the CPU, default on Linux) plus OpenGL on Windows; ship, Kratos, enemies and HUD visible; some texture-feedback primitives still fall back to the CPU; visual glitches on orbs/particles; coverage remains incomplete</title></rect>
-<rect x="805.6" y="113.5" width="76.9" height="91" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="844" y="162.9" font-size="11" text-anchor="middle" pointer-events="none">GS</text>
-<rect class="parcial" x="753.6" y="205.5" width="91.8" height="76.3"><title>VIF1 and VU1 — VU1 microcode compiled to C++ (blocks with static timing, bit-identical to the interpreter in record/replay tests); needs a local microcode capture; in gameplay the VU1 thread is still one of the speed limits; coverage remains unverified</title></rect>
-<rect x="753.6" y="205.5" width="91.8" height="76.3" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="799.5" y="247.5" font-size="11" text-anchor="middle" pointer-events="none">VIF1/VU1</text>
-<rect class="parcial" x="753.6" y="282.8" width="91.8" height="50.5"><title>GS: textures, CLUT and fonts — HUD visible; CPU/OpenGL bilinear and nearest STQ verified, including signed 16.16 boundaries, against procedural PCSX2 software patterns; GPU feedback stable in an experimental mode; regional texture batches optimized and verified across all 13 PSMs; real GS cache and full font/CLUT coverage remain unverified</title></rect>
-<rect x="753.6" y="282.8" width="91.8" height="50.5" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="799.5" y="311.9" font-size="11" text-anchor="middle" pointer-events="none">Tex/CLUT</text>
-<rect class="parcial" x="846.4" y="205.5" width="36.1" height="127.8"><title>IPU: FMV video — The FMV intro works through software MPEG decoding; this does not establish complete IPU hardware emulation</title></rect>
-<rect x="846.4" y="205.5" width="36.1" height="127.8" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="864.4" y="273.3" font-size="11" text-anchor="middle" pointer-events="none">IPU</text>
-<rect class="parcial" x="753.6" y="336.4" width="128.9" height="34.1"><title>Native Linux port — Launcher (extracts the ISO, detects the controller, option to skip movies), Vulkan (compute) GS, compiled VU1 and the native build work; the compiled VU1 needs a local microcode capture; ~20-30 fps in gameplay (goal: 60); visual glitches on orbs/particles and a hang after the intro cutscene</title></rect>
-<rect x="753.6" y="336.4" width="128.9" height="34.1" fill="url(#rayas)" pointer-events="none"/>
-<text class="badge-v-oscuro" x="818" y="357.3" font-size="11" text-anchor="middle" pointer-events="none">Linux</text>
+<rect class="ok" x="461.5" y="113.5" width="76.1" height="79.6"><title>CPU R3000A (interpretador) — Escalonador ocioso de Opus integrado e validado com GS/VU1: guarda o próximo despertar; seu perfil reduz IOP de ~1300–1500 para ~570–650 ms a cada 5 s; falta comparar FPS sem compilações simultâneas</title></rect>
+<text class="badge-t" x="499.5" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">R3000A</text>
+<rect class="ok" x="538.6" y="113.5" width="50.4" height="79.6"><title>Módulos IRX originais</title></rect>
+<text class="badge-t" x="563.8" y="157.2" font-size="11" text-anchor="middle" pointer-events="none">IRX</text>
+<rect class="ok" x="461.5" y="194.1" width="63.2" height="63.5"><title>SIF: RPC e DMA EE ↔ IOP</title></rect>
+<text class="badge-t" x="493.1" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">SIF</text>
+<rect class="ok" x="525.7" y="194.1" width="63.2" height="63.5"><title>CDVD: leitura da ISO original</title></rect>
+<text class="badge-t" x="557.3" y="229.7" font-size="11" text-anchor="middle" pointer-events="none">CDVD</text>
+<rect class="parcial" x="461.5" y="258.6" width="90.8" height="66.7"><title>SPU2: saída de áudio — As correções de latência do CD e de loop do SPU2 foram verificadas no Linux apenas por log (230 s de menu, áudio mudo; não de ouvido); faltam reverb e ADMA</title></rect>
+<rect x="461.5" y="258.6" width="90.8" height="66.7" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="506.9" y="295.8" font-size="11" text-anchor="middle" pointer-events="none">SPU2</text>
+<rect class="parcial" x="461.5" y="326.4" width="90.8" height="44.1"><title>Controle DualShock 2 — libpad2 por HLE (primeira porta); controle autodetectado (com mapeamento genérico se o SDL não o conhece); botões verificados jogando; sem vibração; o SIO2 emulado continua sem ver controles</title></rect>
+<rect x="461.5" y="326.4" width="90.8" height="44.1" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="506.9" y="352.3" font-size="11" text-anchor="middle" pointer-events="none">Pad</text>
+<rect class="parcial" x="553.3" y="258.6" width="35.7" height="111.9"><title>SIO2: memory card — SIO2 e cartão de 8 MB com ECC: carregar, salvar e recarregar verificados no jogo em uma cópia PCSX2; faltam formatação e reabertura no PCSX2</title></rect>
+<rect x="553.3" y="258.6" width="35.7" height="111.9" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="571.1" y="318.4" font-size="11" text-anchor="middle" pointer-events="none">MC</text>
+<rect class="ok" x="592" y="113.5" width="71.7" height="141.4"><title>CPU R5900 (recompilada para C++)</title></rect>
+<text class="badge-t" x="627.8" y="188.1" font-size="11" text-anchor="middle" pointer-events="none">R5900</text>
+<rect class="ok" x="664.7" y="113.5" width="71.7" height="84.5"><title>Kernel: threads, semáforos e alarmes</title></rect>
+<text class="badge-t" x="700.5" y="159.6" font-size="11" text-anchor="middle" pointer-events="none">Kernel</text>
+<rect class="ok" x="664.7" y="199" width="71.7" height="56"><title>FPU (COP1) e instruções MMI</title></rect>
+<text class="badge-t" x="700.5" y="230.8" font-size="11" text-anchor="middle" pointer-events="none">FPU/MMI</text>
+<rect class="ok" x="737.4" y="113.5" width="71.7" height="56"><title>INTC: VSync e interrupção do GS</title></rect>
+<text class="badge-t" x="773.3" y="145.3" font-size="11" text-anchor="middle" pointer-events="none">INTC</text>
+<rect class="ok" x="737.4" y="170.5" width="71.7" height="56"><title>Controlador DMA — As cadeias fromSPR/toSPR já copiam a paleta de ossos; formas de Kratos e inimigos verificadas na partida</title></rect>
+<text class="badge-t" x="773.3" y="202.3" font-size="11" text-anchor="middle" pointer-events="none">DMAC</text>
+<rect class="ok" x="737.4" y="227.5" width="71.7" height="27.5"><title>Temporizadores</title></rect>
+<text class="badge-t" x="773.3" y="245" font-size="11" text-anchor="middle" pointer-events="none">Timers</text>
+<rect class="ok" x="592" y="257.9" width="89.9" height="44.4"><title>GIF (PATH1-3)</title></rect>
+<text class="badge-t" x="636.9" y="284" font-size="11" text-anchor="middle" pointer-events="none">GIF</text>
+<rect class="parcial" x="592" y="303.4" width="89.9" height="67.1"><title>GS: primitivas e framebuffer — Backend Vulkan compute por padrão (idêntico byte a byte à CPU nos testes; no Linux o contexto OpenGL é um stub); barco, Kratos, inimigos e HUD visíveis; algumas primitivas com feedback de textura ainda usam a CPU; falhas visuais em orbes/partículas; ~20-30 fps na partida</title></rect>
+<rect x="592" y="303.4" width="89.9" height="67.1" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="636.9" y="340.8" font-size="11" text-anchor="middle" pointer-events="none">GS</text>
+<rect class="parcial" x="682.9" y="257.9" width="89.9" height="67.1"><title>VIF1 e VU1 — Microcódigo VU1 compilado para C++ (blocos com temporização estática, idêntico ao interpretador em testes de gravação/reprodução); precisa de uma captura local do microcódigo; na partida a thread da VU1 ainda é um dos limites de velocidade; falta verificar a cobertura</title></rect>
+<rect x="682.9" y="257.9" width="89.9" height="67.1" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="727.8" y="295.4" font-size="11" text-anchor="middle" pointer-events="none">VIF1/VU1</text>
+<rect class="parcial" x="682.9" y="326.1" width="89.9" height="44.4"><title>GS: texturas, CLUT e fontes — HUD visível; bilinear e nearest STQ CPU/OpenGL verificados, incluindo limites 16.16 com sinal, com padrões procedurais de PCSX2 software; feedback GPU estável em modo experimental; lotes de texturas regionais otimizados e verificados nos 13 PSMs; cache GS real e cobertura de fontes/CLUT ainda não verificadas</title></rect>
+<rect x="682.9" y="326.1" width="89.9" height="44.4" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="727.8" y="352.1" font-size="11" text-anchor="middle" pointer-events="none">Tex/CLUT</text>
+<rect class="parcial" x="773.8" y="257.9" width="35.4" height="112.6"><title>IPU: vídeo FMV — A intro FMV funciona por decodificação MPEG por software com callbacks de fluxo síncronos (correção verificada com capturas); isso não comprova emulação completa do hardware IPU; travamento após a cutscene pendente</title></rect>
+<rect x="773.8" y="257.9" width="35.4" height="112.6" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="791.4" y="318.1" font-size="11" text-anchor="middle" pointer-events="none">IPU</text>
+<rect class="ok" x="812.1" y="113.5" width="70.4" height="56.3"><title>Lançador e preparação da ISO — Extrai o ELF/IRX da ISO pessoal e valida o hash; janela de ajustes (tela cheia, filtro, controle, GPU, mudo, pular vídeos); testes sintéticos na CI (docs/LINUX_LAUNCHER.md)</title></rect>
+<text class="badge-t" x="847.3" y="145.5" font-size="11" text-anchor="middle" pointer-events="none">Launcher</text>
+<rect class="parcial" x="812.1" y="170.8" width="70.4" height="56.3"><title>Port nativo para Linux — Lançador (extrai a ISO, detecta o controle, opção de pular vídeos), GS por Vulkan (compute), VU1 compilada e compilação nativa funcionam; a VU1 compilada precisa de uma captura local do microcódigo; ~20-30 fps na partida (meta: 60); falhas visuais em orbes/partículas e um travamento após a cutscene da intro</title></rect>
+<rect x="812.1" y="170.8" width="70.4" height="56.3" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="847.3" y="202.8" font-size="11" text-anchor="middle" pointer-events="none">Linux</text>
+<rect class="parcial" x="812.1" y="228.2" width="70.4" height="56.3"><title>Compilação nativa — O runner compila e roda no Linux (scripts/compilar_linux.py); a VU1 compilada precisa de uma captura local do microcódigo (GOW_VU1_MICROCODIGO) e a CI só compila o runtime sem o ELF</title></rect>
+<rect x="812.1" y="228.2" width="70.4" height="56.3" fill="url(#rayas)" pointer-events="none"/>
+<text class="badge-v-oscuro" x="847.3" y="260.2" font-size="11" text-anchor="middle" pointer-events="none">Build</text>
+<rect class="pendiente" x="812.1" y="285.5" width="70.4" height="56.3"><title>Velocidade: 60 fps — ~20-30 fps na partida (RTX 5050; meta 60): o GS compute exato fica em ~25-30 fps e falta uma rota estilo hardware; sem 1080p real (só escalonamento)</title></rect>
+<text class="txt-pendiente" x="847.3" y="317.5" font-size="11" text-anchor="middle" pointer-events="none">60 fps</text>
+<rect class="pendiente" x="812.1" y="342.8" width="70.4" height="27.7"><title>Tela após a cutscene da intro — Um travamento após a cutscene da intro ainda não foi investigado (docs/PROGRESS_LOG.md, docs/ESTADO.md); GOW_SKIP_FMV=1 o evita</title></rect>
+<text class="txt-pendiente" x="847.3" y="359.8" font-size="9" text-anchor="middle" pointer-events="none">Post-intro</text>
 <rect class="chip" x="462" y="114" width="27.8" height="15" rx="2" pointer-events="none"/>
 <text class="t1" x="466" y="125" font-size="11" pointer-events="none">IOP</text>
-<rect class="chip" x="612.8" y="114" width="21.2" height="15" rx="2" pointer-events="none"/>
-<text class="t1" x="616.8" y="125" font-size="11" pointer-events="none">EE</text>
-<rect class="chip" x="754.1" y="114" width="54.2" height="15" rx="2" pointer-events="none"/>
-<text class="t1" x="758.1" y="125" font-size="11" pointer-events="none">GS / VU</text>
-<rect class="chip" x="754.1" y="336.9" width="41" height="15" rx="2" pointer-events="none"/>
-<text class="t1" x="758.1" y="347.9" font-size="11" pointer-events="none">Linux</text>
+<rect class="chip" x="592.5" y="114" width="21.2" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="596.5" y="125" font-size="11" pointer-events="none">EE</text>
+<rect class="chip" x="592.5" y="258.4" width="54.2" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="596.5" y="269.4" font-size="11" pointer-events="none">GS / VU</text>
+<rect class="chip" x="812.6" y="114" width="41" height="15" rx="2" pointer-events="none"/>
+<text class="t1" x="816.6" y="125" font-size="11" pointer-events="none">Linux</text>
 <rect class="ok" x="16" y="384" width="12" height="12" rx="2"/>
-<text class="t2" x="33" y="394" font-size="12">Working</text>
-<rect class="parcial" x="101.4" y="384" width="12" height="12" rx="2"/>
-<rect x="101.4" y="384" width="12" height="12" rx="2" fill="url(#rayas)"/>
-<text class="t2" x="118.4" y="394" font-size="12">Partial</text>
-<rect class="pendiente" x="186.8" y="384" width="12" height="12" rx="2"/>
-<text class="t2" x="203.8" y="394" font-size="12">Pending</text>
-<text class="t2" x="16" y="414" font-size="11">* Functions of the static Sony libraries linked into SCUS_973.99 (config/funcmap.csv). Hardware: weighted per component.</text>
+<text class="t2" x="33" y="394" font-size="12">Funciona</text>
+<rect class="parcial" x="108.6" y="384" width="12" height="12" rx="2"/>
+<rect x="108.6" y="384" width="12" height="12" rx="2" fill="url(#rayas)"/>
+<text class="t2" x="125.6" y="394" font-size="12">Parcial</text>
+<rect class="pendiente" x="194.0" y="384" width="12" height="12" rx="2"/>
+<text class="t2" x="211.0" y="394" font-size="12">Pendente</text>
+<text class="t2" x="16" y="414" font-size="11">* Funções das bibliotecas estáticas da Sony ligadas em SCUS_973.99 (config/funcmap.csv). Hardware: ponderado por componente.</text>
 </svg>

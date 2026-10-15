@@ -2,7 +2,11 @@
 """Genera el mapa de estado del port (treemap SVG) y su tabla de detalle.
 
 Entradas:  docs/estado/datos.toml, config/funcmap.csv
-Salidas:   docs/estado/mapa.<idioma>.svg, docs/estado/detalle.<idioma>.md   (idiomas: es, en, pt-BR)
+Salidas:   docs/estado/mapa.<plataforma>.<idioma>.svg, docs/estado/detalle.<idioma>.md
+           (plataformas: linux, windows; idiomas: es, en, pt-BR)
+
+Cada elemento de datos.toml tiene un `estado` que vale para las dos plataformas; opcionalmente `linux`
+(estado distinto en Linux) y `nota_linux`. Un componente de hardware con `solo = "linux"` no aparece en el mapa de Windows.
 
 Uso:  python tools/estado/generar.py             (regenera los archivos)
       python tools/estado/generar.py --comprobar (falla si los archivos no estan al dia)
@@ -27,6 +31,7 @@ FUNCMAP = RAIZ / "config" / "funcmap.csv"
 SALIDA = RAIZ / "docs" / "estado"
 
 ESTADOS = ("ok", "parcial", "pendiente")
+PLATAFORMAS = ("linux", "windows")
 
 # clave interna -> (sufijo de archivo, clave en datos.toml)
 IDIOMAS = {"es": ("es", "es"), "en": ("en", "en"), "pt-BR": ("pt-BR", "pt")}
@@ -48,7 +53,8 @@ TEXTOS = {
                          "`config/funcmap.csv`. No lo edites a mano.",
         "col_lib": "Librería", "col_func": "Funciones", "col_estado": "Estado", "col_nota": "Nota",
         "col_comp": "Componente", "col_grupo": "Grupo", "col_peso": "Peso",
-        "total": "Total",
+        "total": "Total", "linux": "Linux", "windows": "Windows", "no_aplica": "—",
+        "resumen": "Resumen", "col_plat": "Plataforma",
     },
     "en": {
         "titulo": "Status",
@@ -66,7 +72,8 @@ TEXTOS = {
                          "`config/funcmap.csv`. Do not edit by hand.",
         "col_lib": "Library", "col_func": "Functions", "col_estado": "Status", "col_nota": "Note",
         "col_comp": "Component", "col_grupo": "Group", "col_peso": "Weight",
-        "total": "Total",
+        "total": "Total", "linux": "Linux", "windows": "Windows", "no_aplica": "—",
+        "resumen": "Summary", "col_plat": "Platform",
     },
     "pt-BR": {
         "titulo": "Status",
@@ -84,7 +91,8 @@ TEXTOS = {
                          "`config/funcmap.csv`. Não edite à mão.",
         "col_lib": "Biblioteca", "col_func": "Funções", "col_estado": "Status", "col_nota": "Nota",
         "col_comp": "Componente", "col_grupo": "Grupo", "col_peso": "Peso",
-        "total": "Total",
+        "total": "Total", "linux": "Linux", "windows": "Windows", "no_aplica": "—",
+        "resumen": "Resumo", "col_plat": "Plataforma",
     },
 }
 
@@ -125,12 +133,22 @@ def comprobar_estado(estado: str, donde: str) -> str:
     return estado
 
 
+def estado_y_nota(item: dict, plataforma: str, idioma: str, donde: str) -> tuple[str, str]:
+    """Estado y nota de un elemento en una plataforma (`linux`/`nota_linux` solo cambian Linux)."""
+    if plataforma == "linux":
+        estado = item.get("linux", item["estado"])
+        nota = item.get("nota_linux", item.get("nota"))
+    else:
+        estado, nota = item["estado"], item.get("nota")
+    return comprobar_estado(estado, donde), texto(nota, idioma)
+
+
 def cargar_funciones() -> list[tuple[int, int]]:
     with FUNCMAP.open(newline="", encoding="utf-8") as f:
         return sorted((int(r["Start"], 16), int(r["Size"])) for r in csv.DictReader(f))
 
 
-def librerias(datos: dict, idioma: str) -> tuple[list[Grupo], list[dict]]:
+def librerias(datos: dict, idioma: str, plataforma: str) -> tuple[list[Grupo], list[dict]]:
     lib = datos["librerias"]
     entradas = sorted(lib["grupo"], key=lambda g: g["inicio"])
     inicios = [g["inicio"] for g in entradas]
@@ -149,11 +167,11 @@ def librerias(datos: dict, idioma: str) -> tuple[list[Grupo], list[dict]]:
 
     info = {}
     for g in entradas:
-        estado = comprobar_estado(g["estado"], g["nombre"])
+        estado, nota = estado_y_nota(g, plataforma, idioma, g["nombre"])
         previo = info.get(g["nombre"])
         if previo and previo["estado"] != estado:
             sys.exit(f"datos.toml: '{g['nombre']}' aparece con estados distintos")
-        info[g["nombre"]] = {"estado": estado, "nota": texto(g.get("nota"), idioma) or (previo or {}).get("nota", "")}
+        info[g["nombre"]] = {"estado": estado, "nota": nota or (previo or {}).get("nota", "")}
 
     grupos, filas = [], []
     for nombre in orden:
@@ -166,14 +184,15 @@ def librerias(datos: dict, idioma: str) -> tuple[list[Grupo], list[dict]]:
     return grupos, filas
 
 
-def hardware(datos: dict, idioma: str) -> tuple[list[Grupo], list[dict]]:
+def hardware(datos: dict, idioma: str, plataforma: str) -> tuple[list[Grupo], list[dict]]:
     grupos, filas = [], []
     for g in datos["hardware"]["grupo"]:
         celdas, pesos, cortos = [], [], []
         for c in g["componente"]:
-            estado = comprobar_estado(c["estado"], c["corto"])
+            if c.get("solo", plataforma) != plataforma:
+                continue
+            estado, nota = estado_y_nota(c, plataforma, idioma, c["corto"])
             nombre = texto(c["nombre"], idioma)
-            nota = texto(c.get("nota"), idioma)
             celdas.append(Celda(nombre + (f" — {nota}" if nota else ""), estado))
             pesos.append(float(c.get("peso", 1)))
             cortos.append(c["corto"])
@@ -377,8 +396,9 @@ def dibujar_panel(grupos: list[Grupo], x: float, y: float, w: float, h: float) -
     return out + etiquetas
 
 
-def svg(idioma: str, lib: list[Grupo], hw: list[Grupo]) -> str:
+def svg(idioma: str, plataforma: str, lib: list[Grupo], hw: list[Grupo]) -> str:
     t = TEXTOS[idioma]
+    titulo = f'{t["titulo"]} · {t[plataforma]}'
     p_lib, ok_lib, tot_lib = porcentaje(lib)
     p_hw, _, _ = porcentaje(hw)
     w_panel = (ANCHO - 2 * MARGEN - SEP_PANELES) / 2
@@ -390,13 +410,13 @@ def svg(idioma: str, lib: list[Grupo], hw: list[Grupo]) -> str:
 
     o = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{ANCHO}" height="{alto}" viewBox="0 0 {ANCHO} {alto}" '
          f'{FUENTE} role="img" aria-labelledby="titulo-estado">',
-         f'<title id="titulo-estado">{escape(t["titulo"])}: {escape(t["librerias"])} {fmt_pct(p_lib)}, '
+         f'<title id="titulo-estado">{escape(titulo)}: {escape(t["librerias"])} {fmt_pct(p_lib)}, '
          f'{escape(t["hardware"])} {fmt_pct(p_hw)}</title>',
          f"<style>{ESTILO}</style>",
          '<defs><pattern id="rayas" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
          '<line class="rayado" x1="0" y1="0" x2="0" y2="6" stroke-width="1.5" stroke-opacity=".55"/></pattern></defs>',
          f'<rect class="fondo" width="{ANCHO}" height="{alto}" rx="6"/>',
-         f'<text class="t1" x="{MARGEN}" y="34" font-size="24" font-weight="600">{escape(t["titulo"])}</text>',
+         f'<text class="t1" x="{MARGEN}" y="34" font-size="24" font-weight="600">{escape(titulo)}</text>',
          f'<line class="borde" x1="{MARGEN}" y1="44" x2="{ANCHO - MARGEN}" y2="44" stroke-width="1"/>']
     x = MARGEN
     for clave, p in ((t["librerias"], p_lib), (t["hardware"], p_hw)):
@@ -431,22 +451,37 @@ def svg(idioma: str, lib: list[Grupo], hw: list[Grupo]) -> str:
 # ---------------------------------------------------------------------------------------------------------
 
 
-def markdown(idioma: str, lib: list[Grupo], filas_lib: list[dict], hw: list[Grupo], filas_hw: list[dict]) -> str:
+def markdown(idioma: str, datos: dict) -> str:
     t = TEXTOS[idioma]
-    sufijo = IDIOMAS[idioma][0]
-    p_lib, ok_lib, tot_lib = porcentaje(lib)
-    p_hw, _, _ = porcentaje(hw)
-    estado = lambda e: f"{ICONO[e]} {t[e]}"
-    o = [f"# {t['detalle_titulo']}", "", f"![{t['titulo']}](mapa.{sufijo}.svg)", "", t["detalle_intro"], "",
-         f"## {t['panel_lib']}: {fmt_pct(p_lib)} ({int(ok_lib)}/{int(tot_lib)})", "",
-         f"| {t['col_lib']} | {t['col_func']} | {t['col_estado']} | {t['col_nota']} |", "|---|---:|---|---|"]
-    for f in sorted(filas_lib, key=lambda f: f["desde"]):
-        o.append(f"| `{f['nombre']}` | {f['n']} | {estado(f['estado'])} | {f['nota']} |")
-    o += ["", f"## {t['panel_hw']}: {fmt_pct(p_hw)}", "",
-          f"| {t['col_grupo']} | {t['col_comp']} | {t['col_peso']} | {t['col_estado']} | {t['col_nota']} |",
-          "|---|---|---:|---|---|"]
-    for f in filas_hw:
-        o.append(f"| {f['grupo']} | {f['nombre']} | {f['peso']} | {estado(f['estado'])} | {f['nota']} |")
+    por = {pl: (*librerias(datos, idioma, pl), *hardware(datos, idioma, pl)) for pl in PLATAFORMAS}
+    est = lambda e: f"{ICONO[e]} {t[e]}" if e else t["no_aplica"]
+    nota = lambda w, l: (w or l) if w == l or not l else (f"{w} **{t['linux']}:** {l}" if w else f"**{t['linux']}:** {l}")
+
+    o = [f"# {t['detalle_titulo']}", "",
+         f"![{t['titulo']} · {t['linux']}](mapa.linux.{IDIOMAS[idioma][0]}.svg)", "",
+         f"![{t['titulo']} · {t['windows']}](mapa.windows.{IDIOMAS[idioma][0]}.svg)", "", t["detalle_intro"], "",
+         f"## {t['resumen']}", "", f"| {t['col_plat']} | {t['panel_lib']} | {t['panel_hw']} |", "|---|---:|---:|"]
+    for pl in PLATAFORMAS:
+        lib, _, hw, _ = por[pl]
+        p_lib, ok, tot = porcentaje(lib)
+        o.append(f"| {t[pl]} | {fmt_pct(p_lib)} ({int(ok)}/{int(tot)}) | {fmt_pct(porcentaje(hw)[0])} |")
+
+    filas_w = {f["nombre"]: f for f in por["windows"][1]}
+    o += ["", f"## {t['panel_lib']}", "",
+          f"| {t['col_lib']} | {t['col_func']} | {t['windows']} | {t['linux']} | {t['col_nota']} |", "|---|---:|---|---|---|"]
+    for f in sorted(por["linux"][1], key=lambda f: f["desde"]):
+        w = filas_w[f["nombre"]]
+        o.append(f"| `{f['nombre']}` | {f['n']} | {est(w['estado'])} | {est(f['estado'])} | {nota(w['nota'], f['nota'] if f['nota'] != w['nota'] else '')} |")
+
+    filas_w = {(f["grupo"], f["nombre"]): f for f in por["windows"][3]}
+    o += ["", f"## {t['panel_hw']}", "",
+          f"| {t['col_grupo']} | {t['col_comp']} | {t['col_peso']} | {t['windows']} | {t['linux']} | {t['col_nota']} |",
+          "|---|---|---:|---|---|---|"]
+    for f in por["linux"][3]:
+        w = filas_w.get((f["grupo"], f["nombre"]))
+        nw = w["nota"] if w else ""
+        o.append(f"| {f['grupo']} | {f['nombre']} | {f['peso']} | {est(w['estado'] if w else '')} | {est(f['estado'])} | "
+                 f"{nota(nw, f['nota'] if f['nota'] != nw else '') if w else f['nota']} |")
     o += ["", t["pie"], ""]
     return "\n".join(o)
 
@@ -461,11 +496,12 @@ def main() -> int:
 
     esperados: dict[Path, str] = {}
     for idioma in IDIOMAS:
-        lib, filas_lib = librerias(datos, idioma)
-        hw, filas_hw = hardware(datos, idioma)
         sufijo = IDIOMAS[idioma][0]
-        esperados[SALIDA / f"mapa.{sufijo}.svg"] = svg(idioma, lib, hw)
-        esperados[SALIDA / f"detalle.{sufijo}.md"] = markdown(idioma, lib, filas_lib, hw, filas_hw)
+        for pl in PLATAFORMAS:
+            lib, _ = librerias(datos, idioma, pl)
+            hw, _ = hardware(datos, idioma, pl)
+            esperados[SALIDA / f"mapa.{pl}.{sufijo}.svg"] = svg(idioma, pl, lib, hw)
+        esperados[SALIDA / f"detalle.{sufijo}.md"] = markdown(idioma, datos)
 
     desfasados = [p for p, c in esperados.items()
                   if not p.exists() or p.read_text(encoding="utf-8") != c]
