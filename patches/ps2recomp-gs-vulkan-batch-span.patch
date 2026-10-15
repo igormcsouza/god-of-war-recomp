@@ -1,0 +1,60 @@
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -1095,6 +1095,11 @@
+             return kTexWar;
+         if ((frames & batchDepths).any() || (depths & batchFrames).any())
+             return kFrameZ;
++        // GOW-Port: the kernel's tile mask (see main) makes a tile skip every primitive that misses it, so a batch may span
++        // the whole screen; the old bound (every thread walks the whole batch) is only kept for A/B (GOW_VK_OLD_UNION=1).
++        static const bool oldUnion = [] { const char *e = std::getenv("GOW_VK_OLD_UNION"); return e && *e && *e != '0'; }();
++        if (!oldUnion)
++            return kJoin;
+         // Every thread of the union rectangle walks the whole batch: keep that near the useful work.
+         const int x0 = std::min(batchRect[0], rec.rect[0]), y0 = std::min(batchRect[1], rec.rect[1]);
+         const int x1 = std::max(batchRect[2], rec.rect[2]), y1 = std::max(batchRect[3], rec.rect[3]);
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -396,6 +396,21 @@
+         return out;
+     }
+ 
++    // Small sprites in the four corners of the screen: they share no page and no hazard, so they are one batch.
++    std::vector<GSPrimitiveBatch> cornerScene()
++    {
++        std::vector<GSPrimitiveBatch> out;
++        for (int k = 0; k < 12; ++k)
++        {
++            auto s = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);
++            const float x = (k & 1) ? 624.0f - 8 * (k / 4) : 4.0f + 8 * (k / 4);
++            const float y = (k & 2) ? 430.0f - 8 * (k / 4) : 4.0f + 8 * (k / 4);
++            vertex(s, 0, x, y, 0); vertex(s, 1, x + 8, y + 8, 0x80102030u + 0x01010101u * uint32_t(k));
++            out.push_back(s);
++        }
++        return out;
++    }
++
+     template <typename Backend>
+     std::vector<uint8_t> render(Backend &backend)
+     {
+@@ -597,8 +612,9 @@
+ #endif
+         });
+ 
+-        // GOW-Port: batching. Z pages that are only tested are not written by the batch; real hazards still split it.
+-        test.Run("Vulkan batches Z-tested pages read as texture", [](TestCase &t) {
++        // GOW-Port: batching. Z pages that are only tested are not written by the batch, and the whole screen may be one
++        // batch (the kernel's tile mask skips primitives that miss a tile); real hazards still split the batch.
++        test.Run("Vulkan batches Z-tested pages read as texture and distant sprites", [](TestCase &t) {
+ #if defined(PS2X_GS_VULKAN)
+             setStatsEnv(true);
+             GSVulkanBackend vulkan;
+@@ -612,6 +628,7 @@
+             const Case cases[] = {
+                 {"Z tested only, same pages read as texture", zTextureScene(false), 1},
+                 {"Z written, same pages read as texture", zTextureScene(true), 2},
++                {"twelve distant sprites", cornerScene(), 1},
+             };
+             for (const Case &c : cases)
+             {
