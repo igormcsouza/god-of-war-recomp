@@ -1,0 +1,67 @@
+diff --git a/ps2xIOP/src/emulator/core/spu2.cpp b/ps2xIOP/src/emulator/core/spu2.cpp
+index 5883746..fbe7a21 100644
+--- a/ps2xIOP/src/emulator/core/spu2.cpp
++++ b/ps2xIOP/src/emulator/core/spu2.cpp
+@@ -255,7 +255,6 @@ namespace ps2x::iop::detail
+         if ((v.blockFlags & 1u) != 0u)
+         {
+             m_endx[core] |= 1u << index;
+-            v.nax = v.lsa;
+             if ((v.blockFlags & 2u) == 0u)
+             {
+                 v.active = false;
+@@ -293,7 +292,12 @@ namespace ps2x::iop::detail
+         }
+         checkIrqAddress(block);
+         v.decodedIndex = 0;
+-        v.nax = (block + 8u) & (RamHalfwords - 1u);
++        // GOW-Port: con la marca de fin la direccion siguiente es LSA desde que se lee ese bloque, no cuando acaba
++        // de sonar: el hardware nunca muestra NAX justo detras del buffer. 989snd comprueba que NAX caiga dentro
++        // de su buffer de streaming y, con NAX justo detras de el, abandonaba la corriente (la musica se cortaba y
++        // reiniciaba cada 0,36 s cuando su sondeo de 4 ms coincidia con el ultimo bloque). LSA queda fijado aqui:
++        // lo que el driver escriba despues vale para el siguiente final de bucle.
++        v.nax = (v.blockFlags & 1u) != 0u ? v.lsa & (RamHalfwords - 1u) : (block + 8u) & (RamHalfwords - 1u);
+     }
+ 
+     void Spu2::stepEnvelope(uint32_t core, uint32_t index)
+diff --git a/ps2xTest/src/ps2_spu2_tests.cpp b/ps2xTest/src/ps2_spu2_tests.cpp
+index 3ff7e65..fd9ae83 100644
+--- a/ps2xTest/src/ps2_spu2_tests.cpp
++++ b/ps2xTest/src/ps2_spu2_tests.cpp
+@@ -138,13 +138,35 @@ void register_ps2_spu2_tests()
+                 spu.step();
+             t.IsFalse(spu.voice(0u, 0u).active, "a block ending without repeat should silence the voice");
+             t.IsTrue(spu.voice(0u, 1u).active, "a repeating block should keep the voice playing");
+-            t.Equals(spu.voice(0u, 1u).nax, 0x3008u, "the repeating voice should have jumped back to its loop start");
++            // GOW-Port: el bloque con la marca de fin apunta a LSA desde que se lee; este bucle es de un solo bloque.
++            t.Equals(spu.voice(0u, 1u).nax, 0x3000u, "the repeating voice should have jumped back to its loop start");
+             t.Equals(spu.read16(kBase + Spu2::RegEndx), static_cast<uint16_t>(0x0003u),
+                      "both voices should report the end flag in ENDX");
+             spu.write16(kBase + Spu2::RegEndx, 0u);
+             t.Equals(spu.read16(kBase + Spu2::RegEndx), static_cast<uint16_t>(0u), "writing ENDX should clear it");
+         });
+ 
++        tc.Run("NAX never shows the end of a looping buffer: LSA is latched when the end block is read", [](TestCase &t)
++        {
++            // GOW-Port: 989snd comprueba que NAX caiga dentro de su buffer de streaming; con NAX = fin + 8 abandona
++            // la corriente. El hardware salta a LSA al leer el bloque con la marca de fin.
++            Spu2 spu;
++            writeBlock(spu, 0x2000u, 0u, 0u, 0x03u, {1u}); // fin + repetir (ultimo bloque del buffer A)
++            writeBlock(spu, 0x3000u, 0u, 0u, 0x00u, {1u}); // buffer B
++            writeBlock(spu, 0x4000u, 0u, 0u, 0x00u, {1u}); // destino que el driver escribe demasiado tarde
++            setupVoice0(spu, 0x2000u);
++            spu.write16(kBase + Spu2::RegKon, 0x0001u);
++            setAddr(spu, Spu2::RegVoiceAddr + 4u, 0x3000u); // LSAX tras el KON, como hace 989snd
++            spu.step();                                     // decodifica el bloque con la marca de fin
++            const uint32_t nax = (static_cast<uint32_t>(spu.read16(kBase + Spu2::RegVoiceAddr + 8u)) << 16u) |
++                                 spu.read16(kBase + Spu2::RegVoiceAddr + 10u);
++            t.Equals(nax, 0x3000u, "NAX should already point at the loop start while the end block plays");
++            setAddr(spu, Spu2::RegVoiceAddr + 4u, 0x4000u); // el driver reajusta LSAX para el siguiente final
++            for (int i = 0; i < 40; ++i)
++                spu.step();
++            t.Equals(spu.voice(0u, 0u).nax, 0x3008u, "the jump should use the LSA read with the end block");
++        });
++
+         tc.Run("ADSR attacks to full level and releases to silence after KOFF", [](TestCase &t)
+         {
+             Spu2 spu;

@@ -7368,3 +7368,35 @@ Follow-up of the diagnosis above (`patches/ps2recomp-cdvd-read-latency.patch`, r
   run), so the restart state inside 989snd/smpd is what differs from the first start (the third read `0xBB897` is never
   requested). Next: compare the smpd/989snd thread and semaphore traffic of the first start (KON 3.19 s) with the first
   restart; the old `GOW_SPU2_DIAG` logging is still uncommitted WIP in `PS2Recomp/`.
+
+## Menu/movie audio: the "repeating fragment" was NAX = end of buffer (2026-10-15, Linux) - fixed
+
+Root cause of the music that stops after a few seconds and restarts every ~0.36 s (the loop restart was a symptom, not a
+restart-state difference). Found by watching 989snd's stream tick (temporary `IOP` import trace and PC watch, removed):
+
+- **Not threads/semaphores/events/alarms.** The first start and the restart run the same smpd/989snd code; the third read
+  `0xBB897` was missing because 989snd had already stopped the stream. `SetAlarm`/`CancelAlarm` (thbase 35-38) are no-ops
+  in the HLE, but 989snd/smpd never call them (only two hard timers, the 4.17 ms sound tick). Side finding, not fixed:
+  `GetSystemTimeLow` (thbase 43, 862 calls from smpd's reader thread) is unimplemented and returns a stale `v0`; smpd only
+  uses it for its read-time statistics.
+- **The cause.** The sound tick (T13, every ~4.17 ms) reads each stream voice's NAX and requires it to lie in the
+  stream buffer (`[base, base + size)`, per channel: buffer A `0x2820-0x3020` / B `0x7820-0x8020` in halfword units).
+  Outside that window for >= 9 ticks (or immediately when NAX is just past the window) it calls its stop-stream routine
+  (KOFF, `989nomid.irx` 0x38884). Our SPU2 resolved the loop jump lazily: after decoding the block with the loop-end flag
+  `nax` stayed at `block + 8` (= the end of the buffer) until the *next* block was decoded, i.e. NAX read exactly `0x8020`
+  for one block time (~0.66 ms at pitch 0x0EB3). A tick landing in that 0.66 ms window killed the stream. The half
+  period (162.6 ms) is almost exactly 39 ticks, so the tick phase is locked to the KON and a start is either always or
+  never hit: that is why the onset moved between runs (1.3-4.5 s) and why restarts always died at the 2nd boundary
+  (0.325 s). The earlier "the clip is 240 sectors and ends at `0xBB957`" was wrong: the stream is ~2.9 MB (58.6 s).
+- **Fix** (`patches/ps2recomp-spu2-loop-latch.patch`, registered last): the loop target is latched when the block with
+  the loop-end flag is decoded (`nax = lsa` right away, ENDX / key-off still at the end of the block), so NAX never
+  shows the address after the buffer. A first attempt that only reported LSA in the NAX register read made it worse:
+  989snd then saw the next half early, rewrote LSAX, and the deferred jump used the new LSA. Test: `ps2xTest`
+  "NAX never shows the end of a looping buffer: LSA is latched when the end block is read" (fails without the change);
+  the existing "loop end flags stop or repeat the voice" test now expects `nax == 0x3000` for a one-block loop (a block
+  that has the loop-end flag points at its LSA from the moment it is read).
+- **Verified** (menu, `GOW_SKIP_FMV=1`, `GOW_SPU2_DIAG=1`, `GOW_AUDIO=0`, 230 s): KON at 3.195 s and then no KOFF; the
+  CD stream reads one 16-sector chunk every 0.65 s (`0xBB897`... up to LSN 769429) and the track plays 58.6 s, restarts
+  with a new KON at 61.809 / 120.425 / 179.041 s (three full loops, same period). Before the fix every run died after
+  0.65-7.5 s. Not verified by ear (audio muted for the diagnosis). `ps2x_tests` 642 pass; 138 patches apply in order on
+  a fresh pinned tree.
