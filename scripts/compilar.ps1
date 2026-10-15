@@ -130,6 +130,7 @@ $linuxDefaultsPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-defaults.patc
 $linuxBuildPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-build.patch'
 $padMappingsPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings.patch'
 $mpegDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-diag.patch'
+$gifTraceDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-trace-diag.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -284,6 +285,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxDefaultsPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxBuildPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegDiagPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gifTraceDiagPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

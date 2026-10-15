@@ -36,3 +36,4 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 ## Log
 - 2026-10-15: Intro-movie garbage hunt. Garbage starts ~5-10 frames after the MPEG starts, not at the end, and the visible picture is NOT our decoded buffer. Root cause still open; see ESTADO.md 'Intro movie garbage is not an end-of-stream problem'. Added `GOW_MPEG_DIAG`.
 - 2026-10-15: Emulator research (PCSX2 GameDB/GSRendererHW/Gif_Unit/IPU) written to docs/EMULATOR_RESEARCH.md with ranked ideas for intro-FMV garbage and feedback/z-alias perf.
+- 2026-10-15: Intro-movie hunt 2: added `GOW_GIF_TRACE` (patches/ps2recomp-gif-trace-diag.patch). Between picture 1 and 2 the game emits ~296k PATH1 packets (~110 frames of geometry), no masked/interleaved PATH3 traffic: GIF/PATH3 arbitration is cleared; suspect EE-side waits in `sceMpegGetPicture` (continues after waitExternal/waitVSync). Details in ESTADO.md.
