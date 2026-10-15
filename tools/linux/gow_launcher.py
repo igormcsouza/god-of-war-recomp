@@ -574,7 +574,10 @@ def _runner_path(explicit: Path | None) -> Path:
     elif os.environ.get("GOW_RUNNER"):
         runner = Path(os.environ["GOW_RUNNER"])
     else:
-        runner = Path(__file__).resolve().parents[2] / "bin" / "ps2EntryRunner"
+        root = Path(__file__).resolve().parents[2]
+        runner = root / "bin" / "ps2EntryRunner"
+        if not runner.is_file():  # development build from scripts/compilar_linux.py
+            runner = root / "PS2Recomp" / "build" / "ps2xRuntime" / "ps2EntryRunner"
     runner = runner.expanduser().resolve()
     if not runner.is_file() or not os.access(runner, os.X_OK):
         raise IsoError(f"native runner not found or not executable: {runner}; use --runner")
