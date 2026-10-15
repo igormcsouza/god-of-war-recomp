@@ -1,0 +1,51 @@
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1559,6 +1559,8 @@
+     executeVU0Microprogram(rdram, ctx, address);
+ }
+ 
++extern std::atomic<uint32_t> g_gowMpegServed; // GOW-Port: MPEG.cpp
++
+ void PS2Runtime::handleSyscall(uint8_t *rdram, R5900Context *ctx)
+ {
+     handleSyscall(rdram, ctx, 0);
+@@ -1576,6 +1578,38 @@
+                                    ? encodedSyscallId
+                                    : getRegU32(ctx, 3); // $v1 / $3 is the EE kernel syscall number
+ 
++    // GOW-Port: GOW_MPEG_DIAG=1: once per second after the first served MPEG picture, print a histogram of the
++    // syscalls issued by the EE (id:count@last_ra) with the VSync tick, to see which wait loop spins.
++    {
++        static const bool diag = []() { const char *e = std::getenv("GOW_MPEG_DIAG"); return e && *e && *e != '0'; }();
++        if (diag && g_gowMpegServed.load(std::memory_order_relaxed) != 0u)
++        {
++            static uint32_t cnt[1024];
++            static uint32_t lastRa[1024];
++            static auto last = std::chrono::steady_clock::now();
++            const uint32_t id = syscallId & 1023u;
++            ++cnt[id];
++            lastRa[id] = getRegU32(ctx, 31);
++            const auto now = std::chrono::steady_clock::now();
++            if (now - last > std::chrono::seconds(1))
++            {
++                last = now;
++                std::ostringstream o;
++                o << "[gow-mpeg] syscalls vsync=" << m_eeScheduler->currentVSyncTick() << " served="
++                  << g_gowMpegServed.load() << ":";
++                for (uint32_t i = 0; i < 1024u; ++i)
++                {
++                    if (cnt[i])
++                    {
++                        o << " " << std::hex << i << std::dec << ":" << cnt[i] << "@0x" << std::hex << lastRa[i] << std::dec;
++                        cnt[i] = 0;
++                    }
++                }
++                std::cerr << o.str() << std::endl;
++            }
++        }
++    }
++
+     if (ps2_syscalls::dispatchNumericSyscall(syscallId, rdram, ctx, this))
+     {
+         return;
