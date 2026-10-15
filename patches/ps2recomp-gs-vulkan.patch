@@ -136,10 +136,10 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..72160f4
+index 0000000..52e7cf2
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,1393 @@
+@@ -0,0 +1,1436 @@
 +// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
 +// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
@@ -162,6 +162,7 @@ index 0000000..72160f4
 +#include <cstdio>
 +#include <map>
 +#include <string>
++#include <unordered_map>
 +#include <cstdlib>
 +#include <cstring>
 +
@@ -473,6 +474,41 @@ index 0000000..72160f4
 +        for (uint32_t py = static_cast<uint32_t>(y0) / ph; py <= static_cast<uint32_t>(y1) / ph; ++py)
 +            for (uint32_t px = static_cast<uint32_t>(x0) / pw; px <= static_cast<uint32_t>(x1) / pw; ++px)
 +                out.set((basePage + py * bw + px) & 511u);
++    }
++
++
++    // GOW-Port: frame/Z alias proof. The shader already addresses the frame with its PSM and Z with the Z PSM, so the only
++    // danger is two different pixels owning one word. 32-bit frame (CT32/CT24) and Z (Z32/Z24) share the column layout and
++    // differ only in the block table, so words are compared per 8x8 pixel block: a frame block may match a Z block only of
++    // the same pixel block (then each word belongs to one thread). Any other match -> CPU row order.
++    static bool frameZAliasSafe(uint32_t fbBlock, uint32_t zBlock, uint32_t bw, uint32_t fpsm, uint32_t zpsm, int x0, int y0, int x1, int y1)
++    {
++        static constexpr uint8_t kZBlock[4][8] = {{24, 25, 28, 29, 8, 9, 12, 13}, {26, 27, 30, 31, 10, 11, 14, 15},
++                                                  {16, 17, 20, 21, 0, 1, 4, 5}, {18, 19, 22, 23, 2, 3, 6, 7}};
++        static constexpr uint8_t kCBlock[4][8] = {{0, 1, 4, 5, 16, 17, 20, 21}, {2, 3, 6, 7, 18, 19, 22, 23},
++                                                  {8, 9, 12, 13, 24, 25, 28, 29}, {10, 11, 14, 15, 26, 27, 30, 31}};
++        if ((fpsm != GS_PSM_CT32 && fpsm != GS_PSM_CT24) || (zpsm != GS_PSM_Z32 && zpsm != GS_PSM_Z24))
++            return false;
++        bw = std::max(bw, 1u);
++        const int bx0 = x0 >> 3, bx1 = x1 >> 3, by0 = y0 >> 3, by1 = y1 >> 3;
++        if ((bx1 - bx0 + 1) * (by1 - by0 + 1) > 20000)
++            return false;
++        auto blockId = [&](uint32_t base, const uint8_t (*tab)[8], int bx, int by) {
++            const uint32_t page = (base >> 5) + static_cast<uint32_t>((by >> 2) * static_cast<int>(bw) + (bx >> 3));
++            return (page << 5) + (base & 31u) + tab[by & 3][bx & 7];
++        };
++        std::unordered_map<uint32_t, uint32_t> zOwner; // Z block -> pixel block (by * 4096 + bx)
++        for (int by = by0; by <= by1; ++by)
++            for (int bx = bx0; bx <= bx1; ++bx)
++                zOwner[blockId(zBlock, kZBlock, bx, by)] = static_cast<uint32_t>(by * 4096 + bx);
++        for (int by = by0; by <= by1; ++by)
++            for (int bx = bx0; bx <= bx1; ++bx)
++            {
++                const auto it = zOwner.find(blockId(fbBlock, kCBlock, bx, by));
++                if (it != zOwner.end() && it->second != static_cast<uint32_t>(by * 4096 + bx))
++                    return false;
++            }
++        return true;
 +    }
 +
 +
@@ -1255,12 +1291,19 @@ index 0000000..72160f4
 +        std::string k(b);
 +        if (++seen[k] == 1 && seen.size() < 80) std::fprintf(stderr, "[fbdiag] %s\n", b);
 +    };
++    bool aliasing = false;
 +    if ((frames & depths).any())
 +    {
-+        // Z32/Z24 pages are swizzled differently from CT32/CT24, so a frame pixel and a Z pixel at the same address belong
-+        // to different positions: the result depends on the CPU's row order and the primitive stays on the CPU.
-+        fbDiag("z-alias");
-+        return "z-alias";
++        // GOW-Port: frame and Z pages overlap. Safe on the GPU when no word is shared between two different pixels (see
++        // frameZAliasSafe); texture reads of those pages stay on the CPU (below).
++        static const bool noZAlias = std::getenv("GOW_VK_NO_ZALIAS") != nullptr; // A/B switch
++        if (noFeedbackOpt() || noZAlias || !frameZAliasSafe(GSInternal::framePageBaseToBlock(ctx.frame.fbp), GSInternal::framePageBaseToBlock(ctx.zbuf.zbp),
++                                                ctx.frame.fbw, ctx.frame.psm, ctx.zbuf.psm, x0, y0, x1, y1))
++        {
++            fbDiag("z-alias");
++            return "z-alias";
++        }
++        aliasing = true;
 +    }
 +    writes = frames | depths;
 +    const PageSet texHazard = ((rec.zbuf & 0x4000000u) || noFeedbackOpt() ? writes : frames); // Z pages that are only tested are read-only
@@ -1309,7 +1352,7 @@ index 0000000..72160f4
 +        }
 +        bool selfDisjoint = false;
 +        texturePages(reads, state, boxed ? bb : nullptr);
-+        if (noFeedbackOpt())
++        if (noFeedbackOpt() || aliasing)
 +            ;
 +        else if (state.prim.type == GS_PRIM_SPRITE && spriteReadsOwnPixel(state, rec.axis, rec.attr, x0, y0, x1, y1))
 +            reads.reset(); // GOW-Port: reads only its own pixel (see spriteReadsOwnPixel)
@@ -2177,10 +2220,10 @@ index 26c2de7..85c1fb1 100644
      runGpuUploadRingTests();
 diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
 new file mode 100644
-index 0000000..2d626c3
+index 0000000..191336d
 --- /dev/null
 +++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,498 @@
 +// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
 +#include "MiniTest.h"
 +#include "runtime/gs/gs_cpu_backend.h"
@@ -2478,6 +2521,21 @@ index 0000000..2d626c3
 +        za.vertices[1].z = 0x80000000u; // second one over it
 +        vertex(za, 0, 60, 330, 0); vertex(za, 1, 260, 420, 0x40C03010u);
 +        out.push_back(za);
++        // Frame and Z share pages but no word is shared by two different pixels (Z32/Z24 block table differs from CT32/CT24):
++        // one 8x8 block, a 64x16 strip (two block rows) and the CT24/Z24 variant stay on the GPU.
++        auto zs = [&](uint32_t fbp, uint32_t psm, uint32_t zpsm, float x0, float y0, float x1, float y1, uint32_t color, bool write) {
++            auto b = prim(GS_PRIM_SPRITE, psm, false);
++            b.state.context.frame = {fbp, 10, psm, 0};
++            b.state.context.zbuf = {fbp, zpsm, !write};
++            b.state.context.test = 0x10000u | (2u << 17);
++            vertex(b, 0, x0, y0, 0); vertex(b, 1, x1, y1, color);
++            b.vertices[1].z = 0x7FFFFFFF;
++            out.push_back(b);
++        };
++        zs(250, GS_PSM_CT32, GS_PSM_Z32, 8, 8, 16, 16, 0xFF30A0C0u, true);
++        zs(250, GS_PSM_CT32, GS_PSM_Z32, 0, 0, 64, 16, 0x80C03010u, true);
++        zs(260, GS_PSM_CT24, GS_PSM_Z24, 0, 0, 32, 8, 0xFF1080F0u, true);
++        zs(270, GS_PSM_CT32, GS_PSM_Z32, 0, 16, 64, 32, 0xFF204080u, false); // Z only tested
 +        auto zc = frameTex(GS_PRIM_SPRITE, false);                    // Z pages read as colour, Z only tested
 +        zc.state.context.frame = {300, 10, GS_PSM_CT32, 0};
 +        zc.state.context.tex0.tbp0 = 480 * 32;
@@ -2655,7 +2713,7 @@ index 0000000..2d626c3
 +            if (diff)
 +                std::printf("    first differing byte at 0x%zx\n", first);
 +            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
-+            t.Equals(vulkan.GpuPrimitives(), uint64_t(11), "Primitives drawn on the GPU (real feedback and Z aliasing stay on the CPU)");
++            t.Equals(vulkan.GpuPrimitives(), uint64_t(15), "Primitives drawn on the GPU (real feedback and Z aliasing that shares words stay on the CPU)");
 +            t.IsTrue(reference != noise(), "The scene changed VRAM");
 +#else
 +            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
