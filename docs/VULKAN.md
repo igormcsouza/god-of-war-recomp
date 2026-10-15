@@ -457,3 +457,20 @@ Hypotheses tested (RTX 5050 laptop + Intel RPL-P iGPU, Wayland session with XWay
 FPS table (40 s windows at t>55 s, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): default 15.5 / 15.0; NVIDIA PRIME offload env 14.9 / 15.2. `PS2X_VK_DEVICE=Intel` not run (the iGPU is slower
 and not the question). No software fix was found, so no code, launcher default or patch changed. Needing sudo (untested): `nvidia-smi -lgc` to pin clocks (not needed, clocks are already high).
 Real levers stay the same: per-present GPU time (~11-16 ms) and the `record-ring`/CPU-fallback waits in the serial GS worker.
+
+## Register-resident frame/Z words (2026-10-15, `ps2recomp-gs-vulkan-perf.patch`)
+
+Each thread keeps two write-back slots with the 32-bit VRAM words of its own frame/Z pixel (only 32/24-bit formats; a 16-bit or
+smaller access flushes and goes to memory, since neighbouring pixels share a word). Reads and writes of the batch hit the slots, the
+texture fetch checks the slots first (own-pixel feedback stays exact), and the words are written back once at the end of the thread.
+Replay (121 Presents, RTX 5050, 3 passes each, VRAM identical to the CPU replay, `ps2x_tests` 636 pass / 0 fail):
+
+| Step | GPU ms |
+|---|---|
+| before | 1328 |
+| 1. register-resident fb/Z words | 1188 (-10.6%) |
+| + memoised `locate()` per (format, base, width) | 1192 (no gain, reverted) |
+
+Not done (budget): step 2 (occupancy: merging batches, 2 px/thread) and step 3 (per-prim constants buffer). Game: one 80 s run
+(`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): difficulty menu at t=20 s and the rainy fight at t=65 s render correctly; no FPS A/B was measured
+(no `gow-delta` lines in that run's stderr).

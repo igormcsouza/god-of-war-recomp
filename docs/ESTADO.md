@@ -7272,3 +7272,7 @@ Hypotheses tested (RTX 5050 laptop + Intel RPL-P iGPU, Wayland session with XWay
 FPS table (40 s windows at t>55 s, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): default 15.5 / 15.0; NVIDIA PRIME offload env 14.9 / 15.2. `PS2X_VK_DEVICE=Intel` not run (the iGPU is slower
 and not the question). No software fix was found, so no code, launcher default or patch changed. Needing sudo (untested): `nvidia-smi -lgc` to pin clocks (not needed, clocks are already high).
 Real levers stay the same: per-present GPU time (~11-16 ms) and the `record-ring`/CPU-fallback waits in the serial GS worker.
+
+## Vulkan kernel: register-resident frame/Z words (2026-10-15)
+Replay GPU 1328 -> 1188 ms (-10.6%), byte-identical to the CPU replay; `ps2x_tests` 636 pass. Memoising `locate()` gave nothing.
+Details and limits (16-bit targets still go to memory; occupancy/merge-batches not tried): docs/VULKAN.md.
