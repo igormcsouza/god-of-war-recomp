@@ -1,0 +1,176 @@
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -968,6 +968,14 @@
+ 
+     ~Impl()
+     {
++        if (statsEnabled)
++        {
++            std::string t;
++            for (int r = 1; r < kReasons; ++r)
++                if (totClose[r])
++                    t += std::string(" ") + kCloseNames[r] + "=" + std::to_string(totClose[r]) + "/" + std::to_string(totCloseSize[r] / totClose[r]);
++            std::fprintf(stderr, "[gow-gs-vk-close-total]%s\n", t.c_str());
++        }
+         dropImport();
+         for (VkFence f : fences)
+             if (f)
+@@ -1069,6 +1077,7 @@
+     enum CloseReason : int { kJoin, kNoBatch, kCap, kTarget, kTexRaw, kTexWar, kFrameZ, kUnion, kPartial, kReasons };
+     static constexpr const char *kCloseNames[kReasons] = {"join", "none", "cap1024", "target", "tex-raw", "tex-war", "frame-z", "union", "partial512"};
+     uint64_t statsClose[kReasons]{}, statsCloseSize[kReasons]{};
++    uint64_t totClose[kReasons]{}, totCloseSize[kReasons]{}; // GOW-Port: never reset; printed at teardown (replay benchmark)
+ 
+     // 0 if `rec` (touching `reads`/`writes` pages) can join the open batch, else the CloseReason.
+     int joinBlock(const PrimRecord &rec, const uint32_t key[3], const PageSet &reads, const PageSet &writes,
+@@ -1344,6 +1353,11 @@
+     }
+     writes = frames | depths;
+     const PageSet texHazard = ((rec.zbuf & 0x4000000u) || noFeedbackOpt() ? writes : frames); // Z pages that are only tested are read-only
++    // GOW-Port: batch-mates share the frame/Z targets (same key), so a Z page that is only tested belongs to the thread
++    // of its pixel and conflicts with nothing a batch-mate reads as a texture (GoW keeps alpha textures in the unused
++    // part of the Z buffer). `writes` (all touched target pages) stays the run-level set for CPU transfer fences.
++    static const bool oldZBatch = [] { const char *e = std::getenv("GOW_VK_OLD_ZBATCH"); return e && *e && *e != '0'; }(); // A/B
++    const PageSet &batchW = oldZBatch ? writes : texHazard;
+     if (state.prim.tme)
+     {
+         // GOW-Port: a sprite with CLAMP/non-wrapping sampling reads only its UV box (+1 texel for bilinear).
+@@ -1448,13 +1462,15 @@
+     }
+     impl.runReads |= reads;
+     impl.runWrites |= writes;
+-    if (const int blocked = impl.joinBlock(rec, key, reads, writes, frames, depths))
++    if (const int blocked = impl.joinBlock(rec, key, reads, batchW, frames, depths))
+     {
+         const bool partial = impl.primCount - impl.primsAtSubmit >= kSubmitEvery;
+         if (impl.statsEnabled && impl.batchCount)
+         {
+             ++impl.statsClose[partial ? Impl::kPartial : blocked];
+             impl.statsCloseSize[partial ? Impl::kPartial : blocked] += impl.batchCount;
++            ++impl.totClose[partial ? Impl::kPartial : blocked];
++            impl.totCloseSize[partial ? Impl::kPartial : blocked] += impl.batchCount;
+         }
+         if (partial)
+             impl.submitPartial();
+@@ -1477,7 +1493,7 @@
+     impl.batchRect[2] = std::max(impl.batchRect[2], rec.rect[2]);
+     impl.batchRect[3] = std::max(impl.batchRect[3], rec.rect[3]);
+     impl.batchPixels += static_cast<uint64_t>(rec.rect[2] - rec.rect[0] + 1) * (rec.rect[3] - rec.rect[1] + 1);
+-    impl.batchWrites |= writes;
++    impl.batchWrites |= batchW;
+     impl.batchReads |= reads;
+     impl.batchFrames |= frames;
+     impl.batchDepths |= depths;
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -9,6 +9,7 @@
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
++#include <string>
+ #include <vector>
+ 
+ #if defined(PS2X_GS_VULKAN)
+@@ -341,6 +342,60 @@
+         return vram;
+     }
+ 
++    // GOW-Port: batching. A scene with its VRAM and the number of GPU dispatches (GPU timestamps, enabled by the stats
++    // variable before the backend exists; 0 when the device has none).
++    struct Counted
++    {
++        std::vector<uint8_t> vram;
++        uint64_t dispatches = 0, prims = 0;
++    };
++
++    template <typename Backend>
++    Counted renderCounted(Backend &backend, const std::vector<GSPrimitiveBatch> &batches)
++    {
++        Counted r;
++        r.vram = noise();
++        backend.Initialize(r.vram.data(), uint32_t(r.vram.size()));
++        for (const auto &b : batches)
++            backend.Submit(b);
++        backend.Flush();
++        return r;
++    }
++
++    void setStatsEnv(bool on)
++    {
++#ifdef _WIN32
++        _putenv_s("PS2X_GS_VULKAN_STATS", on ? "1" : "");
++#else
++        if (on)
++            setenv("PS2X_GS_VULKAN_STATS", "1", 1);
++        else
++            unsetenv("PS2X_GS_VULKAN_STATS");
++#endif
++    }
++
++    // A flat sprite that only tests the Z buffer at page 480 (or writes it), then a textured sprite that reads the same
++    // pages as colour (GoW keeps alpha textures in the unused part of the Z buffer).
++    std::vector<GSPrimitiveBatch> zTextureScene(bool writeZ)
++    {
++        std::vector<GSPrimitiveBatch> out;
++        auto a = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);
++        a.state.context.test = 0x10000u | (2u << 17);
++        a.state.context.zbuf.zmask = !writeZ;
++        vertex(a, 0, 64, 32, 0); vertex(a, 1, 160, 96, 0x80C0A060u);
++        a.vertices[1].z = 0x100;
++        out.push_back(a);
++        auto b = frameTex(GS_PRIM_SPRITE, false);
++        b.state.context.test = 0x10000u | (2u << 17);
++        b.state.context.zbuf = {480, GS_PSM_Z32, true};
++        b.state.context.tex0.tbp0 = 480 * 32;
++        vertex(b, 0, 200, 200, 0x80808080u); vertex(b, 1, 260, 240, 0x80808080u);
++        uv(b, 0, 20.5f, 20.5f, 1.0f); uv(b, 1, 80.5f, 60.5f, 1.0f);
++        b.vertices[1].z = 0x100;
++        out.push_back(b);
++        return out;
++    }
++
+     template <typename Backend>
+     std::vector<uint8_t> render(Backend &backend)
+     {
+@@ -539,6 +594,39 @@
+ #else
+             std::printf("    [skip] built without PS2X_GS_VULKAN\n");
+             t.IsTrue(true, "skipped");
++#endif
++        });
++
++        // GOW-Port: batching. Z pages that are only tested are not written by the batch; real hazards still split it.
++        test.Run("Vulkan batches Z-tested pages read as texture", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            setStatsEnv(true);
++            GSVulkanBackend vulkan;
++            setStatsEnv(false);
++            if (!vulkan.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++            struct Case { const char *name; std::vector<GSPrimitiveBatch> scene; uint64_t dispatches; };
++            const Case cases[] = {
++                {"Z tested only, same pages read as texture", zTextureScene(false), 1},
++                {"Z written, same pages read as texture", zTextureScene(true), 2},
++            };
++            for (const Case &c : cases)
++            {
++                GSCpuBackend cpu;
++                const auto reference = renderCounted(cpu, c.scene);
++                const uint64_t before = vulkan.GpuTotals().dispatches;
++                const auto gpu = renderCounted(vulkan, c.scene);
++                const uint64_t used = vulkan.GpuTotals().dispatches - before;
++                t.IsTrue(gpu.vram == reference.vram, std::string("VRAM equals CPU: ") + c.name);
++                if (vulkan.GpuTotals().dispatches != 0)
++                    t.Equals(used, c.dispatches, std::string("GPU dispatches: ") + c.name);
++            }
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
+ #endif
+         });
+     });
