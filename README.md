@@ -54,7 +54,15 @@ fix, upstream PR #92) are sent upstream as small, separate PRs.
 
 ## Status map
 
-<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
+**Linux (this fork)**
+
+<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.linux.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status - Linux" width="100%"></a>
+
+**Windows (upstream, not maintained here)**
+
+<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.windows.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status - Windows" width="100%"></a>
+
+The Linux map is the one maintained in this fork. It starts from the same baseline as the upstream (Windows) map and only differs where there is Linux evidence of its own (Vulkan GS, launcher, native build, speed, hang after the intro cutscene).
 
 Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
 

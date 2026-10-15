@@ -3,6 +3,12 @@
 # (La accion de GitHub "Mapa de estado" lo hace sola al subir cambios a main.)
 #
 # Estados: "ok" (funciona), "parcial" (funciona con fallos o sin verificar), "pendiente" (no funciona / no emulado).
+#
+# Plataformas: `estado` y `nota` son la linea base (el mapa de Windows, heredado de upstream, no se mantiene
+# aqui y no se modifica). El mapa de Linux (el que mantenemos) parte de lo mismo y solo cambia donde hay
+# evidencia propia: `linux = "<estado>"` y/o `nota_linux = {...}` en el elemento, o `solo = "linux"` en un
+# componente de hardware que no existe en Windows. El estado de Linux no sube sin evidencia en docs/ESTADO.md,
+# docs/PROGRESS_LOG.md, docs/VULKAN.md, docs/LINUX_LAUNCHER.md o docs/CONTROLES.md.
 
 # ---------------------------------------------------------------------------------------------------------
 # Panel 1: librerias estaticas del SDK de Sony enlazadas en SCUS_973.99.
@@ -19,6 +25,7 @@ nombre = "libmpeg"
 inicio = 0x0026F228
 estado = "parcial"
 nota = { es = "La intro FMV se decodifica por software y se reproduce entera (callbacks de flujo MPEG síncronos); falta verificar el resto de vídeos; GOW_SKIP_FMV omite los vídeos", en = "The FMV intro is software-decoded and plays through (synchronous MPEG stream callbacks); other videos remain unverified; GOW_SKIP_FMV skips movies", pt = "A intro FMV é decodificada por software e toca inteira (callbacks de fluxo MPEG síncronos); os demais vídeos ainda precisam ser verificados; GOW_SKIP_FMV pula os vídeos" }
+nota_linux = { es = "La intro FMV se reproduce entera tras el arreglo de callbacks síncronos (capturas hasta la tarjeta «Three Weeks Earlier»); los demás vídeos sin verificar; la pantalla tras la cinemática puede colgarse (pendiente); GOW_SKIP_FMV=1 (opción del lanzador) omite los vídeos", en = "The FMV intro plays through after the synchronous-callback fix (screenshots up to the 'Three Weeks Earlier' card); other videos unverified; the screen after the cutscene can hang (pending); GOW_SKIP_FMV=1 (launcher option) skips movies", pt = "A intro FMV toca inteira após a correção dos callbacks síncronos (capturas até o cartão «Three Weeks Earlier»); os demais vídeos sem verificar; a tela após a cutscene pode travar (pendente); GOW_SKIP_FMV=1 (opção do lançador) pula os vídeos" }
 
 [[librerias.grupo]]
 nombre = "libipu"
@@ -53,6 +60,7 @@ nombre = "libpad2"
 inicio = 0x0027B7E8
 estado = "parcial"
 nota = { es = "HLE del primer puerto (teclado o gamepad, mando autodetectado en Linux); presiones 0/255", en = "HLE for the first port (keyboard or gamepad, controller autodetected on Linux); pressures 0/255", pt = "HLE da primeira porta (teclado ou gamepad, controle autodetectado no Linux); pressões 0/255" }
+nota_linux = { es = "HLE del primer puerto; mando autodetectado (índices 0-3, GOW_PAD_INDEX) con mapeo SDL genérico para mandos sin mapeo; presiones 0/255; segundo puerto desconectado", en = "HLE for the first port; controller autodetected (indices 0-3, GOW_PAD_INDEX) with a generic SDL mapping for unmapped pads; pressures 0/255; second port disconnected", pt = "HLE da primeira porta; controle autodetectado (índices 0-3, GOW_PAD_INDEX) com mapeamento SDL genérico para controles sem mapeamento; pressões 0/255; segunda porta desconectada" }
 
 [[librerias.grupo]]
 nombre = "libvib"
@@ -176,6 +184,7 @@ nombre = "GS / VU"
   estado = "parcial"
   peso = 3
   nota = { es = "Referencia CPU y backend Vulkan compute (byte a byte idéntico a la CPU, por defecto en Linux) además de OpenGL en Windows; barco, Kratos, enemigos y HUD visibles; algunas primitivas con feedback de textura siguen en CPU; fallos visuales en orbes/partículas; falta cobertura completa", en = "CPU reference and a Vulkan compute backend (byte-identical to the CPU, default on Linux) plus OpenGL on Windows; ship, Kratos, enemies and HUD visible; some texture-feedback primitives still fall back to the CPU; visual glitches on orbs/particles; coverage remains incomplete", pt = "Referência CPU e backend Vulkan compute (idêntico byte a byte à CPU, padrão no Linux) além de OpenGL no Windows; barco, Kratos, inimigos e HUD visíveis; algumas primitivas com feedback de textura ainda usam a CPU; falhas visuais em orbes/partículas; falta cobertura completa" }
+  nota_linux = { es = "Backend Vulkan compute por defecto (byte a byte idéntico a la CPU en las pruebas; en Linux el contexto OpenGL es un stub); barco, Kratos, enemigos y HUD visibles; algunas primitivas con feedback de textura siguen en CPU; fallos visuales en orbes/partículas; ~20-30 fps en partida", en = "Vulkan compute backend by default (byte-identical to the CPU in tests; the OpenGL context is a stub on Linux); ship, Kratos, enemies and HUD visible; some texture-feedback primitives still fall back to the CPU; visual glitches on orbs/particles; ~20-30 fps in gameplay", pt = "Backend Vulkan compute por padrão (idêntico byte a byte à CPU nos testes; no Linux o contexto OpenGL é um stub); barco, Kratos, inimigos e HUD visíveis; algumas primitivas com feedback de textura ainda usam a CPU; falhas visuais em orbes/partículas; ~20-30 fps na partida" }
 
   [[hardware.grupo.componente]]
   corto = "VIF1/VU1"
@@ -203,6 +212,7 @@ nombre = "GS / VU"
   estado = "parcial"
   peso = 2
   nota = { es = "La intro FMV funciona por decodificación MPEG por software; no demuestra emulación completa del hardware IPU", en = "The FMV intro works through software MPEG decoding; this does not establish complete IPU hardware emulation", pt = "A intro FMV funciona por decodificação MPEG por software; isso não comprova emulação completa do hardware IPU" }
+  nota_linux = { es = "La intro FMV funciona por decodificación MPEG por software con callbacks de flujo síncronos (arreglo verificado con capturas); no demuestra emulación completa del hardware IPU; cuelgue tras la cinemática pendiente", en = "The FMV intro works through software MPEG decoding with synchronous stream callbacks (fix verified with screenshots); this does not establish complete IPU hardware emulation; hang after the cutscene pending", pt = "A intro FMV funciona por decodificação MPEG por software com callbacks de fluxo síncronos (correção verificada com capturas); isso não comprova emulação completa do hardware IPU; travamento após a cutscene pendente" }
 
 [[hardware.grupo]]
 nombre = "IOP"
@@ -220,6 +230,7 @@ nombre = "IOP"
   estado = "parcial"
   peso = 3
   nota = { es = "Bancos cargados y sonido continuo verificados; la música en streaming ya no se reinicia cada 0,36 s (latencia de lectura del CD y salto de bucle del SPU2 corregidos; comprobado por registro, no de oído); faltan reverb y ADMA", en = "Bank loading and continuous sound verified; streamed music no longer restarts every 0.36 s (CD read latency and SPU2 loop-jump fixes; verified from logs, not by ear); reverb and ADMA are missing", pt = "Carregamento de bancos e som contínuo verificados; a música em streaming não reinicia mais a cada 0,36 s (latência de leitura do CD e salto de loop do SPU2 corrigidos; verificado por log, não de ouvido); faltam reverb e ADMA" }
+  nota_linux = { es = "Los arreglos de latencia del CD y de bucle del SPU2 se comprobaron en Linux solo por registro (230 s de menú, audio silenciado; no de oído); faltan reverb y ADMA", en = "The CD-latency and SPU2 loop fixes were checked on Linux from logs only (230 s menu run, audio muted; not by ear); reverb and ADMA are missing", pt = "As correções de latência do CD e de loop do SPU2 foram verificadas no Linux apenas por log (230 s de menu, áudio mudo; não de ouvido); faltam reverb e ADMA" }
 
   [[hardware.grupo.componente]]
   corto = "IRX"
@@ -245,6 +256,7 @@ nombre = "IOP"
   estado = "parcial"
   peso = 2
   nota = { es = "libpad2 por HLE (primer puerto); en el SIO2 emulado los mandos se ven desconectados", en = "libpad2 via HLE (first port); controllers read as disconnected on the emulated SIO2", pt = "libpad2 por HLE (primeira porta); no SIO2 emulado os controles aparecem desconectados" }
+  nota_linux = { es = "libpad2 por HLE (primer puerto); mando autodetectado (con mapeo genérico si SDL no lo conoce); botones comprobados jugando; sin vibración; SIO2 emulado sigue sin ver mandos", en = "libpad2 via HLE (first port); controller autodetected (generic mapping when SDL does not know it); buttons checked in play; no rumble; the emulated SIO2 still sees no controllers", pt = "libpad2 por HLE (primeira porta); controle autodetectado (com mapeamento genérico se o SDL não o conhece); botões verificados jogando; sem vibração; o SIO2 emulado continua sem ver controles" }
 
   [[hardware.grupo.componente]]
   corto = "MC"
@@ -262,3 +274,35 @@ nombre = "Linux"
   estado = "parcial"
   peso = 2
   nota = { es = "Lanzador (extrae la ISO, detecta el mando, opción de omitir vídeos), GS por Vulkan (compute), VU1 compilada y compilación nativa funcionan; la VU1 compilada necesita una captura local del microcódigo; ~20-30 fps en partida (objetivo: 60); fallos visuales en orbes/partículas y un cuelgue tras la cinemática de la intro", en = "Launcher (extracts the ISO, detects the controller, option to skip movies), Vulkan (compute) GS, compiled VU1 and the native build work; the compiled VU1 needs a local microcode capture; ~20-30 fps in gameplay (goal: 60); visual glitches on orbs/particles and a hang after the intro cutscene", pt = "Lançador (extrai a ISO, detecta o controle, opção de pular vídeos), GS por Vulkan (compute), VU1 compilada e compilação nativa funcionam; a VU1 compilada precisa de uma captura local do microcódigo; ~20-30 fps na partida (meta: 60); falhas visuais em orbes/partículas e um travamento após a cutscene da intro" }
+
+  [[hardware.grupo.componente]]
+  corto = "Launcher"
+  nombre = { es = "Lanzador y preparación de la ISO", en = "Launcher and ISO preparation", pt = "Lançador e preparação da ISO" }
+  solo = "linux"
+  estado = "ok"
+  peso = 2
+  nota = { es = "Extrae el ELF/IRX de la ISO personal y valida el hash; ventana de ajustes (pantalla completa, filtro, mando, GPU, silenciar, omitir vídeos); pruebas sintéticas en la CI (docs/LINUX_LAUNCHER.md)", en = "Extracts the ELF/IRX from the personal ISO and validates the hash; settings window (fullscreen, filter, controller, GPU, mute, skip movies); synthetic tests in CI (docs/LINUX_LAUNCHER.md)", pt = "Extrai o ELF/IRX da ISO pessoal e valida o hash; janela de ajustes (tela cheia, filtro, controle, GPU, mudo, pular vídeos); testes sintéticos na CI (docs/LINUX_LAUNCHER.md)" }
+
+  [[hardware.grupo.componente]]
+  corto = "Build"
+  nombre = { es = "Compilación nativa", en = "Native build", pt = "Compilação nativa" }
+  solo = "linux"
+  estado = "parcial"
+  peso = 2
+  nota = { es = "El runner se compila y se ejecuta en Linux (scripts/compilar_linux.py); la VU1 compilada necesita una captura local del microcódigo (GOW_VU1_MICROCODIGO) y la CI solo compila el runtime sin el ELF", en = "The runner builds and runs on Linux (scripts/compilar_linux.py); the compiled VU1 needs a local microcode capture (GOW_VU1_MICROCODIGO) and CI only builds the runtime without the ELF", pt = "O runner compila e roda no Linux (scripts/compilar_linux.py); a VU1 compilada precisa de uma captura local do microcódigo (GOW_VU1_MICROCODIGO) e a CI só compila o runtime sem o ELF" }
+
+  [[hardware.grupo.componente]]
+  corto = "60 fps"
+  nombre = { es = "Velocidad: 60 fps", en = "Speed: 60 fps", pt = "Velocidade: 60 fps" }
+  solo = "linux"
+  estado = "pendiente"
+  peso = 2
+  nota = { es = "~20-30 fps en partida (RTX 5050; objetivo 60): el GS compute exacto ronda 25-30 fps y falta una ruta estilo hardware; sin 1080p real (solo escalado)", en = "~20-30 fps in gameplay (RTX 5050; goal 60): the exact compute GS caps around 25-30 fps and a hardware-style path is missing; no true 1080p (upscaling only)", pt = "~20-30 fps na partida (RTX 5050; meta 60): o GS compute exato fica em ~25-30 fps e falta uma rota estilo hardware; sem 1080p real (só escalonamento)" }
+
+  [[hardware.grupo.componente]]
+  corto = "Post-intro"
+  nombre = { es = "Pantalla tras la cinemática de la intro", en = "Screen after the intro cutscene", pt = "Tela após a cutscene da intro" }
+  solo = "linux"
+  estado = "pendiente"
+  peso = 1
+  nota = { es = "Un cuelgue tras la cinemática de la intro sigue sin investigarse (docs/PROGRESS_LOG.md, docs/ESTADO.md); GOW_SKIP_FMV=1 lo evita", en = "A hang after the intro cutscene is still not investigated (docs/PROGRESS_LOG.md, docs/ESTADO.md); GOW_SKIP_FMV=1 avoids it", pt = "Um travamento após a cutscene da intro ainda não foi investigado (docs/PROGRESS_LOG.md, docs/ESTADO.md); GOW_SKIP_FMV=1 o evita" }

@@ -55,7 +55,15 @@ fluxo MPEG, PR #92 no upstream) são enviadas ao upstream como PRs pequenos e se
 
 ## Mapa de status
 
-<a href="docs/estado/detalle.pt-BR.md"><img src="docs/estado/mapa.pt-BR.svg" alt="Mapa de status do port: funções das bibliotecas do SDK da Sony e componentes do hardware do PS2, coloridos por status" width="100%"></a>
+**Linux (este fork)**
+
+<a href="docs/estado/detalle.pt-BR.md"><img src="docs/estado/mapa.linux.pt-BR.svg" alt="Mapa de status do port: funções das bibliotecas do SDK da Sony e componentes do hardware do PS2, coloridos por status - Linux" width="100%"></a>
+
+**Windows (upstream, não mantido aqui)**
+
+<a href="docs/estado/detalle.pt-BR.md"><img src="docs/estado/mapa.windows.pt-BR.svg" alt="Mapa de status do port: funções das bibliotecas do SDK da Sony e componentes do hardware do PS2, coloridos por status - Windows" width="100%"></a>
+
+O mapa do Linux é o mantido neste fork. Parte da mesma base do mapa do upstream (Windows) e só difere onde há evidência própria do Linux (GS Vulkan, lançador, compilação nativa, velocidade, travamento após a cutscene da intro).
 
 Detalhamento por biblioteca e por componente: [`docs/estado/detalle.pt-BR.md`](docs/estado/detalle.pt-BR.md). É regenerado a partir de `docs/estado/datos.toml` por `tools/estado/generar.py` (e automaticamente ao subir para `main`).
 
