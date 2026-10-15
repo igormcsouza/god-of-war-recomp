@@ -1,0 +1,224 @@
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+@@ -1901,12 +1901,18 @@
+     m_stopRequested = true;
+ }
+ 
++// GOW-Port: ps2_vu1_replay.cpp
++void ps2Vu1RecordExecution(const VU1State &state, const uint8_t *code, const uint8_t *data, uint32_t startPc,
++                           uint32_t top, uint32_t itop, uint32_t maxCycles);
++
+ void VU1Interpreter::execute(uint8_t *vuCode, uint32_t codeSize,
+                              uint8_t *vuData, uint32_t dataSize,
+                              GS &gs, PS2Memory *memory,
+                              uint32_t startPC, uint32_t top, uint32_t itop,
+                              uint32_t maxCycles)
+ {
++    if (m_unit == Unit::VU1)
++        ps2Vu1RecordExecution(m_state, vuCode, vuData, startPC, top, itop, maxCycles); // GOW-Port: GOW_VU1_RECORD
+     resetScheduler();
+     m_state.pc = startPC & microAddressMask();
+     m_state.ebit = false;
+--- a/ps2xRuntime/CMakeLists.txt
++++ b/ps2xRuntime/CMakeLists.txt
+@@ -401,6 +401,7 @@
+     src/lib/vu/ps2_vu1_core.cpp
+     src/lib/vu/ps2_vu1_upper.cpp
+     src/lib/vu/ps2_vu1_lower.cpp
++    src/lib/vu/ps2_vu1_replay.cpp
+     src/lib/games_database.cpp
+ )
+ 
+--- a/ps2xRuntime/src/main.cpp
++++ b/ps2xRuntime/src/main.cpp
+@@ -166,8 +166,15 @@
+     }
+ }
+ 
++// GOW-Port: ps2_vu1_replay.cpp
++int ps2Vu1ReplayDirectory(const char *dir);
++
+ int main(int argc, char *argv[])
+ {
++    // GOW-Port: GOW_VU1_REPLAY=<carpeta>: repite las ejecuciones de VU1 grabadas (GOW_VU1_RECORD) con el código
++    // compilado y con el intérprete y sale (0 = idénticas u omitido).
++    if (const char *replayDir = std::getenv("GOW_VU1_REPLAY"))
++        return ps2Vu1ReplayDirectory(replayDir);
+ #if defined(__ANDROID__)
+     redirectStdioToLogcat();
+ #endif
+--- /dev/null
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_replay.cpp
+@@ -0,0 +1,172 @@
++// GOW-Port: grabación y repetición de ejecuciones de VU1 para comprobar que el código compilado y el
++// intérprete dan exactamente el mismo estado.
++//   GOW_VU1_RECORD=<carpeta>[,<cada N>[,<máximo>]]  guarda la entrada de cada N-ésima ejecución (MSCAL) de VU1.
++//   GOW_VU1_REPLAY=<carpeta>                         (en el ejecutable del juego) repite lo grabado con el código
++//                                                    compilado enlazado y con el intérprete y compara VF/VI/ACC/Q/P/I/R,
++//                                                    flags, PC, ciclos y la memoria de datos. Sale sin arrancar el juego.
++// Los archivos contienen micromemoria y datos del juego: no se publican. Sin carpeta o sin archivos, se omite.
++#include "runtime/ps2_vu1.h"
++#include "runtime/ps2_memory.h"
++#include "runtime/gs/gs_frontend.h"
++
++#include <algorithm>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <memory>
++#include <string>
++#include <vector>
++
++namespace
++{
++constexpr char kMagic[8] = {'G', 'O', 'W', 'V', 'U', '1', 'R', '1'};
++struct Header
++{
++    char magic[8];
++    uint32_t stateSize, startPc, top, itop, maxCycles;
++};
++} // namespace
++
++// Lo llama VU1Interpreter::execute con la entrada del programa (antes de resetScheduler).
++void ps2Vu1RecordExecution(const VU1State &state, const uint8_t *code, const uint8_t *data, uint32_t startPc,
++                           uint32_t top, uint32_t itop, uint32_t maxCycles)
++{
++    static const char *spec = std::getenv("GOW_VU1_RECORD");
++    if (spec == nullptr)
++        return;
++    static std::string dir;
++    static unsigned long every = 1, limit = 4000, seen = 0, saved = 0;
++    static bool parsed = false;
++    if (!parsed)
++    {
++        parsed = true;
++        std::string s(spec);
++        const size_t a = s.find(','), b = a == std::string::npos ? a : s.find(',', a + 1);
++        dir = s.substr(0, a);
++        if (a != std::string::npos)
++            every = std::max(1ul, std::strtoul(s.c_str() + a + 1, nullptr, 10));
++        if (b != std::string::npos)
++            limit = std::strtoul(s.c_str() + b + 1, nullptr, 10);
++        std::filesystem::create_directories(dir);
++    }
++    if (saved >= limit || (seen++ % every) != 0)
++        return;
++    char name[64];
++    std::snprintf(name, sizeof(name), "/exec_%05lu.bin", saved++);
++    std::ofstream f(dir + name, std::ios::binary);
++    Header h{};
++    std::memcpy(h.magic, kMagic, sizeof(h.magic));
++    h.stateSize = sizeof(VU1State);
++    h.startPc = startPc;
++    h.top = top;
++    h.itop = itop;
++    h.maxCycles = maxCycles;
++    f.write(reinterpret_cast<const char *>(&h), sizeof(h));
++    f.write(reinterpret_cast<const char *>(&state), sizeof(state));
++    f.write(reinterpret_cast<const char *>(code), PS2_VU1_CODE_SIZE);
++    f.write(reinterpret_cast<const char *>(data), PS2_VU1_DATA_SIZE);
++}
++
++namespace
++{
++struct Outcome
++{
++    VU1State state;
++    std::vector<uint8_t> data;
++    bool budget;
++};
++
++Outcome replayOne(PS2Memory &mem, GS &gs, const Header &h, const VU1State &in, const std::vector<uint8_t> &code,
++                  const std::vector<uint8_t> &data, bool compiled)
++{
++    std::memcpy(mem.getVU1Code(), code.data(), code.size());
++    uint32_t first;
++    std::memcpy(&first, code.data(), sizeof(first));
++    mem.write32(0x11008000u, first); // sube la generación de la micromemoria (los bloques guardan su comparación)
++    std::memcpy(mem.getVU1Data(), data.data(), data.size());
++    auto vu = std::make_unique<VU1Interpreter>();
++    vu->setDirectRegisterWrites(true);
++    vu->setCompiledProgramsEnabled(compiled);
++    vu->state() = in;
++    vu->execute(mem.getVU1Code(), PS2_VU1_CODE_SIZE, mem.getVU1Data(), PS2_VU1_DATA_SIZE, gs, &mem, h.startPc, h.top,
++                h.itop, h.maxCycles);
++    return {vu->state(), {mem.getVU1Data(), mem.getVU1Data() + PS2_VU1_DATA_SIZE}, vu->lastRunHitBudget()};
++}
++
++const char *difference(const Outcome &a, const Outcome &b)
++{
++    const VU1State &x = a.state, &y = b.state;
++    if (std::memcmp(x.vf, y.vf, sizeof(x.vf)) != 0) return "VF";
++    if (std::memcmp(x.vi, y.vi, sizeof(x.vi)) != 0) return "VI";
++    if (std::memcmp(x.acc, y.acc, sizeof(x.acc)) != 0) return "ACC";
++    if (std::memcmp(&x.q, &y.q, 4) != 0) return "Q";
++    if (std::memcmp(&x.p, &y.p, 4) != 0) return "P";
++    if (std::memcmp(&x.i, &y.i, 4) != 0) return "I";
++    if (x.r != y.r) return "R";
++    if (x.mac != y.mac) return "MAC";
++    if (x.status != y.status) return "STATUS";
++    if (x.clip != y.clip) return "CLIP";
++    if (x.pc != y.pc) return "PC";
++    if (x.cycles != y.cycles) return "cycles";
++    if (x.ebit != y.ebit || x.branchPending != y.branchPending || x.branchTarget != y.branchTarget ||
++        x.branchDelay != y.branchDelay || x.stoppedByD != y.stoppedByD || x.stoppedByT != y.stoppedByT)
++        return "control";
++    if (a.budget != b.budget) return "budget";
++    if (a.data != b.data) return "data memory";
++    return nullptr;
++}
++} // namespace
++
++// 0 = igual (u omitido), 1 = diferencia, 2 = error.
++int ps2Vu1ReplayDirectory(const char *dir)
++{
++    std::vector<std::filesystem::path> files;
++    std::error_code ec;
++    if (dir != nullptr && std::filesystem::is_directory(dir, ec))
++        for (const auto &e : std::filesystem::directory_iterator(dir))
++            if (e.is_regular_file() && e.path().extension() == ".bin")
++                files.push_back(e.path());
++    if (files.empty())
++    {
++        std::printf("VU1 replay: SKIPPED (no recorded executions in '%s'; record with GOW_VU1_RECORD)\n", dir ? dir : "");
++        return 0;
++    }
++    std::sort(files.begin(), files.end());
++    PS2Memory mem;
++    if (!mem.initialize())
++        return 2;
++    GS gs;
++    gs.init(mem.getGSVRAM(), 4u * 1024u * 1024u, &mem.gs());
++    unsigned long long cycles = 0;
++    for (const auto &path : files)
++    {
++        std::ifstream f(path, std::ios::binary);
++        Header h{};
++        VU1State state{};
++        std::vector<uint8_t> code(PS2_VU1_CODE_SIZE), data(PS2_VU1_DATA_SIZE);
++        f.read(reinterpret_cast<char *>(&h), sizeof(h));
++        f.read(reinterpret_cast<char *>(&state), sizeof(state));
++        f.read(reinterpret_cast<char *>(code.data()), code.size());
++        f.read(reinterpret_cast<char *>(data.data()), data.size());
++        if (!f || std::memcmp(h.magic, kMagic, sizeof(kMagic)) != 0 || h.stateSize != sizeof(VU1State))
++        {
++            std::fprintf(stderr, "VU1 replay: bad or stale file %s\n", path.string().c_str());
++            return 2;
++        }
++        const Outcome ref = replayOne(mem, gs, h, state, code, data, false);
++        const Outcome got = replayOne(mem, gs, h, state, code, data, true);
++        if (const char *what = difference(ref, got))
++        {
++            std::fprintf(stderr, "VU1 replay: MISMATCH in %s (%s) pc=0x%x cycles=%llu/%llu\n", path.string().c_str(), what,
++                         h.startPc, static_cast<unsigned long long>(ref.state.cycles),
++                         static_cast<unsigned long long>(got.state.cycles));
++            return 1;
++        }
++        cycles += ref.state.cycles;
++    }
++    std::printf("VU1 replay: %zu recorded executions bit-identical (compiled vs interpreter), %llu VU cycles\n",
++                files.size(), cycles);
++    return 0;
++}
