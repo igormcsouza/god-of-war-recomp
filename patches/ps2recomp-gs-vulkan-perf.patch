@@ -1,0 +1,158 @@
+diff --git a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+index 58b51e8..03e6989 100644
+--- a/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
++++ b/ps2xRuntime/include/runtime/gs/gs_vulkan_backend.h
+@@ -21,6 +21,9 @@ public:
+ 
+     // False when no usable Vulkan device exists; the caller then uses GSCpuBackend.
+     bool IsReady() const;
++    // GOW-Port: cumulative GPU timestamps (PS2X_GS_VULKAN_STATS=1 only; zero otherwise). Used by tools/render/bench_vk.cpp.
++    struct Totals { double busyMs = 0; uint64_t dispatches = 0, prims = 0; };
++    Totals GpuTotals() const;
+     uint64_t GpuPrimitives() const { return m_gpuPrimitives; }
+ 
+     void Initialize(uint8_t *vram, uint32_t vramSize) override;
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+index 52e7cf2..1eecbca 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -582,6 +582,8 @@ struct GSVulkanBackend::Impl
+     std::map<std::string, uint64_t> statsFallback, statsRunEnd, statsRunWaitUs;
+     // GOW-Port: GPU-side numbers. Bucket = union rectangle / sum of the primitives' own rectangles (<=2x, <=8x, <=32x, more).
+     double statsGpuBusyNs = 0, statsGpuSpanNs = 0;
++    double totBusyNs = 0;                  // GOW-Port: never reset; read by GSVulkanBackend::GpuTotals (benchmark)
++    uint64_t totDispatches = 0, totPrims = 0;
+     uint64_t statsDispatches = 0, statsUnionPx = 0, statsCoveredPx = 0, statsWalkPx = 0, statsDispatchPrims = 0;
+     uint64_t statsBucketN[4]{}, statsBucketUnionPx[4]{}, statsBucketCoveredPx[4]{};
+     double statsBucketNs[4]{};
+@@ -655,6 +657,7 @@ struct GSVulkanBackend::Impl
+                 const Dispatch &disp = dispatches[i][d];
+                 const double t = ns(ts[2 + 2 * d], ts[3 + 2 * d]);
+                 statsGpuBusyNs += t;
++                totBusyNs += t;
+                 const double ratio = disp.coveredPx ? static_cast<double>(disp.unionPx) / static_cast<double>(disp.coveredPx) : 1e9;
+                 const int b = ratio <= 2.0 ? 0 : ratio <= 8.0 ? 1 : ratio <= 32.0 ? 2 : 3;
+                 ++statsBucketN[b];
+@@ -899,6 +902,8 @@ struct GSVulkanBackend::Impl
+             const uint64_t u = static_cast<uint64_t>(batchRect[2] - batchRect[0] + 1) * static_cast<uint64_t>(batchRect[3] - batchRect[1] + 1);
+             dispatches[cmdIndex].push_back({u, batchPixels, batchCount});
+             ++statsDispatches;
++            ++totDispatches;
++            totPrims += batchCount;
+             statsUnionPx += u;
+             statsCoveredPx += batchPixels;
+             statsWalkPx += u * batchCount;
+@@ -951,6 +956,14 @@ GSVulkanBackend::~GSVulkanBackend()
+     Finish();
+ }
+ 
++GSVulkanBackend::Totals GSVulkanBackend::GpuTotals() const
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    if (!m_impl)
++        return {};
++    return {m_impl->totBusyNs / 1e6, m_impl->totDispatches, m_impl->totPrims};
++}
++
+ bool GSVulkanBackend::IsReady() const
+ {
+     return m_impl != nullptr;
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+index c61d964..ab705de 100644
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+@@ -122,12 +122,26 @@ uint blend(uint src, uint dst)
+ // Correctly rounded float(n / d) = q * 2^-shift for 0 < n < d, as float(double(n) * (1.0 / d)) on the CPU.
+ int64_t ratioMantissa(int64_t n, int64_t d, out int shift)
+ {
+-    int s = 0;
++    // GOW-Port: no 64-bit division (emulated, ~hundreds of instructions per pixel). The shift and the quotient start from
++    // float estimates and are then corrected with exact integer compares, so the result is the same as num / d.
++    int s = max(int((floatBitsToUint(float(d)) >> 23u) & 0xFFu) - int((floatBitsToUint(float(n)) >> 23u) & 0xFFu), 0);
++    while (s > 0 && (n << (s - 1)) >= d)
++        --s;
+     while ((n << s) < d)
+         ++s;
+     int64_t num = n << (s + 23);
+-    int64_t q = num / d;
++    int64_t q = int64_t(ldexp(float(n) / float(d), s + 23));
+     int64_t r = num - q * d;
++    while (r < 0l)
++    {
++        --q;
++        r += d;
++    }
++    while (r >= d)
++    {
++        ++q;
++        r -= d;
++    }
+     if (2l * r > d || (2l * r == d && (q & 1l) != 0l))
+         ++q;
+     shift = s + 23;
+@@ -349,6 +363,20 @@ void shade(ivec2 xy)
+         }
+     }
+ 
++    // GOW-Port: the Z test only depends on Z, so it runs before the texture fetch. Every return before a write is
++    // side-effect free, so the order against the alpha tests does not change the result.
++    uint zbp = P.zbuf & 0xFFFFu;
++    uint zpsm = (P.zbuf >> 16u) & 0xFFu;
++    uint ztst = (P.zbuf >> 24u) & 3u;
++    if (ztst == 0u)
++        return;
++    if (ztst >= 2u)
++    {
++        uint stored = readPixel(zpsm, zbp, P.frame >> 16u, uint(xy.x), uint(xy.y));
++        if (ztst == 2u ? z < stored : z <= stored)
++            return;
++    }
++
+     if ((mode & M_TME) != 0u)
+     {
+         precise float texUf;
+@@ -413,18 +441,6 @@ void shade(ivec2 xy)
+         if (destAlpha != ((P.test & 0x8000u) != 0u))
+             return;
+     }
+-    uint zbp = P.zbuf & 0xFFFFu;
+-    uint zpsm = (P.zbuf >> 16u) & 0xFFu;
+-    uint ztst = (P.zbuf >> 24u) & 3u;
+-    if (ztst == 0u)
+-        return;
+-    if (ztst >= 2u)
+-    {
+-        uint stored = readPixel(zpsm, zbp, fbw, uint(xy.x), uint(xy.y));
+-        if (ztst == 2u ? z < stored : z <= stored)
+-            return;
+-    }
+-
+     bool abe = (P.alpha & A_ABE) != 0u;
+     uint fb = 0u;
+     if (P.fbmsk != 0u || abe || !writeAlpha)
+@@ -461,7 +477,24 @@ void main()
+     {
+         curPrim = pc.first + k;
+         if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y)
+-            atomicOr(hit[k >> 5], 1u << (k & 31u));
++        {
++            bool outside = false;
++            if ((P.mode & M_TRIANGLE) != 0u)
++            {
++                // GOW-Port: a tile whose best corner fails an edge test fails it everywhere (the edge function is linear), so
++                // thin diagonal triangles don't pull in the whole bounding box. Same predicate as shade(): e + bias <= 0.
++                for (int i = 0; i < 3; ++i)
++                {
++                    int64_t cx = int64_t((P.ea[i] > 0l ? tile0.x + 7 : tile0.x) * 16);
++                    int64_t cy = int64_t((P.eb[i] > 0l ? tile0.y + 7 : tile0.y) * 16);
++                    int64_t bias = (P.mode & (M_BIAS0 << i)) != 0u ? 1l : 0l;
++                    if (P.ea[i] * cx + P.eb[i] * cy + P.ec[i] + bias <= 0l)
++                        outside = true;
++                }
++            }
++            if (!outside)
++                atomicOr(hit[k >> 5], 1u << (k & 31u));
++        }
+     }
+     barrier();
+     for (uint w = 0u; w < (pc.count + 31u) >> 5; ++w)

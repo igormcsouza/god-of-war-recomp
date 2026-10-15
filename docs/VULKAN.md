@@ -254,3 +254,53 @@ Top costs (estimates, unverified): (1) GPU time per frame, ~600 ms/s busy and `f
 (`walk_Mpx` >> `covered_Mpx`), a better tile/primitive culling is worth most (maybe +20-40%); (2) remaining `tex-feedback`
 CPU fallbacks ~210/s, ~150 ms/s of `cpudraw_ms` (+5-10%); (3) `record-ring` and `Flush()` run ends (~100 ms/s each, +3-5%).
 Intro/title was not re-profiled (out of budget).
+
+## Repeatable GPU benchmark and shader profile (2026-10-15)
+
+**Tooling** (no game data in the repo; captures live under `logs/`, which is git-ignored):
+1. Record gameplay GS input once, with the normal runner (`src/gow_gs_replay.h`, limit raised from 64 MiB to 768 MiB):
+   `GOW_SKIP_FMV=1 GOW_PAD_TEST=1 GOW_GS_REPLAY_TRACE=logs/bench/gameplay.gsr GOW_GS_REPLAY_AFTER=65 GOW_GS_REPLAY_SECONDS=3 ps2EntryRunner SCUS_973.99`
+   (cwd = the ELF directory, `GOW_ISO` set). It starts in game state 11, snapshots VRAM + backend state, then logs every
+   backend call (primitives, CLUT, transfers, uploads, reads, presents) until the size limit: 121 presents, 1.93M
+   primitives, 757 MiB in the rainy fight scene.
+2. `scripts/compilar_bench_vk.sh` builds `logs/bench/bench_vk` (`tools/render/bench_vk.cpp`) against the built runtime.
+3. `logs/bench/bench_vk logs/bench/gameplay.gsr [passes=5] [--no-cpu] 2>/dev/null` replays the capture headless through
+   `GSCpuBackend` once (reference) and through `GSVulkanBackend` N times (zero-copy VRAM, same code as the game). Per pass it
+   prints GPU ms from timestamps (`GSVulkanBackend::GpuTotals`, needs `PS2X_GS_VULKAN_STATS`, which the tool sets), dispatches,
+   prims, wall ms, and `vram_diff_bytes` against the CPU replay (exit code 3 on any difference), then mean/sd. It also checks
+   every `ReadVram`/`ClearFramebuffer`/`Consume` result recorded in the capture. Run to run the GPU time varies ~0.3-0.8%.
+
+**Profile** (ablations on the capture, RTX 5050, GPU ms for the whole 121-presents replay; baseline 1662):
+
+| Variant | GPU ms |
+|---|---|
+| shade() never called (tile culling + barriers only) | 115 |
+| coverage only (edge tests + weights, no Z/tex/blend/write) | 690 |
+| no pixel writes (blend/fb read dead-code removed) | 738 |
+| no texture fetch | 1150 |
+| full | 1662 |
+
+Mix: 2.26M textured+blended tristrip triangles (rain), few sprites. Average batch: 112 prims, 17k px union, 0.097 ms per
+dispatch, i.e. each pixel walks a serial chain of ~100 prims with only ~270 workgroups in flight: the kernel is
+latency-bound (serial per-pixel prim walk), not ALU- or bandwidth-bound; culling/barriers are only ~7%.
+
+**Kept optimizations** (`patches/ps2recomp-gs-vulkan-perf.patch`, registered last; byte-identical):
+
+| Step | GPU ms | per presented frame |
+|---|---|---|
+| baseline | 1662 | 13.7 |
+| Z test moved before the texture fetch (all pre-write returns are side-effect free) | 1415 | 11.7 |
+| tile culling also tests the triangle edges at the tile's best corner | 1319 | 10.9 |
+Total -21% GPU time; wall of the replay 2632 -> 2160 ms. `ps2x_tests` 634 pass; replay VRAM identical to the CPU backend.
+Tried and dropped: exact float-estimate + integer-fixup replacement of the 64-bit division in `ratioMantissa` (no change:
+the compiler/hardware is not division-bound), `restrict` on the prim/swizzle buffers (no change).
+
+**Real game** (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, NVIDIA RTX 5050, mean FPS over t>55 s, three runs, `gow-delta`):
+17.9 / 21.8 / 15.0 (mean 18.2, scene and pad-script dependent; the pre-change rainy-fight figure was ~13; no same-scene A/B).
+`gpu_busy` 550-620 ms/s.
+
+**What is left** (ideas, ranked): (1) cut the per-pixel serial chain: per-tile prim lists with prim data staged in shared
+memory (software-pipelined loads), or smaller dispatches split by independent tiles; (2) split thin-triangle tiles at 4x4
+for better culling; (3) pack the `FMT_*` tables into one word and hoist per-prim format decode out of the pixel loop;
+(4) skip bilinear/blend work for pixels whose Z test fails (already done for texture); (5) a graphics pipeline for large
+opaque prims. The CPU side is not the limit: the replay with no shading runs 121 presents in ~1050 ms wall.

@@ -132,6 +132,7 @@ $padMappingsPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings.patch'
 $mpegDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-diag.patch'
 $gifTraceDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-trace-diag.patch'
 $mpegSyscallDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-syscall-diag.patch'
+$gsVulkanPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-perf.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -288,6 +289,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegDiagPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gifTraceDiagPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegSyscallDiagPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPerfPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
