@@ -678,3 +678,51 @@ vblanks (20 FPS = 3 vblanks), the VU1 worker is at 80% of a core (~37 ms per dis
 still 80-85% busy: `cpudraw_ms` 210-250 (the ~330 prims/s `tex-feedback` CPU fallbacks) and `finish_ms` ~200 (run ends by
 BeginTransfer/Sync/line-point) are now the largest GS-worker items. Next candidates: `tex-feedback` GPU snapshot (EMULATOR_RESEARCH B1),
 fewer run ends (BeginTransfer 20-40/s, ~45-135 ms/s of waiting), then VU1.
+
+## Wave 1d: VU1 speed, bench + static ticks (2026-10-15, patches `ps2recomp-vu1-{replay-bench,block-check,static-ticks}.patch`, generator `tools/vu1/static_schedule.h`)
+
+Goal was 2x less VU1 time per frame (35 ms -> 17 ms), bit-identical. **Not reached: ~1.15-1.2x in VU cycles, VU1 no longer saturated live.**
+
+**Tooling.** `GOW_VU1_REPLAY_BENCH=<N> GOW_VU1_REPLAY=<dir> ps2EntryRunner` replays the recorded executions N times with only the compiled code (one
+persistent interpreter, microcode copied only when it changes) and prints ns per VU cycle; `GOW_VU1_REPLAY_SAMPLE=1` adds a RIP sampler (use
+`taskset -c 4` on a P-core: this CPU is hybrid, cores 12-15 are E-cores). 3,000 recorded rainy-fight executions, 8.3 M VU cycles; best of 3 runs;
+noise ~1%. A fresh interpreter per run (the old replay path) costs +1.5 ns/cycle of constructor/memcpy that the game never pays.
+
+| step | replay ns/VU cycle | live (rainy fight, 3 hot programs) |
+|---|---|---|
+| before (static v1, per-block hash cache) | 9.3 | 8.3 / 9.2 / 8.7 (Wave 1c) |
+| per-block `(generation, matches)` cache | 9.2 (-1.5%) | |
+| static ticks (no "queue due / XGKICK active" entry condition) | 8.45 (-8%) | |
+| regions from 2 pairs + whole blocks ending in a plain pair | 8.05 (-5%) | 7.2-7.35 / 7.85-8.25 / 7.65-8.05 (two runs) |
+
+Total -13.5% in the bench, ~-12% live vs Wave 1c and -20% vs `GOW_VU1_NO_STATIC=1` (9.1 / 9.85 / 9.25 in the same session).
+
+**Static ticks.** The v1 static path required at entry that no queue (Q, P, stores) be due before the prefix ends and no XGKICK be active. Counting the
+reasons in the replay: of 391 k block entries 153 k (39%) failed only because a DIV/EFU result was in flight, 326 for XGKICK, ~5 k for a pending
+live-in. Now every static pair does what `stepPairT` does between pairs (`m_cycle = c; commitReadyPipelines()` if due, `xgkickAdvanceTo` if due) and a RAW stall
+inside the prefix is an `advanceTo()` to the constant cycle; the entry check is only the live-in ready cycles. Static pairs went from 45% to the large majority of
+executed pairs.
+
+**Live A/B** (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, defaults, 96 s, window t=56-89 s, same machine; FPS quantised to whole vblanks so it moves in steps):
+`GOW_VU1_NO_STATIC=1` 20.0 FPS, `vu1_busy` 804 ms/s, 40 ms VU1 per displayed frame; new code 30.4 and 24.5 FPS (two runs), `vu1_busy` 673 / 663 ms/s,
+22 / 27 ms VU1 per frame. The VU1 thread now has slack (~35% idle) and the GS worker is the cap again (`gs_busy` 880-950 ms/s), so the live FPS ceiling moved to the
+GS/EE side; the VU1 frame cost halved against the all-per-pair path but only ~12% against the previous static code (the rest of the FPS gain is not VU1).
+
+**Where the time is now** (sampler, mix of 3,000 runs, grouped by the function that contains the instruction): FMAC `upperT` + `normalize4` + `exponent4` 36%,
+`stepPairT` body (ready-table writes, bookkeeping) 17%, `readyCycleT` 7.5%, flag queue (`pushFmacFlags`, `commitReadyFlags`, `commitReadyPipelines`) 9%,
+`lowerT` 4%, `blockPreconditions` 1.4% (was 3.9%). Per pair a MADD is ~100 host instructions at IPC ~3.5: the code is instruction-count bound, flat, with no
+single hot spot, and a block of 28 pairs has 103 live-in compares at entry. The `stepPairT`/`readyCycleT` share is the pairs still outside a static prefix.
+
+**Negative results (recorded so nobody repeats them).**
+- Removing exactness work to find its weight (not exact, replay mismatches ignored): no `normalize4` 10.4 -> 10.6; no result checks (`fast = true`) 10.05; no flag
+  push 10.9; all three together 9.0 (-13%). So the FMAC exactness machinery is ~13-15% of the bench, not the ~40% estimated in Wave 1b (denormal assists in the
+  garbage runs may hide part of it). Dead-flag elimination across blocks would therefore not give 2x either: only ~39% of FMAC sites keep live flags and they are
+  the last one or two of each block.
+- `-O2` for the generated files (loops over the VI scoreboard fully unrolled, `b17C8_0` 331 vs ~600 asm lines): 10.5 vs 10.4 ns, no change (same as Wave 1b).
+- `[[likely]]` on the FMAC fast path and `[[unlikely]]` on the stall loop: 8.05 -> 8.1-8.25, reverted.
+- Replay of a single record 3,000 times (everything predicted and warm): 8.0 ns, the same as the mix, so it is not branch prediction or instruction-cache misses.
+
+**Not done / next.** (1) `DAZ`-based operand normalisation for ADD/SUB/MUL/MADD/MSUB (denormal operands become signed zero in hardware; only exp==255 needs a
+check): est. -5-7%, needs the MXCSR scoped to the block run. (2) Static prefixes that include DIV/EFU/XGKICK pairs and a second prefix after them (the per-pair path still
+runs the tail of most blocks). (3) A single `maxReady` scalar to skip the live-in compares when everything is ready. (4) A cheaper flag-queue entry (40 bytes, 10 stores)
+or lazy MAC/status only when a reader exists in the program. (5) 2x needs all of these plus keeping VF/ACC in xmm registers across a block, i.e. a real block compiler.
