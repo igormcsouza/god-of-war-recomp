@@ -155,3 +155,34 @@ on the NVIDIA default) includes both "Vulkan VRAM equals CPU VRAM" byte-identica
 investigated: on Intel, runs started with `GOW_SCREENSHOT_AT` set together with `PS2X_GS_VULKAN_STATS=1`
 closed the window cleanly after about 15 s (no screenshot written), while the same Intel run without
 `GOW_SCREENSHOT_AT` ran the full 40-50 s. NVIDIA runs with it were fine.
+
+## Gameplay profile, CLUT versions and transfer fences (2026-10-14)
+
+
+Gameplay reached with `GOW_SKIP_FMV=1 GOW_PAD_TEST=1` (default pad script): the ship level with Kratos and the HUD is on
+screen by t=50-75 s (checked in PNGs from `GOW_SCREENSHOT_AT`). Before: **~7.5 FPS** (`vid::Flip`/s from `gow-delta`
+`frames`/`wall`). Per-thread CPU: GS worker 59%, EE 39%, VU1 worker 38%, render 3%. Costs per second: GPU ~550k prims/s
+(rain particles), `gpu_busy` ~425 ms; CPU fallbacks ~1,500-1,900 prims/s (`tex-feedback` ~1,300-1,600, `z-alias` ~110-130,
+`dest-alpha-test` ~110-140) = `cpudraw_ms` ~375-430; fences `finish_ms` ~390-435, of which `LoadClut` 660-680 ends/s =
+~300 ms; 1,000 runs/s.
+
+Changes (`patches/ps2recomp-gs-vulkan.patch`, `gs_vulkan_backend.cpp` and the shader):
+- **CLUT snapshots.** The CLUT buffer holds 64 versions; an indexed primitive records the current version in `tmode`
+  bits 25-31 and the shader reads that slot. `LoadClut` (CSM1) ends the run only if the run writes the CLUT's pages.
+- **Non-conflicting transfers.** With the zero-copy import, `BeginTransfer`/`UploadImage` proceed without a fence when
+  their pages are neither read nor written by the open run (`runReads`/`runWrites`; src checked against writes, dst
+  against both). The copy path always fences (its end-of-run copy would overwrite the upload).
+- **`tex-feedback` uses the sprite's UV box** (+1 texel if bilinear; only CLAMP or in-range UVs) instead of the declared
+  texture size for the page test.
+
+After: runs 900-1,000/s -> 250-300/s, `LoadClut` and `BeginTransfer` run ends gone; gameplay **~9-10 FPS**; intro/title
+**~24 FPS** (was ~17). `ps2x_tests` 633/633 (the CLUT-between-GPU-draws cases now exercise the versions path).
+Gaps: no new test for non-conflicting transfers (only exercised in the game); the UV box rarely helped, because the
+remaining `tex-feedback` is real: 32-px strips of the frame sampling itself (same pixels, or bilinear neighbours), and
+CT24 reads of the Z buffer (`tbp` = `zbp`, different `tbw`).
+
+Left, in order: (1) `tex-feedback` (~430 ms/s CPU plus a GPU drain each time): the Z-copy case is order-safe as a snapshot,
+and in-place same-pixel strips are race-free when the UV-to-pixel map is the identity; both need an exact test or a
+scratch-copy dispatch; at minimum split fallback rows across the idle raster workers. (2) `z-alias` (~190 run ends/s in
+the intro). (3) EE vs the GIF mutex (not touched). GPU alone is ~425 ms/s in gameplay, so fallbacks must go before more
+GPU-side work pays off.
