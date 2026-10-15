@@ -73,9 +73,9 @@ namespace vu1s
     {
         Plan pl;
         size_t n = 0;
-        while (n + 1u < pairs.size() && eligible(*pairs[n]))
-            ++n; // el último par del bloque siempre va por la ruta par a par
-        if (n < 4u)
+        while (n < pairs.size() && eligible(*pairs[n]))
+            ++n; // si el bloque acaba en un par elegible (sin salto ni E/D/T) entra entero en el prefijo
+        if (n < 2u)
             return pl;
         struct W
         {
@@ -208,7 +208,7 @@ namespace vu1s
             else o << int(s.lane);
             o << ", base + " << s.cycle << "u);\n";
         }
-        o << "        VU1CompiledAccess::staticExit(vu, base + " << pl.span << "u, " << pcs[pl.region] << "u);\n";
+        o << "        VU1CompiledAccess::staticExit(vu, base + " << pl.span << "u, " << (pl.region < pcs.size() ? pcs[pl.region] : (pcs.back() + 8u) % 16384u) << "u);\n";
         for (size_t i = pl.region; i < stepText.size(); ++i)
             o << stepText[i];
         o << "        return 1;\n    }\n";
