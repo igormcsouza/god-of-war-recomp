@@ -296,7 +296,7 @@ def _choose_iso() -> Path:
 
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
-    "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False,
+    "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "gpu": "Auto",
 }
 
 
@@ -351,7 +351,18 @@ def settings_to_env(settings: dict) -> dict[str, str]:
         env["PS2X_GS_RASTER_THREADS"] = str(settings["raster_threads"])
     if settings.get("mute_audio"):
         env["GOW_AUDIO"] = "0"
+    if settings.get("gpu") not in (None, "", "Auto"):
+        env["PS2X_VK_DEVICE"] = settings["gpu"]
     return env
+
+
+def detect_gpus() -> list[str]:
+    """Vulkan device names from `vulkaninfo --summary` (best effort: [] if it is missing or fails)."""
+    try:
+        text = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [m.strip() for m in re.findall(r"deviceName\s*=\s*(.+)", text)]
 
 
 def detect_pads() -> list[str]:
@@ -398,6 +409,7 @@ def settings_window(settings: dict) -> dict | None:
     pad_index = settings["pad_index"]
     pad = tkinter.StringVar(value="Auto" if pad_index is None else
                             next((v for v in pad_values if v.startswith(f"{pad_index}:")), str(pad_index)))
+    gpu = tkinter.StringVar(value=settings["gpu"])
     error = tkinter.StringVar()
     frame = ttk.Frame(root, padding=10)
     frame.grid()
@@ -416,6 +428,8 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Combobox(frame, textvariable=pad, values=pad_values, width=40).grid(row=6, column=1, columnspan=2, sticky="w")
     ttk.Checkbutton(frame, text="Debug UI", variable=dbg).grid(row=7, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
+    ttk.Label(frame, text="GPU (Auto = discrete first)").grid(row=9, column=0, sticky="w")
+    ttk.Combobox(frame, textvariable=gpu, values=["Auto"] + detect_gpus(), width=40).grid(row=9, column=1, columnspan=2, sticky="w")
 
     def play() -> None:
         nonlocal result
@@ -431,10 +445,10 @@ def settings_window(settings: dict) -> dict | None:
         result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
                   "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
-                  "mute_audio": mute.get()}
+                  "mute_audio": mute.get(), "gpu": gpu.get().strip() or "Auto"}
         root.destroy()
 
-    ttk.Button(frame, text="Play", command=play).grid(row=9, column=2, sticky="e", pady=8)
+    ttk.Button(frame, text="Play", command=play).grid(row=10, column=2, sticky="e", pady=8)
     root.mainloop()
     return result
 

@@ -6781,3 +6781,30 @@ default on Windows too.
   traced further). The 5-minute soak ran without a hang: ~100k GPU prims/s until 300 s; title menu rendered correctly
   (screenshots viewed), but 5 of 11 sparse shots (150-300 s) were black, which later runs (26/26 non-black every 5 s) did not
   reproduce. Open: confirm whether a late-menu fade/attract mode explains it.
+
+### Vulkan device selection and Linux build reproducibility (2026-10-14)
+
+**Device selection** (`patches/ps2recomp-gs-vulkan.patch`): the default is now discrete, then integrated, virtual,
+CPU (it was integrated first). The device list and the choice are logged; `PS2X_VK_DEVICE=<index|name substring>`
+forces one and an unmatched value falls back with a warning. New test "Unmatched PS2X_VK_DEVICE falls back to the
+default device" (it checks the fallback keeps the backend ready; it cannot read the chosen device name). Launcher:
+`gpu` setting (`Auto` default) maps to `PS2X_VK_DEVICE`, listed through `vulkaninfo --summary`. NVIDIA vs Intel
+numbers (16.9 vs 7.1 FPS, ~102 vs ~262 GPU ms/s) and the zero-copy / presentation checks are in `docs/VULKAN.md`.
+
+**Build reproducibility:** `scripts/compilar_linux.py` used to edit the PS2Recomp checkout outside the patches.
+Inventory: (1) `ps2xRuntime/cmake/ReleaseMode.cmake`, commenting out the IPO `set_property`; (2) appending
+`target_include_directories(ps2EntryRunner ... src/runner)` to `ps2xRuntime/CMakeLists.txt`; (3) appending a
+`-O1` compile option for `ps2EntryRunner`; (4) rewriting `build/build.ninja` so FFmpeg links `.so` instead of `.a`.
+The same lines (2) and (3) had leaked into `ps2recomp-gs-vulkan.patch`; they were removed from there. (1)-(3) now
+live in the new `patches/ps2recomp-linux-build.patch` (last in the order in `scripts/compilar.ps1`), behind the
+options `PS2X_DISABLE_IPO` and `PS2X_RUNNER_O1` (both OFF by default, so Windows is unchanged; the script passes
+ON; the include line is unconditional and carries the `GOW-Port include` marker the Windows script looks for).
+(4) stays in the script: it depends on which FFmpeg pkg-config finds on that machine. `register_functions.cpp`
+is not edited: `ps2_recomp` generates it into `build-linux/generado/` and the script copies it (with every other
+generated file) into `ps2xRuntime/src/runner/`; that is machine output and is never committed.
+Verified: a fresh clone of the pinned commit in a separate temp dir applies all 115 patches in order; the real
+checkout was brought to the same state, rebuilt incrementally (cmake with the new options + `ps2EntryRunner`, 6
+steps), the game starts and renders on NVIDIA and Intel (`GOW_SCREENSHOT_AT=30` shows the Options menu), and
+`ps2x_tests` reports 631 passed, 0 failed. A from-scratch rebuild in the separate clone was not done. A full
+`compilar_linux.py` run was not repeated (it regenerates the runner); only the cmake/ninja steps it performs.
+
