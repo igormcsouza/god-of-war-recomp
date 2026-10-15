@@ -932,7 +932,27 @@ connected, the keyboard mapping in the table above applies unchanged.
 there is no fallback to another pad. Unset it for autodetect.
 
 The selection rule is the pure function `ps2SelectGamepad()` (`ps2_pad_select.h`), covered by the
-`PadSelect` tests in `ps2xTest/src/pad_input_tests.cpp`. Not verified with a physical pad.
+`PadSelect` tests in `ps2xTest/src/pad_input_tests.cpp`.
+
+### Pads without an SDL mapping (patch `ps2recomp-pad-mappings.patch`)
+
+GLFW (inside raylib) only reports buttons and sticks for pads that have an SDL-style mapping. An unmapped pad
+is "present" (autodetect picks it) but every button and stick reads as zero. This was why a GameSir dongle
+(`3537:103e`, kernel name "Generic X-Box pad", xpad driver, GUID `03000000373500003e10000010010000`) did
+nothing. Now, once the window is up, the runtime:
+
+1. loads `platform:Linux` lines from `$GOW_PAD_MAPPINGS` (a gamecontrollerdb.txt), `~/.config/gow-one/gamecontrollerdb.txt`,
+   `/usr/share/sdl-gamecontrollerdb/`, `/usr/share/SDL_GameControllerDB/`, the Lutris or Steam copy, and
+   `$SDL_GAMECONTROLLERCONFIG`;
+2. for a pad that is still unmapped, applies a generic Xbox-like evdev mapping for its GUID (A/B/X/Y = b0-b3,
+   bumpers b4/b5, back/start b6/b7, sticks a0,a1 / a3,a4, triggers a2/a5, d-pad hat 0) and logs
+   `[gow-pad] ... has no SDL mapping`.
+
+`GOW_PAD_DIAG=1` logs once per second `[gow-pad] #i 'name' guid=... gamepad=0|1 axes=... buttons=...` (raw GLFW
+values, so you can see which index each physical button has) or a hint if GLFW sees no joystick (permissions:
+`/dev/input/event*` is `root:input 0660`; a logged-in desktop session normally gets an ACL, otherwise add the user to
+group `input`). Pure logic is covered by the `PadMappings` tests. Mapping verified with the GameSir dongle through
+GLFW (name and six axes read; physical button presses not yet verified in game).
 
 ## Linux runtime options
 
