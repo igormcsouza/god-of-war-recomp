@@ -13,6 +13,7 @@
 namespace replay = gow_gs_replay;
 namespace
 {
+    std::vector<uint64_t> g_presentHashes; // BENCH_HASH_PRESENT=1: hash of the whole VRAM after every Present (cpu vs vulkan lockstep check)
     bool apply(GSRasterBackend &b, const replay::Record &r, uint32_t &frames)
     {
         using replay::Op;
@@ -29,7 +30,13 @@ namespace
         case Op::Flush: b.Flush(); break;
         case Op::Reset: b.Reset(); break;
         case Op::Sync: if (!replay::pod(r, sync)) return false; b.Sync(sync); break;
-        case Op::Present: if (!replay::pod(r, present)) return false; (void)b.Present(present); ++frames; break;
+        case Op::Present: if (!replay::pod(r, present)) return false; (void)b.Present(present); ++frames;
+            if (std::getenv("BENCH_HASH_PRESENT")) {
+                b.Sync(GSSyncReason::Finish); std::vector<uint8_t> v; b.SnapshotVram(v);
+                uint64_t h = 1469598103934665603ull; for (uint8_t c : v) h = (h ^ c) * 1099511628211ull;
+                g_presentHashes.push_back(h);
+            }
+            break;
         case Op::Clear: if (!replay::pod(r, clear)) return false; if (uint32_t(b.ClearFramebuffer(clear.context, clear.rgba)) != clear.result) return false; break;
         case Op::Write: if (!replay::pod(r, pixel)) return false; b.WriteVram(pixel.psm, pixel.base, pixel.bw, pixel.x, pixel.y, pixel.value); break;
         case Op::Read: if (!replay::pod(r, pixel)) return false; if (b.ReadVram(pixel.psm, pixel.base, pixel.bw, pixel.x, pixel.y) != pixel.value) return false; break;
@@ -85,15 +92,18 @@ int main(int argc, char **argv)
         for (int t = 0; t < 8; ++t) for (int a = 0; a < 2; ++a) for (int e = 0; e < 2; ++e) if (n[t][a][e]) std::cout << " " << names[t] << (a ? "+tex" : "") << (e ? "+blend" : "") << "=" << n[t][a][e];
         std::cout << "\n";
     }
-    std::vector<uint8_t> ref;
+    std::vector<uint8_t> ref; std::vector<uint64_t> refHashes;
     if (cpu) {
         Result c = run<GSCpuBackend>(recs, init);
+        refHashes = g_presentHashes; g_presentHashes.clear();
         std::cout << "cpu: wall=" << c.wallMs << " ms frames=" << c.frames << " badOp=" << int64_t(c.badOp) << "\n"; ref = c.vram;
     }
     std::vector<double> gpu, wall;
     int rc = 0;
     for (int p = 0; p < passes; ++p) {
         Result v = run<GSVulkanBackend>(recs, init);
+        if (cpu) for (size_t i = 0; i < refHashes.size() && i < g_presentHashes.size(); ++i) if (refHashes[i] != g_presentHashes[i]) std::cout << "present " << i << " VRAM differs from CPU\n";
+        g_presentHashes.clear();
         gpu.push_back(v.gpuMs); wall.push_back(v.wallMs);
         size_t diff = 0, first = SIZE_MAX;
         if (cpu) for (size_t i = 0; i < ref.size() && i < v.vram.size(); ++i) if (ref[i] != v.vram[i]) { if (first == SIZE_MAX) first = i; ++diff; }
