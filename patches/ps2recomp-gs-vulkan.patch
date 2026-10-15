@@ -136,10 +136,10 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..bfb35f9
+index 0000000..d1669bb
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,1140 @@
+@@ -0,0 +1,1245 @@
 +// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
 +// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
@@ -195,6 +195,7 @@ index 0000000..bfb35f9
 +    };
 +    static_assert(sizeof(PrimRecord) == 232, "std430 layout of struct Prim");
 +
++    constexpr uint32_t kClutVersions = 64u; // GOW-Port: CLUT snapshots per run (tmode bits 25..31 name one)
 +    constexpr uint32_t kTriangle = 0x100u;
 +    constexpr uint32_t kIip = 0x200u;
 +    constexpr uint32_t kFba = 0x400u;
@@ -475,12 +476,23 @@ index 0000000..bfb35f9
 +    }
 +
 +    // Pages the sampler may read: the whole texture rectangle plus one page of slack for unaligned bases.
-+    void texturePages(PageSet &out, const GSDrawState &state)
++    void texturePages(PageSet &out, const GSDrawState &state, const uint32_t *bb = nullptr)
 +    {
 +        const GSTex0Reg &tex = state.context.tex0;
 +        uint32_t pw, ph;
 +        pageSize(tex.psm, pw, ph);
 +        const uint32_t perRow = std::max(1u, (std::max<uint32_t>(tex.tbw, 1u) * 64u + pw - 1u) / pw);
++        if (bb) // GOW-Port: only the texels the sprite can sample (bb = x0,y0,x1,y1), not the declared texture size
++        {
++            const uint32_t base = tex.tbp0 >> 5;
++            for (uint32_t r = bb[1] / ph; r <= bb[3] / ph; ++r)
++                for (uint32_t c = bb[0] / pw; c <= std::min(perRow - 1u, bb[2] / pw); ++c)
++                {
++                    out.set((base + r * perRow + c) & 511u);
++                    out.set((base + r * perRow + c + 1u) & 511u); // slack for block-unaligned bases
++                }
++            return;
++        }
 +        const uint32_t cols = std::min(perRow, (static_cast<uint32_t>(state.textureWidth) + pw - 1u) / pw);
 +        const uint32_t rows = (static_cast<uint32_t>(state.textureHeight) + ph - 1u) / ph;
 +        const uint32_t base = tex.tbp0 >> 5;
@@ -575,6 +587,12 @@ index 0000000..bfb35f9
 +    uint64_t batchPixels = 0;
 +    uint32_t batchKey[3] = {0, 0, 0};
 +    PageSet batchWrites, batchReads, batchFrames, batchDepths;
++    // GOW-Port: pages the whole run reads/writes (CPU transfers and CLUT loads that miss them need no fence), and
++    // the CLUT snapshots: one 512-entry slot per version, a primitive names its slot in tmode bits 25+.
++    PageSet runWrites, runReads;
++    uint32_t clutVersion = 0;
++    bool clutDirty = false;
++    bool transferSafe = false; // the transfer in progress did not end the run
 +    bool dispatched = false;
 +
 +    // PS2X_GS_VULKAN_STATS=1: once per second, GPU vs CPU draws with fallback reasons and what ended GPU runs.
@@ -674,7 +692,7 @@ index 0000000..bfb35f9
 +        void *primsVoid = nullptr;
 +        if (!makeHostBuffer(s, GSSwizzle::kMemorySize, vram, vramMemory, &mapped) ||
 +            !makeHostBuffer(s, kMaxPrims * sizeof(PrimRecord), prims, primsMemory, &primsVoid) ||
-+            !makeHostBuffer(s, 512u * sizeof(uint16_t), clut, clutMemory, &clutMapped))
++            !makeHostBuffer(s, kClutVersions * 512u * sizeof(uint16_t), clut, clutMemory, &clutMapped))
 +            return false;
 +        primsMapped = static_cast<PrimRecord *>(primsVoid);
 +        VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4};
@@ -1137,21 +1155,49 @@ index 0000000..bfb35f9
 +    writes = frames | depths;
 +    if (state.prim.tme)
 +    {
-+        texturePages(reads, state);
++        // GOW-Port: a sprite with CLAMP/non-wrapping sampling reads only its UV box (+1 texel for bilinear).
++        uint32_t bb[4];
++        bool boxed = false;
++        if (state.prim.type == GS_PRIM_SPRITE && (ctx.clamp & 0xFu) <= 5u && (ctx.clamp & 3u) <= 1u && ((ctx.clamp >> 2) & 3u) <= 1u)
++        {
++            const float pad = state.linearFilter ? 1.0f : 0.0f;
++            const float lo[2] = {std::min(rec.attr[0], rec.attr[2]) - pad, std::min(rec.attr[1], rec.attr[3]) - pad};
++            const float hi[2] = {std::max(rec.attr[0], rec.attr[2]) + pad, std::max(rec.attr[1], rec.attr[3]) + pad};
++            const float tw = static_cast<float>(state.textureWidth), th = static_cast<float>(state.textureHeight);
++            const bool clampS = (ctx.clamp & 3u) == 1u, clampT = ((ctx.clamp >> 2) & 3u) == 1u;
++            if ((clampS || (lo[0] >= 0.0f && hi[0] < tw)) && (clampT || (lo[1] >= 0.0f && hi[1] < th)) &&
++                std::isfinite(lo[0] + lo[1] + hi[0] + hi[1]))
++            {
++                bb[0] = static_cast<uint32_t>(std::clamp(lo[0], 0.0f, tw - 1.0f));
++                bb[1] = static_cast<uint32_t>(std::clamp(lo[1], 0.0f, th - 1.0f));
++                bb[2] = static_cast<uint32_t>(std::clamp(hi[0], 0.0f, tw - 1.0f));
++                bb[3] = static_cast<uint32_t>(std::clamp(hi[1], 0.0f, th - 1.0f));
++                boxed = true;
++            }
++        }
++        texturePages(reads, state, boxed ? bb : nullptr);
 +        if ((reads & writes).any())
 +            return "tex-feedback";
 +    }
 +    const uint32_t key[3] = {rec.frame, rec.mode & 0xFFu, rec.zbuf & 0x00FFFFFFu};
 +
 +    Impl &impl = *m_impl;
++    const bool indexedTex = state.prim.tme && (ctx.tex0.psm == GS_PSM_T8 || ctx.tex0.psm == GS_PSM_T8H ||
++                                               ctx.tex0.psm == GS_PSM_T4 || ctx.tex0.psm == GS_PSM_T4HL ||
++                                               ctx.tex0.psm == GS_PSM_T4HH);
 +    if (impl.open && impl.primCount == kMaxPrims)
 +        Finish("record-ring");
++    if (impl.open && indexedTex && impl.clutDirty && impl.clutVersion + 1u >= kClutVersions)
++        Finish("clut-ring");
 +    if (!impl.open)
 +    {
 +        if (!impl.imported)
 +            std::memcpy(impl.mapped, m_vram, GSSwizzle::kMemorySize);
-+        // CLUT loads end the run (LoadClut), so the CLUT is constant within one.
 +        std::memcpy(impl.clutMapped, m_cpu.m_clut.data(), 512u * sizeof(uint16_t));
++        impl.clutVersion = 0;
++        impl.clutDirty = false;
++        impl.runReads.reset();
++        impl.runWrites.reset();
 +        impl.primCount = 0;
 +        impl.batchCount = 0;
 +        impl.dispatched = false;
@@ -1161,6 +1207,19 @@ index 0000000..bfb35f9
 +        impl.beginCmd();
 +        impl.open = true;
 +    }
++    if (indexedTex)
++    {
++        if (impl.clutDirty)
++        {
++            ++impl.clutVersion;
++            impl.clutDirty = false;
++            std::memcpy(static_cast<uint16_t *>(impl.clutMapped) + impl.clutVersion * 512u, m_cpu.m_clut.data(),
++                        512u * sizeof(uint16_t));
++        }
++        rec.tmode |= impl.clutVersion << 25u;
++    }
++    impl.runReads |= reads;
++    impl.runWrites |= writes;
 +    if (!impl.canJoin(rec, key, reads, writes, frames, depths))
 +    {
 +        if (impl.primCount - impl.primsAtSubmit >= kSubmitEvery)
@@ -1255,12 +1314,58 @@ index 0000000..bfb35f9
 +    const bool loads = indexed && tex0.cld >= 1u && tex0.cld <= 5u &&
 +                       !(tex0.cld == 4u && m_cpu.m_clutCbp[0] == tex0.cbp) &&
 +                       !(tex0.cld == 5u && m_cpu.m_clutCbp[1] == tex0.cbp);
-+    if (loads)
-+        Finish("LoadClut");
++    if (loads && m_impl && m_impl->open)
++    {
++        // GOW-Port: a CSM1 load reads at most 16 blocks at CBP; it needs the fence only if the run writes them.
++        // The next indexed primitive records a fresh CLUT snapshot.
++        const bool csm1 = tex0.csm == 0u;
++        if (!csm1 || m_impl->runWrites.test((tex0.cbp >> 5) & 511u) || m_impl->runWrites.test(((tex0.cbp + 15u) >> 5) & 511u))
++            Finish("LoadClut");
++    }
 +    m_cpu.LoadClut(tex0, texclut);
++    if (loads && m_impl)
++        m_impl->clutDirty = true;
 +}
-+void GSVulkanBackend::BeginTransfer(const GSTransferCommand &command) { GOW_VK_CPU(BeginTransfer(command)); }
-+void GSVulkanBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes) { GOW_VK_CPU(UploadImage(data, sizeBytes)); }
++// GOW-Port: a transfer whose pages the run neither reads nor writes (zero-copy only, so Finish cannot overwrite the
++// upload with stale GPU-side VRAM) proceeds on the CPU while the GPU run goes on.
++void GSVulkanBackend::BeginTransfer(const GSTransferCommand &command)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    bool safe = false;
++    if (m_impl && m_impl->open && m_impl->imported && command.direction <= 2u)
++    {
++        Impl &impl = *m_impl;
++        const GSBitBltBuf &b = command.bitbltbuf;
++        auto pages = [&](PageSet &out, uint32_t bp, uint32_t bw, uint32_t psm, uint32_t x, uint32_t y) {
++            uint32_t pw, ph;
++            pageSize(psm, pw, ph);
++            const uint32_t perRow = std::max(1u, (std::max(bw, 1u) * 64u) / pw);
++            const uint32_t w = std::max<uint32_t>(command.trxreg.rrw, 1u), h = std::max<uint32_t>(command.trxreg.rrh, 1u);
++            // one page of slack on each axis for block-unaligned bases
++            for (uint32_t py = y / ph; py <= (y + h - 1u) / ph + 1u; ++py)
++                for (uint32_t px = x / pw; px <= (x + w - 1u) / pw + 1u; ++px)
++                    out.set(((bp >> 5) + py * perRow + px) & 511u);
++        };
++        PageSet src, dst;
++        if (command.direction != 0u)
++            pages(src, b.sbp, b.sbw, b.spsm, command.trxpos.ssax, command.trxpos.ssay);
++        if (command.direction != 1u)
++            pages(dst, b.dbp, b.dbw, b.dpsm, command.trxpos.dsax, command.trxpos.dsay);
++        safe = !(src & impl.runWrites).any() && !(dst & (impl.runWrites | impl.runReads)).any();
++    }
++    if (!safe)
++        Finish("BeginTransfer(command)");
++    if (m_impl)
++        m_impl->transferSafe = safe;
++    m_cpu.BeginTransfer(command);
++}
++void GSVulkanBackend::UploadImage(const uint8_t *data, uint32_t sizeBytes)
++{
++    std::lock_guard<std::recursive_mutex> lock(m_mutex);
++    if (!m_impl || !m_impl->transferSafe)
++        Finish("UploadImage(data, sizeBytes)");
++    m_cpu.UploadImage(data, sizeBytes);
++}
 +void GSVulkanBackend::Flush() { GOW_VK_CPU(Flush()); }
 +// Only drops the CPU texture page cache: no VRAM access, so the GPU run goes on.
 +void GSVulkanBackend::TextureFlush()
@@ -1282,10 +1387,10 @@ index 0000000..bfb35f9
 +#undef GOW_VK_CPU
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 new file mode 100644
-index 0000000..e970281
+index 0000000..9165f6d
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,483 @@
 +// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
 +// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
 +// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
@@ -1508,7 +1613,8 @@ index 0000000..e970281
 +uint lookupClut(uint index)
 +{
 +    uint cpsm = (P.tmode >> 16u) & 0xFFu;
-+    uint csm = P.tmode >> 24u;
++    uint csm = (P.tmode >> 24u) & 1u;
++    uint clutVer = P.tmode >> 25u;
 +    uint sourcePsm = P.tex >> 24u;
 +    bool sixteenBit = cpsm == 2u || cpsm == 10u;
 +    uint clutBase = (P.texa & (sixteenBit ? 0x1Fu : 0x0Fu)) << 4u;
@@ -1518,11 +1624,11 @@ index 0000000..e970281
 +        clutIndex = min((sourceIndex & 0xF0u) + clutBase, 240u) + (sourceIndex & 0x0Fu);
 +    if (cpsm == 0u || cpsm == 1u)
 +    {
-+        uint raw = clutEntry(0u, clutIndex) | (clutEntry(0u, clutIndex + 256u) << 16u);
++        uint raw = clutEntry(clutVer, clutIndex) | (clutEntry(clutVer, clutIndex + 256u) << 16u);
 +        return applyTexa(cpsm, cpsm == 1u ? raw & 0x00FFFFFFu : raw);
 +    }
 +    if (sixteenBit)
-+        return applyTexa(cpsm, rgba5551To8888(clutEntry(0u, clutIndex)));
++        return applyTexa(cpsm, rgba5551To8888(clutEntry(clutVer, clutIndex)));
 +    return 0xFFFF00FFu;
 +}
 +
