@@ -7048,3 +7048,34 @@ Next steps (not done, budget): (1) log VSync/`sceMpegGetPicture` entries and EE 
 which loop spins (the 87% EE CPU poll `sub_00188B80`); (2) make `sceMpegGetPicture` return right after the wait is
 registered and test; (3) log VIF1 DMA chain tag addresses for the flood to see whether the lists are stale.
 No behaviour change shipped; `ps2x_tests` and a fresh-clone patch application were NOT rerun this session.
+
+## Intro movie garbage: the "PATH1 flood" is a normal in-engine scene, wait hypothesis eliminated (2026-10-15, Linux, NVIDIA RTX 5050)
+
+Added to `GOW_MPEG_DIAG=1` (`patches/ps2recomp-mpeg-syscall-diag.patch`, registered last in `compilar.ps1`): once per
+second after the first served picture, `[gow-mpeg] syscalls vsync=<tick> served=<n>: <id>:<count>@<last ra>` (EE syscall
+histogram, ids in hex). Run: script `5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, 50 s, screenshots at 30 s and 40 s (looked at).
+
+Findings:
+- `waitVSync`/`waitExternal`/`invokeCurrent` are `[[noreturn]]` in the scheduler, so `sceMpegGetPicture` does NOT continue
+  after registering a wait: the "double consumption / re-entrancy" suspicion is eliminated by code reading.
+- Phase 1 (vsync ~1638-2118, about 8 s real time): `served=2` the whole time. The EE runs the game's own frame loop
+  (~27 fps: syscalls 0x10/0x11 EnableIntc/DisableIntc 27/s at ra 0x294798/0x294730, FlushCache 0x64 ~100/s at 0x13f760).
+  The screen is a clean in-engine Kratos-on-cliff scene (screenshot at 30 s). So the "296k PATH1 packets / 110 frames"
+  of the previous section is simply ~216 ordinary frames of this scene (~1370 packets each), not a runaway loop:
+  the movie is waiting about 8 s for the IOP stream to deliver the first data (pre-roll), which is slow but not wrong.
+- Phase 2 (vsync ~2118+): pictures are served at 19 per 38 vsyncs = one per 2 vsyncs = 29.97 fps, i.e. the pacing is
+  correct. The EE then only issues FlushCache (0x64, ~110/s, ra 0x26bbb0) and syscall 0x4D (~15/s, ra 0x188648); no
+  3D frames and almost no GIF traffic, and the screen is flat salmon/purple polygons (screenshot at 40 s).
+- Consequence: the garbage is what stays on the GS (or what the display reads) once the game stops drawing the engine
+  scene; the movie frames we decode (column strips of 16 px, as `writeDecodedFrameToGuest` writes them) are apparently
+  never uploaded to the GS by the game in phase 2. The earlier "0x40-filled buffer shows the same picture" test only
+  covered phase 1, so it does not prove the display ignores the buffer in phase 2.
+
+Next steps (not done, budget): (1) in phase 2 log DMA ch2/ch1/ch2-tag activity and writes to GS DISPFB/DISPLAY/PMODE
+registers (is the display switched to a framebuffer nobody fills?); (2) identify what the game does at ra 0x26bbb0 /
+0x188648 (disassemble: does it kick PATH3 through a path our GIF model counts as 0 packets, e.g. DMA ch2 chain with
+`MSKPATH3`?); (3) try filling the decoded buffer with a solid colour and screenshot in phase 2 specifically; (4) look
+at why phase 1 takes ~8 s (IOP PSS stream speed).
+Verified: all 119 patches apply in order on a fresh pinned tree (git archive of the pinned commit) and equal the working
+tree (except the generated `register_functions.cpp`); this also verifies the previous GOW_GIF_TRACE patch. `ps2x_tests`
+633 pass. No behaviour change shipped.
