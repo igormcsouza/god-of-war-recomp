@@ -11,7 +11,7 @@
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Basado en](https://img.shields.io/badge/basado%20en-PS2Recomp-8A2BE2)
 ![Estado](https://img.shields.io/badge/estado-experimental-orange)
-[![Pruebas](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml)
+[![Pruebas](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml)
 
 </div>
 
