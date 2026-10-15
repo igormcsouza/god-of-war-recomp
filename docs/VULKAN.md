@@ -474,3 +474,22 @@ Replay (121 Presents, RTX 5050, 3 passes each, VRAM identical to the CPU replay,
 Not done (budget): step 2 (occupancy: merging batches, 2 px/thread) and step 3 (per-prim constants buffer). Game: one 80 s run
 (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): difficulty menu at t=20 s and the rainy fight at t=65 s render correctly; no FPS A/B was measured
 (no `gow-delta` lines in that run's stderr).
+
+## Dead-primitive skip and stateless tile HiZ (2026-10-15, `ps2recomp-gs-vulkan-perf.patch`)
+
+Both live in the tile-list pass of the kernel. Replay (121 Presents, RTX 5050, 3 passes, `vram_diff_bytes=0`, `ps2x_tests` 636 pass):
+
+| Step | GPU ms |
+|---|---|
+| before (this session's re-measure) | 1209 |
+| 2. `deadPrim()`: ZTST NEVER, alpha test NEVER+KEEP, or all colour bits masked + no Z write (32/24-bit only) | 1209 (no such prims in this capture) |
+| 1. per-tile HiZ | 1181 (-2.3%) |
+
+HiZ design: no state between dispatches (so no invalidation problem: every non-kernel VRAM write happens before a dispatch and is
+read fresh). Each 8x8 tile reads its 64 Z words once (inside the union rect, push constants `maxX/maxY`) and keeps `min(stored Z)`.
+A GEQUAL/GREATER prim whose conservative max Z (vertex Z +2, int64) is below (GEQUAL) / not above (GREATER) that minimum is dropped
+from the tile's mask. The bound stays valid because those modes only raise Z; `killAt` (atomicMin over prims touching the tile) ends
+it at the first prim that can lower Z: ZTST ALWAYS with Z write, Z beyond the Z format's mask (Z24/Z16 wrap), Z range outside
+[0, 2^32), or a frame/Z alias prim (new mode flag `M_ZALIAS` 0x40000, set where `aliasing` is decided). Gain is small because
+the min over a tile is dominated by far/cleared pixels and the 17x overdraw here is mostly visible blended layers. Step 3 (64x32
+page binning) and the real-game FPS A/B were not done (budget); `ps2EntryRunner` not rebuilt/run with the change.
