@@ -1,0 +1,50 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -2390,6 +2390,14 @@
+         scheduler.invokeCurrent(std::move(invocation));
+     }
+ 
++    // GOW-Port: GOW_MPEG_DIAG=1 registra IsEnd/GetPicture ([gow-mpeg]), acotado a 4000 lineas.
++    static bool gowMpegDiag()
++    {
++        static const bool on = []() { const char *e = std::getenv("GOW_MPEG_DIAG"); return e && *e && *e != '0'; }();
++        static std::atomic<uint32_t> n{0u};
++        return on && n.fetch_add(1u, std::memory_order_relaxed) < 4000u;
++    }
++
+     void sceMpegGetPicture(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+     {
+         const uint32_t mpegAddr = getRegU32(ctx, 4);
+@@ -2508,6 +2516,16 @@
+             }
+         }
+ 
++        if (gowMpegDiag())
++        {
++            std::lock_guard<std::mutex> dl(g_mpeg_stub_mutex);
++            MpegPlaybackState &pb = getPlaybackState(mpegAddr);
++            std::cerr << "[gow-mpeg] GetPicture have=" << haveFrame << " served=" << pb.picturesServed
++                      << " queued=" << pb.decodedFrames.size() << " streamEnded=" << pb.streamEnded
++                      << " seqEnd=" << pb.sawSequenceEnd << " failed=" << pb.decoderFailed
++                      << " cdEof=" << g_mpeg_stub_state.currentCdStreamEofSeen
++                      << " size=" << width << "x" << height << " a2=" << getRegU32(ctx, 6) << " img=0x" << std::hex << imageAddr << " ra=0x" << getRegU32(ctx, 31) << std::dec << std::endl;
++        }
+         mpegGuestWrite32(rdram, mpegAddr + 0x00u, width);
+         mpegGuestWrite32(rdram, mpegAddr + 0x04u, height);
+         mpegGuestWrite32(rdram, mpegAddr + 0x08u, frameCount);
+@@ -2605,6 +2623,14 @@
+             ++g_mpeg_stub_state.isEndTraceCount;
+         }
+ 
++        if (gowMpegDiag())
++        {
++            std::cerr << "[gow-mpeg] IsEnd ended=" << ended << " producerEof=" << producerEnded
++                      << " streamEnded=" << playback.streamEnded << " seqEnd=" << playback.sawSequenceEnd
++                      << " failed=" << playback.decoderFailed << " frames=" << playback.decodedFrames.size()
++                      << " presDone=" << presentationComplete << " served=" << playback.picturesServed
++                      << " ra=0x" << std::hex << getRegU32(ctx, 31) << std::dec << std::endl;
++        }
+         setReturnS32(ctx, (ended && playback.decodedFrames.empty() && presentationComplete) ? 1 : 0);
+     }
+ 
