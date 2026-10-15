@@ -623,3 +623,58 @@ expected 1.4-1.5x did NOT materialize (about 1.08x):** the scoreboard reads were
 analysis and the compiler folds the constant `m_vfReady` stores, so what is left is the FMAC lane math and exact-flag logic (~40%) plus flag
 queue pushes, which static timing does not touch. Not done (budget): dead-flag elimination across the whole block (MAC/status/clip not read before
 the block ends and overwritten), VF kept in locals/SIMD registers across pairs, taking the static path while XGKICK is active.
+
+## Wave 1 GS: fewer batch closes, bigger dispatches (2026-10-15, patches `ps2recomp-gs-vulkan-{zread,batch-span,tile-rects,batch-cap,record-ring}.patch`)
+
+Gate: `tools/render/bench_vk` replay of the 121-present rainy-fight capture (1.93M prims), RTX 5050, VRAM byte-identical to
+the CPU backend after every step (`vram_diff_bytes=0`), `ps2x_tests` 640/640. Close histogram per replay pass
+(`[gow-gs-vk-close-total]`, new, printed at teardown with `PS2X_GS_VULKAN_STATS=1`).
+
+| Step | Replay GPU ms | Dispatches | Closes (tex-raw / tex-war / union / cap) | Result |
+|---|---|---|---|---|
+| baseline (HEAD 35b21da) | 1123 | 17157 | 5390 / 851 / 6341 / 0 (+2735 forced submits) | |
+| 1 `zread`: Z pages that are only *tested* are not batch writes | 1057 (-5.8%) | 12739 | 1392 / 435 / 6346 | kept |
+| 2 `batch-span`: drop the union-rectangle bound | 674 (-36%) | 5405 | 1389 / 434 / 0 | kept |
+| 3 `tile-rects`: dense 8-byte rect array for the tile scan | 583 (-13.5%) | 5405 | same | kept |
+| 4 `batch-cap`: batches up to 2048 prims (was 1024) | 529 (mean 541, -7..9%) | 4466 | same, forced submits 1756 -> 836 | kept |
+| 5 `record-ring`: 65536 records / 128 cmd buffers | 531 (replay unchanged) | 4467 | | kept (live run ends) |
+| total | **1123 -> ~535 ms (-52%)** | 17157 -> 4466 | | |
+
+What the closes were:
+- Step 1: GoW stores alpha textures (T8H) in unused Z-buffer pages. A prim that only tests Z listed those pages in the batch's
+  *write* set, so the next prim reading them as a texture closed the batch (RAW/WAR, 1 prim each). Batch-mates share the frame/Z
+  targets (same key), so each Z word belongs to one thread; a test-only Z page cannot conflict with a texture read. `writes` stays
+  the run-level set for CPU-transfer fences. A/B: `GOW_VK_OLD_ZBATCH=1`.
+- Step 2: the union heuristic (`(n+1)*unionPx <= 64*sum + 1M`) predates the kernel's per-tile hit mask. With the mask a tile skips
+  every prim that misses it, so spanning the screen is free of correctness and mostly of cost. Sweep of the old bound with the
+  1024 cap: K=64 1057, K=128 781, K=256 689, K=1024 675, none 671 ms. A/B: `GOW_VK_OLD_UNION=1`.
+- Step 3: ablation with `shade()` disabled: the tile scan alone was **223 ms of 674** (33%) at cap 1024. Every 8x8 tile scans
+  all prims of the batch, reading one strided 232-byte `PrimRecord` per prim. A dense `uvec2` rect array (written at record time,
+  no extra dispatch, no extra barrier) halves that. **Negative result that motivated it:** raising the cap to 2048/4096 *without*
+  the dense array made the replay 1006 / ~8000 ms (scan cost is tiles x prims); with it, 4096 costs the same as 2048 (531), so 2048 is
+  the cap (hit mask 64 words). A binning prepass (paraLLEl-GS style per-tile lists) would remove the remaining O(tiles x prims) scan
+  but the scan is now cheap enough that it was not built.
+- Step 5: the old ring ended a run ("record-ring": full drain + CPU wait) ~70 times/s live.
+
+Remaining closes (per replay pass): `target` 1320 (frame/Z/TEST key change, avg 7 prims), `tex-raw` 1392 + `tex-war` 434, `frame-z` 232.
+All remaining tex-raw/war are one pattern: CT16 1024x832 same-buffer sweeps of 32x416 / 8x832 strips where strip i bilinear-reads one
+column written by strip i-1 (real RAW) and 8-px strips against the 0x2800 texture. Page-level tracking is not the cause (they
+are rect-level real hazards); ~1,800 small dispatches per pass. Block/rect-exact hazard tracking would only help if the zero-weight
+bilinear column were proven irrelevant; not attempted. paraLLEl-GS 8 KiB-page + block-bitmask tracking therefore has nothing
+left to remove in this capture.
+
+Live (rainy fight, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, defaults, t=52-85 s, 3 runs each, scene state varies run to run):
+
+| | window FPS median (3 runs) | `gpu_busy` ms/s | batches/s | prims/dispatch | `record_ms` ms/s | `gs_busy` ms/s | `vu1_busy` ms/s |
+|---|---|---|---|---|---|---|---|
+| old (`GOW_VK_OLD_ZBATCH=1 GOW_VK_OLD_UNION=1`, steps 1-2 off) | 21.7 / 18.8 / 18.8 | 646-659 | 6,750-7,000 | 112 | 300-320 | 915-950 | 553-593 |
+| steps 1-2 | 20.0 / 29.6 / 20.0 | 441-450 | 3,700-3,800 | ~440 | 100-115 | 750-780 | 760-830 |
+| steps 1-4 | 22.7 / 19.9 / 20.0 | 431-436 | 3,200-3,600 | ~400 | 90-110 | 820-850 | 758-813 |
+| steps 1-5 | 20.3 / 20.8 / 21.7 | 428-448 | 3,050 | ~400 | 8-12 | 790-840 | 798-810 |
+
+GPU busy time per second fell by a third, command recording by 90%, and the GS-worker queue no longer starves the VU1 thread (VU1 busy
+553-593 -> 760-830 ms/s, i.e. the game now runs it at its own cap). FPS did not move beyond noise: the game quantises to whole
+vblanks (20 FPS = 3 vblanks), the VU1 worker is at 80% of a core (~37 ms per displayed frame, cap ~27 FPS) and the GS worker is
+still 80-85% busy: `cpudraw_ms` 210-250 (the ~330 prims/s `tex-feedback` CPU fallbacks) and `finish_ms` ~200 (run ends by
+BeginTransfer/Sync/line-point) are now the largest GS-worker items. Next candidates: `tex-feedback` GPU snapshot (EMULATOR_RESEARCH B1),
+fewer run ends (BeginTransfer 20-40/s, ~45-135 ms/s of waiting), then VU1.
