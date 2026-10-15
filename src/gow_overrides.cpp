@@ -22,6 +22,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <algorithm>
 
 namespace
 {
@@ -393,6 +394,42 @@ namespace
         writeGuest32(rdram, 0x0029C870u, 0u);
         writeGuest32(rdram, 0x0029C840u, 0u);
         padReturn(ctx, 0u);
+    }
+
+    // GOW_PLAY_FMV=<nombre>[,<nombre>...] (diagnóstico): la N-ésima petición de película del juego (0x188CA0) reproduce
+    // la N-ésima película de la lista (la última se repite) en vez de la pedida. Sirve para probar cada FMV sin jugar
+    // hasta ella. Nombres sin extensión, como los pide el juego (Semo01, A01MP05, MA360...). Registra [gow-fmv].
+    // GOW_MOVIE_DIAG=1 también registra las peticiones.
+    void gowPlayMovieLoad(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        if (ctx->pc != 0x00188CA0u) { sub_00188CA0_0x188ca0(rdram, ctx, runtime); return; }
+        static unsigned calls = 0;
+        std::vector<std::string> names;
+        if (const char *list = std::getenv("GOW_PLAY_FMV"))
+            for (const char *p = list; *p;)
+            {
+                const char *end = std::strchr(p, ',');
+                if (!end) end = p + std::strlen(p);
+                if (end > p) names.emplace_back(p, end);
+                p = *end ? end + 1 : end;
+            }
+        const auto *asked = padBuffer(rdram, GPR_U32(ctx, 4), 32);
+        std::fprintf(stderr, "[gow-fmv] request #%u name=%.31s a1=%x a2=%x a3=%x ra=%x\n", calls,
+                     asked ? reinterpret_cast<const char *>(asked) : "<invalid>", GPR_U32(ctx, 5), GPR_U32(ctx, 6),
+                     GPR_U32(ctx, 7), GPR_U32(ctx, 31));
+        if (!names.empty())
+        {
+            const std::string &name = names[std::min<size_t>(calls, names.size() - 1)];
+            // 0x9F000 queda libre: justo bajo el heap privado del runtime (0xA0000, ver applyGowOverrides).
+            if (auto *scratch = padBuffer(rdram, 0x9F000u, 32); scratch && name.size() < 32)
+            {
+                std::memcpy(scratch, name.c_str(), name.size() + 1);
+                SET_GPR_U32(ctx, 4, 0x9F000u);
+                std::fprintf(stderr, "[gow-fmv] playing %s instead\n", name.c_str());
+            }
+        }
+        ++calls;
+        sub_00188CA0_0x188ca0(rdram, ctx, runtime);
     }
 
     void gowSkipMovieReady(uint8_t *, R5900Context *ctx, PS2Runtime *) { padReturn(ctx, 1u); }
@@ -1139,6 +1176,8 @@ namespace
             runtime.replaceFunction(0x00100C50u, gowDiagAnimationTime);
             runtime.replaceFunction(0x00100BF0u, gowDiagAnimationDuration);
         }
+        if (std::getenv("GOW_PLAY_FMV") || std::getenv("GOW_MOVIE_DIAG"))
+            runtime.replaceFunction(0x00188CA0u, gowPlayMovieLoad);
         if (const char *skip = std::getenv("GOW_SKIP_FMV"); skip && std::strcmp(skip, "1") == 0)
         {
             runtime.replaceFunction(0x00188CA0u, gowSkipMovieLoad);

@@ -7434,3 +7434,28 @@ lag-1 autocorrelation 0.97-1.0 (before the last fix 0.04-0.3 = noise, before ADM
 data ...", "ADMA restarts cleanly after an underrun", "sceMpegGetPicture flags the end of the stream ...", "sceMpegDemuxPssRing
 delivers an audio packet once ...". Left: a second FMV starts about 10 s after the first in this run (state 10 at 125 s, not
 examined); `GOW_SPU2_DIAG` still logs MMIX/volume writes in the uncommitted `PS2Recomp/` WIP.
+
+## FMV a tiempo real: el bucle de la película giraba al 100 % de CPU (2026-10-15, Linux) - corregido
+
+Síntoma (grabación del usuario): la intro iba a ~19 imágenes/s (esperado 29,97), el audio sonaba estirado y al final había 3-4 s de
+audio+escena acelerados. Medición con `GOW_MPEG_DIAG=1` / `GOW_PERF_DIAG=1` / `PS2X_PIPE_STATS=1`: durante la película la GS (25 ms/s) y
+la VU1 (3 ms/s) están ociosas y `guest_wait` es 0: el hilo EE+IOP está al 100 %. ffmpeg + conversión + escritura del cuadro suman
+~8 ms/s cada uno, no son el cuello. Con `GOW_PLAY_FMV`/contador de llamadas temporal: la bomba de película del juego
+(`0x188B80`, que llama a `sceMpegDemuxPssRing` vía `0x2740D0`) se ejecuta **~830.000 veces/s**. Mientras la cola de imágenes
+decodificadas está llena, el stub devolvía 0 al instante y el EE giraba; como el reloj emulado (VBlank, imágenes, SPU2/ADMA a ciclos de
+IOP) avanza con los ciclos del EE, iba al ~63 % del tiempo real (38 vsync/s). Audio y vídeo iban igual de lentos (el SPU2 genera por
+ciclos de IOP, no por reloj de pared); no era un problema de pacing del audio.
+
+Corrección (`patches/ps2recomp-mpeg-pump-vsync.patch`, registrado último; prueba en `ps2xTest`, falla sin el cambio): con la cola llena,
+`sceMpegDemuxPssRing` duerme hasta el siguiente VSync (`waitVSync`) y después devuelve 0 como antes (espera acotada: no hay bloqueo del
+consumidor, ver el comentario de `mpegDemuxBackpressured`). Solo se alcanza mientras suena una película. Medido (intro, `Semo01`):
+imágenes servidas 19 -> 29,9/s, vsync 38 -> 60/s, la película dura 48 s de pared (antes 75-110), audio PCM generado en tiempo real (109 s
+de muestras en 105 s), sin acelerón al final. Otras películas probadas con la misma ejecución (arranque normal, nombre sustituido):
+`A01MP05` (247 imágenes), `MA360` (994) y `D01MP02` (3.184, 106 s): todas terminan (estado 0) y el juego sigue vivo 20 s después.
+Rendimiento del resto del juego (A/B con `GOW_SKIP_FMV=1`, mismas condiciones, `[gow-delta]`): menú ~20-23 FPS y pelea ~12-13 FPS en base y
+candidata (sin diferencia); con película y la misma ruta (`m2*`): pelea 24-37 FPS en ambas.
+
+Diagnósticos nuevos (apagados por defecto): `GOW_PLAY_FMV=<nombre>[,<nombre>...]` sustituye la N-ésima película que pide el juego
+(`0x188CA0`; la intro pide `Semo01`) por otra del TOC sin extensión (`Semo01`, `A01MP05`, `MA360`...), y `GOW_MOVIE_DIAG=1` registra
+`[gow-fmv] request` (nombre y argumentos). El disco tiene 67 `.PSS` y 53 `.PSW` en `GODOFWAR.TOC` (partes 0 y 1 de los PAK); no se han
+reproducido todos. Pendiente: las películas que el usuario dice que se caen (nombres por confirmar); mirar `.PSW` y los `BONUS*` (hasta 566 MB).

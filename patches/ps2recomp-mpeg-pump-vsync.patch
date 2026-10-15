@@ -1,0 +1,107 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -2296,8 +2296,18 @@
+                               << " avail=" << availableBytes << std::endl;
+                 });
+             }
+-            setReturnS32(ctx, 0);
+-            return;
++            // GOW-Port: GoW's movie pump (0x188B80) calls this in a tight loop (~800,000 times/s) while the decoded
++            // picture queue is full. Returning at once made the EE spin at 100% host CPU, so emulated time (and with it
++            // the 60 Hz VBlank, the pictures and the audio) ran at ~60% of real time. Sleep until the next VSync instead
++            // (the queue only drains one picture per ~2 VSyncs). The call still returns 0 afterwards: a bounded wait,
++            // so the guest loop keeps waking its picture consumer. Only reached while a movie is playing.
++            runtime->eeScheduler().waitVSync(
++                runtime->eeScheduler().currentVSyncTick(),
++                -1,
++                [](R5900Context &resumeContext)
++                {
++                    setReturnS32(&resumeContext, 0);
++                });
+         }
+         const bool currentStreamCompleted = std::find(completedMpegIds.begin(), completedMpegIds.end(), mpegAddr) != completedMpegIds.end();
+         if (decodedCount != decodedBefore || eofChanged || currentStreamCompleted)
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -323,6 +323,42 @@
+         ctx->pc = ::getRegU32(ctx, 31);
+     }
+ 
++    // GOW-Port: God of War's movie pump calls sceMpegDemuxPssRing ~800,000 times per second while the decoded picture
++    // queue is full; returning at once kept the EE at 100% host CPU and the emulated clock ran slower than real time.
++    constexpr uint32_t kPumpMainPc = 0x00125400u;
++    constexpr uint32_t kPumpResumePc = 0x00125410u;
++    constexpr uint32_t kPumpVsyncPc = 0x00125420u;
++    constexpr uint32_t kPumpHandle = 0x00124A00u;
++    std::atomic<uint32_t> gPumpVsyncRan{0u};
++    std::atomic<uint32_t> gPumpVsyncSeenAtReturn{99u};
++    std::atomic<int32_t> gPumpResult{-999};
++
++    void testPumpMain(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        setRegU32(*ctx, 4, kPumpHandle);
++        setRegU32(*ctx, 5, 0x00134000u);
++        setRegU32(*ctx, 6, 0x100u);
++        setRegU32(*ctx, 7, 0u);
++        setRegU32(*ctx, 8, 0xFFFFFFFFu);
++        ctx->pc = kPumpResumePc;
++        ps2_stubs::sceMpegDemuxPssRing(rdram, ctx, runtime);
++    }
++
++    void testPumpResume(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gPumpVsyncSeenAtReturn.store(gPumpVsyncRan.load(std::memory_order_acquire), std::memory_order_release);
++        gPumpResult.store(getRegS32(*ctx, 2), std::memory_order_release);
++        ctx->pc = 0u;
++        runtime->requestStop();
++    }
++
++    void testPumpVsync(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
++    {
++        gPumpVsyncRan.store(1u, std::memory_order_release);
++        runtime->eeScheduler().completeVSync(runtime->eeScheduler().currentVSyncTick() + 1u);
++        ctx->pc = 0u;
++    }
++
+     void testNodataVsync(uint8_t *, R5900Context *ctx, PS2Runtime *runtime)
+     {
+         // Simula el siguiente VSync mientras GetPicture espera tras un callback sin datos.
+@@ -1129,6 +1165,36 @@
+                      "GetPicture should return once the retried callback produces a frame");
+         });
+ 
++        tc.Run("sceMpegDemuxPssRing sleeps until the next VSync instead of spinning while the picture queue is full", [](TestCase &t)
++        {
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            ps2_stubs::resetMpegStubState();
++            ps2_stubs::notifyMpegCdStreamStart();
++            runtime.registerFunction(kPumpMainPc, testPumpMain);
++            runtime.registerFunction(kPumpResumePc, testPumpResume);
++            runtime.registerFunction(kPumpVsyncPc, testPumpVsync);
++            gPumpVsyncRan.store(0u, std::memory_order_release);
++            gPumpVsyncSeenAtReturn.store(99u, std::memory_order_release);
++            gPumpResult.store(-999, std::memory_order_release);
++            for (int i = 0; i < 8; ++i)
++                ps2_stubs::enqueueMpegDecodedFrameForTesting(kPumpHandle);
++
++            R5900Context mainContext{};
++            mainContext.pc = kPumpMainPc;
++            EeScheduler &ee = runtime.eeScheduler();
++            ee.reset(rdram.data(), mainContext);
++            const int vsyncId = ee.createThread(EeThreadCreateParams{0u, kPumpVsyncPc, 0u, 0u, 0u, 10, 0u});
++            t.IsTrue(vsyncId > 1, "VSync guest thread should be created");
++            t.Equals(ee.startThread(vsyncId, 0u, mainContext, false), 0, "VSync guest thread should become ready");
++            ee.run();
++
++            t.Equals(gPumpVsyncSeenAtReturn.load(std::memory_order_acquire), 1u,
++                     "a backpressured sceMpegDemuxPssRing should only return after the next VSync");
++            t.Equals(gPumpResult.load(std::memory_order_acquire), 0,
++                     "the call still consumes nothing, so the guest loop keeps waking its consumer");
++        });
++
+         tc.Run("sceMpegGetPicture flags the end of the stream for the game's own sceMpegIsEnd", [](TestCase &t)
+         {
+             // GOW-Port: sceMpegIsEnd de libmpeg lee *(*(mpeg + 0x40)); la libmpeg original lo pone a 1 al terminar el
