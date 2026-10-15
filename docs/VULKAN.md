@@ -304,3 +304,27 @@ memory (software-pipelined loads), or smaller dispatches split by independent ti
 for better culling; (3) pack the `FMT_*` tables into one word and hoist per-prim format decode out of the pixel loop;
 (4) skip bilinear/blend work for pixels whose Z test fails (already done for texture); (5) a graphics pipeline for large
 opaque prims. The CPU side is not the limit: the replay with no shading runs 121 presents in ~1050 ms wall.
+
+## Per-tile primitive lists: tried, no gain (2026-10-15)
+
+Replay benchmark (RTX 5050, 121 presents, baseline 1319-1328 ms, VRAM byte-identical to the CPU replay). The kernel already builds a
+per-8x8-tile ordered hit list (shared bitmask), so the structural step was to make that list explicit and stage data. All variants below
+were reverted; the patch is unchanged.
+
+| Variant | GPU ms | VRAM vs CPU |
+|---|---|---|
+| baseline (tile bitmask + edge cull) | 1319-1328 | identical |
+| prefix-summed ordered list + hit prims' edge data staged in shared memory (chunks of 32) | 1372 | identical |
+| + edge value at tile origin, int32 slopes (one int64 add per edge) | 1365 | not checked (--no-cpu) |
+| + destination (fb) read issued together with the Z read | 1427 | not checked |
+| workgroup 8x4 (32 threads) | 1457 | identical |
+| workgroup 16x8 (128 threads) | 1466 | not checked |
+| packed FMT table in `locate()` (1 dynamic lookup instead of 5) | 1318 | **73,844 bytes differ** (mask derivation wrong for some PSM), reverted |
+
+Conclusion: the serial walk is not dominated by rejecting primitives (edge tests, loads) nor by table lookups. Replay stats: ~600 Mpx are
+actually shaded in ~1.3 s over only ~17k threads per dispatch (about half of the GPU's thread capacity), average 113 prims per batch.
+The time is the latency chain of a covered pixel (Z read, texture + CLUT, fb read, blend, write) repeated per overlapping primitive in the
+slowest tile of each dispatch (fixed per-dispatch overhead is only ~7 us). CPU binning would only replace the ~7% cull phase, so it was not built.
+Ideas that could still help: software-pipeline the texture fetch of primitive n+1 (textures are read-only inside a batch) with the fb/Z
+chain of primitive n (loses the Z-before-texture early-out, so measure); lanes mapped to (primitive, pixel) pairs for thin triangles; running
+independent small dispatches concurrently (no barrier between disjoint rects).
