@@ -8,6 +8,7 @@
 python3 tools/linux/gow_launcher.py            # settings window
 python3 tools/linux/gow_launcher.py --last     # no window, saved settings (alias: --no-gui)
 python3 tools/linux/gow_launcher.py --iso X.iso --runner R   # unchanged CLI flow
+python3 tools/linux/gow_launcher.py --last --mute            # saved settings, audio muted this run only
 ```
 
 Tk is not part of every Python install. On Debian/Ubuntu install `python3-tk`. If Tk or
@@ -25,6 +26,13 @@ ISO, otherwise a prompt, otherwise an error asking for `--iso`).
 | Raster threads | `PS2X_GS_RASTER_THREADS` (0/Auto = unset). |
 | Controller | Lists pads found in `/proc/bus/input/devices`; choosing one exports `GOW_PAD_INDEX`, "Auto" leaves it unset. |
 | Debug UI | `GOW_DEBUG_UI=1`. |
+| Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
+
+`--mute` forces audio off for a single run, with or without the window (and works with `--iso`
+and `--last`). It is not saved: the settings file keeps the checkbox value.
+
+The `mute_audio` key defaults to `false` when missing, so settings files written before it was
+added still load.
 
 Settings are saved on Play in `${XDG_CONFIG_HOME:-~/.config}/gow-one-recomp/settings.json`.
 Invalid or unknown values are ignored on load. The `--iso` CLI path does not write the file.

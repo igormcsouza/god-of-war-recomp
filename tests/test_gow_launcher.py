@@ -186,6 +186,41 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(env, {"GOW_FULLSCREEN": "1", "GOW_DEBUG_UI": "1", "GOW_PAD_INDEX": "0",
                                "PS2X_GS_RASTER_THREADS": "3"})
 
+    def test_mute_audio_env_mapping(self) -> None:
+        self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True)),
+                         {"GOW_AUDIO": "0"})
+
+    def test_mute_audio_roundtrip_and_old_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, mute_audio=True), path)
+            self.assertTrue(launcher.load_settings(path)["mute_audio"])
+            # Settings written before the key existed: default False, other keys kept.
+            path.write_text('{"debug_ui": true, "pad_index": 1}')
+            loaded = launcher.load_settings(path)
+            self.assertIs(loaded["mute_audio"], False)
+            self.assertTrue(loaded["debug_ui"])
+            path.write_text('{"mute_audio": "yes"}')
+            self.assertIs(launcher.load_settings(path)["mute_audio"], False)
+
+    def test_mute_flag_is_one_run_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp) / "d.iso"
+            elf = make_iso(iso)
+            import hashlib
+            runner = Path(tmp) / "r"
+            runner.write_text("#!/bin/sh\n")
+            runner.chmod(0o755)
+            cfg = Path(tmp) / "cfg"
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg), "XDG_CACHE_HOME": tmp + "/c"}), \
+                 patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf).hexdigest()), \
+                 patch.object(launcher.subprocess, "call", return_value=0) as call:
+                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso)))
+                self.assertEqual(launcher.main(["--last", "--mute", "--runner", str(runner)]), 0)
+                self.assertEqual(call.call_args[1]["env"]["GOW_AUDIO"], "0")
+                self.assertFalse(launcher.load_settings()["mute_audio"])
+
     def test_last_uses_saved_settings_without_gui(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             iso = Path(tmp) / "d.iso"
