@@ -67,3 +67,20 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 - 2026-10-15 (research): docs/HW_RENDERER_PLAN.md written: hybrid vulkan-hw graphics-pipeline renderer feasibility, 8 milestones with a stop gate after step 4; conditional go; interim alternative is compute tile binning (~30-35 FPS). No code changed.
 - 2026-10-15 (agent): Vulkan GS tile HiZ (stateless per-dispatch min Z, kill on Z-lowering prims) + dead-prim skip in ps2recomp-gs-vulkan-perf.patch: replay GPU 1209 -> 1181 ms (-2.3%), byte-identical, 636 tests; game FPS/screenshots NOT run; page binning not done. Defaults chosen unasked: stateless HiZ over persistent.
 - 2026-10-15 (agent): Display options in the runtime (`patches/ps2recomp-display-options.patch`, registered last): `GOW_FULLSCREEN=1` + F11 (borderless), `GOW_SCALE_FILTER` nearest|bilinear|sharp-bilinear (shader), `GOW_WINDOW_SCALE=<n>`; launcher gets a Scaling combobox (`scaling` in settings.json, old files load as Bilinear). Defaults chosen unasked: ESC still closes, bilinear default, existing aspect handling kept (already letterboxed). Verified: 638 ps2x_tests pass, launcher tests OK, game run with each filter and fullscreen (window 1280x896 at scale 2; fullscreen 1920x1055 pillarboxed, screenshots correct). Not tested: Wayland, runtime F11 key press.
+
+## Morning summary (2026-10-15, written by the lead)
+
+State: the game runs natively on Linux (Vulkan GS, compiled VU1, threaded defaults, launcher, controller, fullscreen/filter).
+Gameplay ~15-17 FPS on the RTX 5050 (guest flips), intro/title ~25-30. Goal (60 FPS, 1080p, no artifacts) NOT reached.
+
+Open items, by the owner's priority order:
+1. Artifacts: intro movie garbage after ~5-10 frames (root cause open after 3 rounds; `GOW_SKIP_FMV=1` avoids it).
+   Latest evidence: decoded frames probably never reach the GS / display reads the wrong buffer. See ESTADO.md.
+2. 60 FPS: the exact compute GS caps around 25-30 FPS (~10 ms GPU per Present, ~2.7 Presents per displayed frame, ~17x
+   blended overdraw). Last experiments (tile lists, register-resident pixels, HiZ) gave -2..-20% each. Needs a
+   hardware-style path: see `HW_RENDERER_PLAN.md` (conditional go, stop gate after milestone 4; milestones 2, 4, 6 want a
+   stronger model). Alternative D (use PCSX2's GS as a library, GPLv3) was not evaluated.
+3. 1080p: only upscaled output exists (filter options). True 1080p rendering depends on the HW path.
+
+Decisions awaiting the owner: start the HW renderer (needs a stronger model)? evaluate the PCSX2 bridge? resume the movie
+hunt with a stronger model? push the branch / open a PR / stay Linux-only?
