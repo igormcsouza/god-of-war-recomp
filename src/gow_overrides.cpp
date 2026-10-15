@@ -138,6 +138,23 @@ namespace
                              readGuest32(rdram, 0x29E5A0u), readGuest32(rdram, 0x29E584u),
                              readGuest32(rdram, 0x29CAB4u), readGuest32(rdram, 0x29C838u));
             }
+            // GOW_MOVIE_DIAG=1: estado del reproductor de FMV (contexto 0x304F20 y anillo de audio hacia el IOP) cada 5 s.
+            static const bool movieDiag = [] { const char *d = std::getenv("GOW_MOVIE_DIAG"); return d && d[0] == '1'; }();
+            static double nextMovieDiag = 0;
+            if (movieDiag && seconds >= nextMovieDiag)
+            {
+                nextMovieDiag = seconds + 5;
+                const uint32_t mc = readGuest32(rdram, 0x304F20u);
+                std::fprintf(stderr,
+                             "[gow-movie] t=%.1f st=%u ctx=%x [140]=%d [144]=%u [154]=%u [50]=%u [54]=%u ring(fc,100,104,108)=%x,%x,%x,%x "
+                             "aud(4cec,4cf0,4cf4,4cf8,4cfc,4d08)=%x,%x,%x,%x,%x,%x\n",
+                             seconds, readGuest32(rdram, 0x29C838u), mc, static_cast<int32_t>(readGuest32(rdram, mc + 0x140u)),
+                             readGuest32(rdram, mc + 0x144u), readGuest32(rdram, mc + 0x154u), readGuest32(rdram, mc + 0x50u),
+                             readGuest32(rdram, mc + 0x54u), readGuest32(rdram, mc + 0xFCu), readGuest32(rdram, mc + 0x100u),
+                             readGuest32(rdram, mc + 0x104u), readGuest32(rdram, mc + 0x108u), readGuest32(rdram, 0x304CECu),
+                             readGuest32(rdram, 0x304CF0u), readGuest32(rdram, 0x304CF4u), readGuest32(rdram, 0x304CF8u),
+                             readGuest32(rdram, 0x304CFCu), readGuest32(rdram, 0x304D08u));
+            }
             // GOW-Port: segundo:acción[:duración], por defecto 0,7 s. mover_* usa
             // stick izquierdo; izquierda/derecha/arriba/abajo conservan el D-pad.
             static const auto script = [] {
