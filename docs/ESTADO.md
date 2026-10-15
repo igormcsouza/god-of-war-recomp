@@ -7344,3 +7344,27 @@ voice LSA/SSA writes, NAX/ENDX reads, SPU2 DMA source/target, `sceCdRead`, `sceS
   the smpd request state; compare with a model where `sceCdRead` completes after a sector-time delay (PCSX2 timing).
 
 The post-intro freeze was not investigated in this round (budget).
+
+## Menu/movie audio: CD read latency (2026-10-15, Linux) - partial fix, loop restart still broken
+
+Follow-up of the diagnosis above (`patches/ps2recomp-cdvd-read-latency.patch`, registered last).
+
+- **The lost-callback hypothesis is refuted.** Logging every `sceCdRead` and every delivered completion callback (temporary
+  `GOW_CD_DIAG`, removed) shows 1:1 delivery, always 128 cycles after the call, `pending=0` each time. All reads, music and
+  loader alike, come from the same smpd thread (T18), so they cannot race on the callback slot either. The single
+  `completionCallback` slot is not a problem in practice (`takeCompletionCallback` is drained right after each import).
+- **Real cause of the first death: reads were instant.** The loader (`0xBCEBB`..`0xBD27B`, 1.9 MB) is bound by the EE
+  hand-off (~17-24 ms per 32 KB chunk, T19), and smpd's single reader thread cannot serve the music request in between
+  (only one music chunk, `0xBB897`, slipped in); the music stream had 1.3 s of data and ended (KOFF) when it was consumed.
+  With a DVD-like read time the loader and the stream interleave at the right pace.
+- **Fix:** `IopCdvd` returns `CompletionCallback::delayCycles` (sectors x 2048 / 8 MB/s in IOP cycles; `GOW_CD_MBPS=<n>`
+  overrides, `0` = old instant behaviour); `iop_emulator.cpp` puts the reading thread to sleep for that time and delays the
+  callback by it. Test: `ps2xTest` "IOP sceCdRead completion is delayed by the DVD transfer time" (fails with `GOW_CD_MBPS=0`).
+- **Verified (menu, `GOW_SKIP_FMV=1`, `GOW_SPU2_DIAG=1`, GOW_AUDIO=0, 40 s):** music chunk reads now arrive every 0.65 s
+  (`0xBB8A7`, `0xBB8B7`, ... `0xBB947`) and the stream plays 6.5-8.4 s (the whole 240-sector clip, `0xBB867`..`0xBB957`)
+  instead of 1.3 s. Not verified by ear (audio muted for the diagnosis).
+- **Still broken:** after the clip's EOF the loop restart (`0xBB867` n=32 + `0xBB887`) plays only the two preloaded halves
+  (0.325 s) and 989snd issues KOFF, again and again, with no EE sound command in between (only 113 `[gow-snd]` commands per
+  run), so the restart state inside 989snd/smpd is what differs from the first start (the third read `0xBB897` is never
+  requested). Next: compare the smpd/989snd thread and semaphore traffic of the first start (KON 3.19 s) with the first
+  restart; the old `GOW_SPU2_DIAG` logging is still uncommitted WIP in `PS2Recomp/`.
