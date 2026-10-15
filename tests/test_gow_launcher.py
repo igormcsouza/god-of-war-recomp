@@ -215,6 +215,11 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True)),
                          {"GOW_AUDIO": "0"})
 
+    def test_skip_movies_env_mapping(self) -> None:
+        self.assertNotIn("GOW_SKIP_FMV", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS)))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, skip_movies=True)),
+                         {"GOW_SKIP_FMV": "1"})
+
     def test_mute_audio_roundtrip_and_old_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"

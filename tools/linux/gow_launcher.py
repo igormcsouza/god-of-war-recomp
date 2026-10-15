@@ -300,7 +300,7 @@ SCALING_ENV = {"Bilinear": None, "Sharp bilinear": "sharp-bilinear", "Nearest": 
 
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
-    "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "gpu": "Auto",
+    "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "skip_movies": False, "gpu": "Auto",
     "scaling": "Bilinear",
 }
 
@@ -380,6 +380,8 @@ def settings_to_env(settings: dict) -> dict[str, str]:
         env["PS2X_GS_RASTER_THREADS"] = str(settings["raster_threads"])
     if settings.get("mute_audio"):
         env["GOW_AUDIO"] = "0"
+    if settings.get("skip_movies"):
+        env["GOW_SKIP_FMV"] = "1"
     if settings.get("gpu") not in (None, "", "Auto"):
         env["PS2X_VK_DEVICE"] = settings["gpu"]
     return env
@@ -525,6 +527,7 @@ def settings_window(settings: dict) -> dict | None:
     fps = tkinter.BooleanVar(value=settings["show_fps"])
     dbg = tkinter.BooleanVar(value=settings["debug_ui"])
     mute = tkinter.BooleanVar(value=settings["mute_audio"])
+    skip = tkinter.BooleanVar(value=settings["skip_movies"])
     scale = tkinter.StringVar(value=f"{settings['resolution_scale']}x")
     threads = tkinter.StringVar(value=str(settings["raster_threads"] or "Auto"))
     pads = detect_pads()
@@ -552,6 +555,7 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Combobox(frame, textvariable=pad, values=pad_values, width=40).grid(row=6, column=1, columnspan=2, sticky="w")
     ttk.Checkbutton(frame, text="Debug UI", variable=dbg).grid(row=7, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Skip movies (FMV, workaround)", variable=skip).grid(row=11, column=0, columnspan=3, sticky="w")
     ttk.Label(frame, text="GPU (Auto = discrete first)").grid(row=9, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=gpu, values=["Auto"] + detect_gpus(), width=40).grid(row=9, column=1, columnspan=2, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
@@ -571,11 +575,11 @@ def settings_window(settings: dict) -> dict | None:
         result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
                   "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
-                  "mute_audio": mute.get(), "gpu": gpu.get().strip() or "Auto",
+                  "mute_audio": mute.get(), "skip_movies": skip.get(), "gpu": gpu.get().strip() or "Auto",
                   "scaling": scaling.get()}
         root.destroy()
 
-    ttk.Button(frame, text="Play", command=play).grid(row=11, column=2, sticky="e", pady=8)
+    ttk.Button(frame, text="Play", command=play).grid(row=12, column=2, sticky="e", pady=8)
     root.mainloop()
     return result
 
