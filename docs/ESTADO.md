@@ -7079,3 +7079,19 @@ at why phase 1 takes ~8 s (IOP PSS stream speed).
 Verified: all 119 patches apply in order on a fresh pinned tree (git archive of the pinned commit) and equal the working
 tree (except the generated `register_functions.cpp`); this also verifies the previous GOW_GIF_TRACE patch. `ps2x_tests`
 633 pass. No behaviour change shipped.
+
+## Vulkan: same-pixel feedback, Z read-only, DATE on the GPU (2026-10-15, Linux, NVIDIA RTX 5050)
+
+See `docs/VULKAN.md` ("Feedback, DATE and tight texture boxes on the GPU") for the rules. Before/after (same build,
+`GOW_VK_NO_FBOPT=1` = before; ship level `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, 12 s average in the rainy fight; intro without skip):
+
+| | before | after |
+|---|---|---|
+| CPU fallback prims/s (gameplay) | ~1,800-2,200 | ~400-520 |
+| `cpudraw_ms`/s | ~330-370 | ~160-200 |
+| gameplay FPS | 14.8 | 22.7 |
+| intro/title FPS | 26.2 | 32.3 |
+| `dest-alpha-test` fallbacks | 160/s | 0 |
+
+Remaining fallbacks: `z-alias` (~200/s gameplay, ~500/s intro; Z32 and CT32 swizzle differently, so it needs the CPU row order),
+a few non-provable `tex-feedback` strips, lines/points. `ps2x_tests` 634 pass, patch chain verified on a fresh pinned tree.

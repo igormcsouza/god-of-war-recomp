@@ -136,10 +136,10 @@ index 0000000..58b51e8
 +};
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 new file mode 100644
-index 0000000..d1669bb
+index 0000000..72160f4
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -0,0 +1,1245 @@
+@@ -0,0 +1,1393 @@
 +// GOW-Port: Vulkan GS backend, phases A-C (textured and untextured sprites and triangles on the GPU in batches,
 +// host VRAM imported zero-copy, everything else on GSCpuBackend). Design notes: docs/VULKAN.md in the port repository.
 +#include "runtime/gs/gs_vulkan_backend.h"
@@ -475,6 +475,85 @@ index 0000000..d1669bb
 +                out.set((basePage + py * bw + px) & 511u);
 +    }
 +
++
++    // GOW-Port: GS pixel layout class: CT32/CT24/Z32/Z24 share one swizzle, CT16 and Z16 another, CT16S and Z16S a third.
++    uint32_t layoutClass(uint32_t psm)
++    {
++        const uint32_t c = psm & 0xFu;
++        return c <= 1u ? 0u : c;
++    }
++
++    bool sameLayoutPsm(uint32_t psm)
++    {
++        return psm == 0x00u || psm == 0x01u || psm == 0x02u || psm == 0x0Au || psm == 0x30u || psm == 0x31u ||
++               psm == 0x32u || psm == 0x3Au;
++    }
++
++    // GOW-Port: the texture is the frame buffer itself (same base, width and pixel layout).
++    bool sameBuffer(const GSDrawState &state, const GSContext &ctx)
++    {
++        const GSTex0Reg &tex = state.context.tex0;
++        return sameLayoutPsm(tex.psm) && layoutClass(tex.psm) == layoutClass(ctx.frame.psm) &&
++               tex.tbp0 == GSInternal::framePageBaseToBlock(ctx.frame.fbp) && tex.tbw == std::max<uint32_t>(ctx.frame.fbw, 1u);
++    }
++
++    // GOW-Port: true when every pixel of a textured FST sprite samples exactly the texel at its own frame address, so the
++    // thread reads the pixel it is about to write (read-then-write by one thread: no cross-thread hazard). The UV of
++    // each column and row are computed with the shader's own float expressions (the sprite axes are independent) and
++    // must land on the pixel itself: nearest samples floor(u) == x, bilinear u - 0.5 == x exactly (zero weights).
++    bool spriteReadsOwnPixel(const GSDrawState &state, const float axis[4], const float attr[4], int x0, int y0, int x1, int y1)
++    {
++        const GSContext &ctx = state.context;
++        const GSTex0Reg &tex = ctx.tex0;
++        if (!state.prim.fst || !sameLayoutPsm(tex.psm) || layoutClass(tex.psm) != layoutClass(ctx.frame.psm))
++            return false;
++        if ((ctx.clamp & 3u) > 1u || ((ctx.clamp >> 2) & 3u) > 1u) // only REPEAT/CLAMP, which leave in-range texels alone
++            return false;
++        if (tex.tbp0 != GSInternal::framePageBaseToBlock(ctx.frame.fbp) || tex.tbw != std::max<uint32_t>(ctx.frame.fbw, 1u))
++            return false;
++        if (x1 >= static_cast<int>(state.textureWidth) || y1 >= static_cast<int>(state.textureHeight) || x0 < 0 || y0 < 0)
++            return false;
++        auto axisOk = [&](int lo, int hi, float origin, float scale, float a0, float a1) {
++            for (int p = lo; p <= hi; ++p)
++            {
++                volatile float tx = (static_cast<float>(p) - origin) * scale;
++                volatile float u = a0 + (a1 - a0) * tx;
++                volatile float fu = u * 16.0f + 0.5f;
++                const int q = std::clamp(static_cast<int>(fu), 0, 0xFFFF);
++                if (state.linearFilter ? (q != p * 16 + 8) : ((q >> 4) != p))
++                    return false;
++            }
++            return true;
++        };
++        return axisOk(x0, x1, axis[0], axis[1], attr[0], attr[2]) && axisOk(y0, y1, axis[2], axis[3], attr[1], attr[3]);
++    }
++
++
++    // GOW-Port: the triangle version of spriteReadsOwnPixel. Triangles interpolate at the integer pixel position, so if
++    // every vertex has u = x + cu and v = y + cv in 12.4 raw units the texel coordinate of pixel (px,py) is
++    // (16px + cu, 16py + cv) up to the float error of the interpolation (< 1 raw unit). With nearest filtering and
++    // cu, cv in [1,14] the texel index is exactly the pixel.
++    bool triangleReadsOwnPixel(const GSDrawState &state, const GSVertex *v, const int64_t xy[6], int x0, int y0, int x1, int y1)
++    {
++        const GSContext &ctx = state.context;
++        const GSTex0Reg &tex = ctx.tex0;
++        if (!state.prim.fst || state.linearFilter || !sameLayoutPsm(tex.psm) || layoutClass(tex.psm) != layoutClass(ctx.frame.psm))
++            return false;
++        if ((ctx.clamp & 3u) > 1u || ((ctx.clamp >> 2) & 3u) > 1u)
++            return false;
++        if (tex.tbp0 != GSInternal::framePageBaseToBlock(ctx.frame.fbp) || tex.tbw != std::max<uint32_t>(ctx.frame.fbw, 1u))
++            return false;
++        if (x1 >= static_cast<int>(state.textureWidth) || y1 >= static_cast<int>(state.textureHeight) || x0 < 0 || y0 < 0)
++            return false;
++        const int64_t cu = static_cast<int64_t>(v[0].u) - xy[0], cv = static_cast<int64_t>(v[0].v) - xy[1];
++        if (cu < 1 || cu > 14 || cv < 1 || cv > 14)
++            return false;
++        for (int i = 1; i < 3; ++i)
++            if (static_cast<int64_t>(v[i].u) - xy[i * 2] != cu || static_cast<int64_t>(v[i].v) - xy[i * 2 + 1] != cv)
++                return false;
++        return true;
++    }
++
 +    // Pages the sampler may read: the whole texture rectangle plus one page of slack for unaligned bases.
 +    void texturePages(PageSet &out, const GSDrawState &state, const uint32_t *bb = nullptr)
 +    {
@@ -502,6 +581,13 @@ index 0000000..d1669bb
 +        out.set((base + rows * perRow) & 511u);
 +    }
 +
++    // GOW-Port: GOW_VK_NO_FBOPT=1 restores the page-level feedback rules and the DATE fallback (A/B timing, screenshots).
++    bool noFeedbackOpt()
++    {
++        static const bool v = [] { const char *e = std::getenv("GOW_VK_NO_FBOPT"); return e && *e && *e != '0'; }();
++        return v;
++    }
++
 +    // The state where GSCpuBackend::WritePixel reduces to "alpha test, blend, honour FBMSK/FBA, store color". Returns the
 +    // fallback reason, or nullptr when the GPU can draw the primitive.
 +    const char *gpuUnsupported(const GSPrimitiveBatch &batch)
@@ -515,10 +601,10 @@ index 0000000..d1669bb
 +        const uint64_t test = ctx.test;
 +        if (!sprite && !triangle)
 +            return "line/point";
++        if ((test & 0x4000u) != 0u && noFeedbackOpt())
++            return "dest-alpha-test";
 +        if (psm != GS_PSM_CT32 && psm != GS_PSM_CT24 && psm != GS_PSM_CT16 && psm != GS_PSM_CT16S)
 +            return "frame-psm";
-+        if (test & 0x4000u)
-+            return "dest-alpha-test";
 +        if ((test & 0x10000u) != 0u)
 +        {
 +            const uint8_t zpsm = ctx.zbuf.psm;
@@ -1027,6 +1113,7 @@ index 0000000..d1669bb
 +    PrimRecord rec{};
 +    int x0, y0, x1, y1;
 +    bool empty = false;
++    int64_t triXY[6] = {};
 +    if (state.prim.type == GS_PRIM_SPRITE)
 +    {
 +        const GSSpriteAxis axisX = gsSpriteAxis(v0.x, v1.x, static_cast<float>(ctx.xyoffset.ofx) / 16.0f);
@@ -1085,6 +1172,11 @@ index 0000000..d1669bb
 +                rec.attr[i * 3 + 2] = v.q;
 +            }
 +        }
++        for (int i = 0; i < 3; ++i)
++        {
++            triXY[i * 2] = t.x[i];
++            triXY[i * 2 + 1] = t.y[i];
++        }
 +        rec.area = t.area;
 +        rec.mode |= kTriangle;
 +        if (state.prim.iip)
@@ -1108,7 +1200,7 @@ index 0000000..d1669bb
 +    rec.frame = GSInternal::framePageBaseToBlock(ctx.frame.fbp) | (std::max<uint32_t>(ctx.frame.fbw, 1u) << 16u);
 +    rec.mode |= ctx.frame.psm | ((ctx.fba & 1u) ? kFba : 0u);
 +    rec.fbmsk = ctx.frame.fbmsk;
-+    rec.test = static_cast<uint32_t>(ctx.test & 0x3FFFu);
++    rec.test = static_cast<uint32_t>(ctx.test & 0xFFFFu); // GOW-Port: includes DATE/DATM (bits 14-15)
 +    // Z as DrawSprite (u32(v1.z)) and DrawTriangle (v0.z plus the interpolated deltas) pass it on.
 +    if (state.prim.type == GS_PRIM_SPRITE)
 +        rec.z = static_cast<uint32_t>(v1.z);
@@ -1150,19 +1242,59 @@ index 0000000..d1669bb
 +    bufferPages(frames, GSInternal::framePageBaseToBlock(ctx.frame.fbp) >> 5, ctx.frame.fbw, ctx.frame.psm, x0, y0, x1, y1);
 +    if (((rec.zbuf >> 24) & 3u) >= 2u || (rec.zbuf & 0x4000000u))
 +        bufferPages(depths, GSInternal::framePageBaseToBlock(ctx.zbuf.zbp) >> 5, ctx.frame.fbw, ctx.zbuf.psm, x0, y0, x1, y1);
++
++    auto fbDiag = [&](const char *why) {
++        static const bool on = std::getenv("GOW_VK_FBDIAG") != nullptr;
++        if (!on) return;
++        static std::map<std::string, int> seen;
++        char b[400];
++        std::snprintf(b, sizeof b, "%s %s frame=%x/%u/%x z=%x/%x zw=%u tex=%x/%u/%x tme=%d lin=%d clamp=%llx rect=%d,%d,%d,%d uv=%g,%g,%g,%g tw=%d th=%d",
++                      why, state.prim.type == GS_PRIM_SPRITE ? "spr" : "tri", ctx.frame.fbp, ctx.frame.fbw, ctx.frame.psm, ctx.zbuf.zbp, ctx.zbuf.psm,
++                      (rec.zbuf & 0x4000000u) ? 1 : 0, ctx.tex0.tbp0, ctx.tex0.tbw, ctx.tex0.psm, state.prim.tme, state.linearFilter ? 1 : 0,
++                      (unsigned long long)ctx.clamp, x0, y0, x1, y1, rec.attr[0], rec.attr[1], rec.attr[2], rec.attr[3], state.textureWidth, state.textureHeight);
++        std::string k(b);
++        if (++seen[k] == 1 && seen.size() < 80) std::fprintf(stderr, "[fbdiag] %s\n", b);
++    };
 +    if ((frames & depths).any())
++    {
++        // Z32/Z24 pages are swizzled differently from CT32/CT24, so a frame pixel and a Z pixel at the same address belong
++        // to different positions: the result depends on the CPU's row order and the primitive stays on the CPU.
++        fbDiag("z-alias");
 +        return "z-alias";
++    }
 +    writes = frames | depths;
++    const PageSet texHazard = ((rec.zbuf & 0x4000000u) || noFeedbackOpt() ? writes : frames); // Z pages that are only tested are read-only
 +    if (state.prim.tme)
 +    {
 +        // GOW-Port: a sprite with CLAMP/non-wrapping sampling reads only its UV box (+1 texel for bilinear).
-+        uint32_t bb[4];
++        uint32_t bb[4] = {};
 +        bool boxed = false;
 +        if (state.prim.type == GS_PRIM_SPRITE && (ctx.clamp & 0xFu) <= 5u && (ctx.clamp & 3u) <= 1u && ((ctx.clamp >> 2) & 3u) <= 1u)
 +        {
-+            const float pad = state.linearFilter ? 1.0f : 0.0f;
-+            const float lo[2] = {std::min(rec.attr[0], rec.attr[2]) - pad, std::min(rec.attr[1], rec.attr[3]) - pad};
-+            const float hi[2] = {std::max(rec.attr[0], rec.attr[2]) + pad, std::max(rec.attr[1], rec.attr[3]) + pad};
++            // Texel interval a sprite samples per axis: u runs from the first vertex value to the second but never
++            // reaches the second one (the last pixel is one step short); +-1/32 covers the 12.4 re-quantisation.
++            // Bilinear reads floor(u - 0.5) and the next texel.
++            float lo[2], hi[2];
++            for (int i = 0; i < 2; ++i)
++            {
++                const float p = rec.attr[i], q = rec.attr[i + 2], scale = rec.axis[i * 2 + 1];
++                const float d = (q - p) * std::fabs(scale); // one step short of the far vertex
++                const bool forward = scale >= 0.0f;
++                const float e0 = forward ? p : p + d, e1 = forward ? q - d : q; // only the shortened end gets slack
++                const float s0 = forward ? 0.0f : 0.03125f, s1 = forward ? 0.03125f : 0.0f;
++                lo[i] = e0 <= e1 ? e0 - s0 : e1 - s1;
++                hi[i] = e0 <= e1 ? e1 + s1 : e0 + s0;
++                if (state.linearFilter)
++                {
++                    lo[i] = std::floor(lo[i] - 0.5f);
++                    hi[i] = std::floor(hi[i] - 0.5f) + 1.0f;
++                }
++                else
++                {
++                    lo[i] = std::floor(lo[i]);
++                    hi[i] = std::floor(hi[i]);
++                }
++            }
 +            const float tw = static_cast<float>(state.textureWidth), th = static_cast<float>(state.textureHeight);
 +            const bool clampS = (ctx.clamp & 3u) == 1u, clampT = ((ctx.clamp >> 2) & 3u) == 1u;
 +            if ((clampS || (lo[0] >= 0.0f && hi[0] < tw)) && (clampT || (lo[1] >= 0.0f && hi[1] < th)) &&
@@ -1175,9 +1307,25 @@ index 0000000..d1669bb
 +                boxed = true;
 +            }
 +        }
++        bool selfDisjoint = false;
 +        texturePages(reads, state, boxed ? bb : nullptr);
-+        if ((reads & writes).any())
++        if (noFeedbackOpt())
++            ;
++        else if (state.prim.type == GS_PRIM_SPRITE && spriteReadsOwnPixel(state, rec.axis, rec.attr, x0, y0, x1, y1))
++            reads.reset(); // GOW-Port: reads only its own pixel (see spriteReadsOwnPixel)
++        else if (state.prim.type != GS_PRIM_SPRITE && triangleReadsOwnPixel(state, batch.vertices.data(), triXY, x0, y0, x1, y1))
++            reads.reset();
++        // GOW-Port: texels of the same buffer that lie outside the written rectangle (e.g. 8-px channel-shuffle strips
++        // reading the neighbouring columns) cannot be touched by any thread of this primitive. Batch-mates still see
++        // the page sets, so the next primitive starts a new batch.
++        else if (boxed && sameBuffer(state, ctx) && (bb[2] < static_cast<uint32_t>(x0) || bb[0] > static_cast<uint32_t>(x1) ||
++                                                    bb[3] < static_cast<uint32_t>(y0) || bb[1] > static_cast<uint32_t>(y1)))
++            selfDisjoint = true;
++        if ((reads & (selfDisjoint ? (texHazard & ~frames) : texHazard)).any())
++        {
++            fbDiag("tex-fb");
 +            return "tex-feedback";
++        }
 +    }
 +    const uint32_t key[3] = {rec.frame, rec.mode & 0xFFu, rec.zbuf & 0x00FFFFFFu};
 +
@@ -1387,10 +1535,10 @@ index 0000000..d1669bb
 +#undef GOW_VK_CPU
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 new file mode 100644
-index 0000000..9165f6d
+index 0000000..c61d964
 --- /dev/null
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -0,0 +1,483 @@
+@@ -0,0 +1,491 @@
 +// GOW-Port: build-time tool for the Vulkan GS backend. Writes the GLSL of the Vulkan raster kernel to
 +// a file: the VRAM addressing helpers come from the OpenGL backend (GSGpuShaders::kCommon) so both GPU
 +// backends share one swizzle implementation. Usage: gs_vulkan_shader_export <out.comp>; CMake then
@@ -1798,6 +1946,14 @@ index 0000000..9165f6d
 +        writeAlpha = afail == 1u || (afail == 3u && psm != 0u);
 +        writeDepth = afail == 2u;
 +    }
++    // Destination alpha test (passesDestinationAlphaTest): CT32 bit 31, CT16/CT16S bit 15; CT24 always passes.
++    if ((P.test & 0x4000u) != 0u && psm != 1u)
++    {
++        uint rawDest = readPixel(psm, fbp, fbw, uint(xy.x), uint(xy.y));
++        bool destAlpha = ((rawDest >> (is16 ? 15u : 31u)) & 1u) != 0u;
++        if (destAlpha != ((P.test & 0x8000u) != 0u))
++            return;
++    }
 +    uint zbp = P.zbuf & 0xFFFFu;
 +    uint zpsm = (P.zbuf >> 16u) & 0xFFu;
 +    uint ztst = (P.zbuf >> 24u) & 3u;
@@ -2021,10 +2177,10 @@ index 26c2de7..85c1fb1 100644
      runGpuUploadRingTests();
 diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
 new file mode 100644
-index 0000000..2b5bbf7
+index 0000000..2d626c3
 --- /dev/null
 +++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,483 @@
 +// GOW-Port: the Vulkan GS backend must leave the same VRAM as the CPU reference (no game, no display).
 +#include "MiniTest.h"
 +#include "runtime/gs/gs_cpu_backend.h"
@@ -2281,6 +2437,78 @@ index 0000000..2b5bbf7
 +        return vram;
 +    }
 +
++
++    // GOW-Port: feedback (the frame sampling itself), Z-as-colour, Z in the frame's memory and destination alpha test.
++    GSPrimitiveBatch frameTex(GSPrimType type, bool linear, uint8_t tfx = 1)
++    {
++        auto b = textured(type, GS_PSM_CT32, true, linear, tfx, 0);
++        b.state.context.tex0.tbp0 = 100 * 32; // the frame buffer itself (fbp 100)
++        b.state.context.tex0.tbw = 10;
++        b.state.textureWidth = 1024;
++        b.state.textureHeight = 512;
++        return b;
++    }
++
++    std::vector<GSPrimitiveBatch> feedbackScene()
++    {
++        std::vector<GSPrimitiveBatch> out;
++        auto sprite = [&](float x0, float y0, float x1, float y1, float du, float dv, bool linear, uint8_t tfx = 1) {
++            auto b = frameTex(GS_PRIM_SPRITE, linear, tfx);
++            vertex(b, 0, x0, y0, 0x80808080u); vertex(b, 1, x1, y1, 0x80808080u);
++            uv(b, 0, x0 + du, y0 + dv, 1.0f); uv(b, 1, x1 + du, y1 + dv, 1.0f);
++            out.push_back(b);
++        };
++        sprite(64, 32, 160, 96, 0.5f, 0.5f, false);                  // each pixel samples itself (nearest)
++        sprite(200, 32, 300, 96, 0.5f, 0.5f, true);                  // ...and bilinear at the texel centre
++        auto t = frameTex(GS_PRIM_TRIANGLE, false);                   // triangle, u = x + 0.5
++        vertex(t, 0, 64, 120, 0x80808080u); vertex(t, 1, 250, 120, 0x80808080u); vertex(t, 2, 64, 200, 0x80808080u);
++        uv(t, 0, 64.5f, 120.5f, 1.0f); uv(t, 1, 250.5f, 120.5f, 1.0f); uv(t, 2, 64.5f, 200.5f, 1.0f);
++        out.push_back(t);
++        for (int k = 0; k < 4; ++k)                                   // 8-px strips reading the columns 8 px to the left
++            sprite(float(300 + 16 * k), 20, float(308 + 16 * k), 100, -8.0f + 0.5f, 0.5f, false);
++        sprite(100, 50, 180, 80, 0.5f, 0.5f, false, 0);               // modulate, over the first sprite
++        sprite(400, 150, 480, 220, 10.5f, 0.5f, false);               // reads 10 px to the right inside itself: CPU
++        auto za = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);           // Z buffer in the frame's own memory: Z32 and CT32 swizzle differently, so this stays on the CPU
++        za.state.context.frame = {200, 10, GS_PSM_CT32, 0};
++        za.state.context.zbuf = {200, GS_PSM_Z32, false};
++        za.state.context.test = 0x10000u | (2u << 17);
++        vertex(za, 0, 10, 300, 0); vertex(za, 1, 200, 380, 0xFF30A0C0u);
++        za.vertices[1].z = 0x7FFFFFFF;
++        out.push_back(za);
++        za.vertices[1].z = 0x80000000u; // second one over it
++        vertex(za, 0, 60, 330, 0); vertex(za, 1, 260, 420, 0x40C03010u);
++        out.push_back(za);
++        auto zc = frameTex(GS_PRIM_SPRITE, false);                    // Z pages read as colour, Z only tested
++        zc.state.context.frame = {300, 10, GS_PSM_CT32, 0};
++        zc.state.context.tex0.tbp0 = 480 * 32;
++        zc.state.context.zbuf = {480, GS_PSM_Z32, true};
++        zc.state.context.test = 0x10000u | (2u << 17);
++        vertex(zc, 0, 20, 20, 0x80808080u); vertex(zc, 1, 120, 90, 0x80808080u);
++        uv(zc, 0, 20.5f, 20.5f, 1.0f); uv(zc, 1, 120.5f, 90.5f, 1.0f);
++        zc.vertices[1].z = 0x100;
++        out.push_back(zc);
++        auto d0 = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);           // destination alpha test, DATM 0 and 1
++        d0.state.context.test = 0x4000u;
++        vertex(d0, 0, 400, 300, 0); vertex(d0, 1, 560, 400, 0x80FF8040u);
++        out.push_back(d0);
++        auto d1 = prim(GS_PRIM_SPRITE, GS_PSM_CT16, false);
++        d1.state.context.frame = {400, 10, GS_PSM_CT16, 0};
++        d1.state.context.test = 0x4000u | 0x8000u;
++        vertex(d1, 0, 10, 10, 0); vertex(d1, 1, 400, 300, 0x80FF8040u);
++        out.push_back(d1);
++        return out;
++    }
++
++    std::vector<uint8_t> renderFeedback(GSRasterBackend &backend)
++    {
++        auto vram = noise();
++        backend.Initialize(vram.data(), uint32_t(vram.size()));
++        for (const auto &b : feedbackScene())
++            backend.Submit(b);
++        backend.Flush();
++        return vram;
++    }
++
 +    template <typename Backend>
 +    std::vector<uint8_t> render(Backend &backend)
 +    {
@@ -2400,6 +2628,35 @@ index 0000000..2b5bbf7
 +                std::printf("    first differing byte at 0x%zx\n", first);
 +            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
 +            t.Equals(vulkan.GpuPrimitives(), uint64_t(11), "Textured primitives drawn on the GPU");
++#else
++            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
++            t.IsTrue(true, "skipped");
++#endif
++        });
++        // GOW-Port: textured feedback, Z-as-colour, Z aliasing the frame and DATE draw on the GPU and match the CPU.
++        test.Run("Feedback and Z-as-colour Vulkan VRAM equals CPU VRAM", [](TestCase &t) {
++#if defined(PS2X_GS_VULKAN)
++            GSVulkanBackend vulkan;
++            if (!vulkan.IsReady())
++            {
++                std::printf("    [skip] no Vulkan device\n");
++                return;
++            }
++            GSCpuBackend cpu;
++            const auto reference = renderFeedback(cpu);
++            const auto gpu = renderFeedback(vulkan);
++            size_t diff = 0, first = reference.size();
++            for (size_t i = 0; i < reference.size(); ++i)
++                if (reference[i] != gpu[i])
++                {
++                    first = std::min(first, i);
++                    ++diff;
++                }
++            if (diff)
++                std::printf("    first differing byte at 0x%zx\n", first);
++            t.Equals(diff, size_t(0), "Differing VRAM bytes between Vulkan and CPU");
++            t.Equals(vulkan.GpuPrimitives(), uint64_t(11), "Primitives drawn on the GPU (real feedback and Z aliasing stay on the CPU)");
++            t.IsTrue(reference != noise(), "The scene changed VRAM");
 +#else
 +            std::printf("    [skip] built without PS2X_GS_VULKAN\n");
 +            t.IsTrue(true, "skipped");
