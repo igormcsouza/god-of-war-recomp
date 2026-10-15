@@ -128,6 +128,7 @@ $gsVulkanPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan.patch'
 $linuxVu1Patch = Join-Path $RepoRoot 'patches\ps2recomp-linux-vu1.patch'
 $linuxDefaultsPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-defaults.patch'
 $linuxBuildPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-build.patch'
+$padMappingsPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -280,6 +281,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxVu1Patch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxDefaultsPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxBuildPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

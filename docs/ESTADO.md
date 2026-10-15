@@ -6947,3 +6947,14 @@ Next: (1) rerun "all off" for 200+ s to see whether the movie ends cleanly at lo
 depends on EE speed vs the IOP CD stream); (2) log `[MPEG]` state (`ended`, `producerEof`, decoded frame count) at the
 transition and compare with the CPU backend; (3) check what the game does with the last decoded picture (strip frame =
 partially copied picture; flat polygons = sprites sampling garbage), via `GOW_RENDER_DIAG`.
+
+## Gamepad did nothing on Linux: unmapped pad (2026-10-14)
+
+Cause: GLFW has no built-in SDL mapping for the GameSir dongle (USB `3537:103e`, "Generic X-Box pad", xpad,
+`/dev/input/js0` + `event24`, ACL for the user present, GLFW sees 6 axes / 15 buttons / 1 hat, `isGamepad=0`).
+raylib's `IsGamepadButtonDown` / `GetGamepadAxisMovement` then return zeros, so autodetect picked the pad and the
+keyboard fallback was disabled. Fix: `patches/ps2recomp-pad-mappings.patch` (registered last in `compilar.ps1`) loads
+gamecontrollerdb mappings and falls back to a generic Xbox-like one; `GOW_PAD_DIAG=1` logs raw state (see
+`docs/CONTROLES.md`). Verified: patches apply on a fresh pinned copy, `ps2x_tests` 633 pass, standalone GLFW program
+reads the pad name and axes once mapped. Not verified: button presses in the game (needs the user to press buttons
+with `GOW_PAD_DIAG=1`; if the GameSir is in DInput/Switch mode the layout differs, switch it to XInput).
