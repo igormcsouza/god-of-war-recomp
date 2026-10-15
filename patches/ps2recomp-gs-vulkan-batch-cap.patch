@@ -1,0 +1,75 @@
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -72,7 +72,7 @@
+     constexpr uint32_t kColclamp = 0x40000u;
+     // ponytail: fixed record ring per GPU run (~3.4 MB); a full ring ends the run.
+     constexpr uint32_t kMaxPrims = 16384u;
+-    constexpr uint32_t kMaxBatch = 1024u;
++    constexpr uint32_t kMaxBatch = 2048u;
+     constexpr uint32_t kQueriesPerCmd = 1056u; // begin/end of the command buffer + a begin/end pair per dispatch (stats only)
+     constexpr uint32_t kMaxCmds = 32u;      // command buffers per GPU run (partial submissions)
+     constexpr uint32_t kSubmitEvery = 512u; // primitives between partial submissions
+@@ -1082,7 +1082,7 @@
+ 
+     // GOW-Port: why a batch closed (stats only). Reason 0 = the primitive joins the open batch.
+     enum CloseReason : int { kJoin, kNoBatch, kCap, kTarget, kTexRaw, kTexWar, kFrameZ, kUnion, kPartial, kReasons };
+-    static constexpr const char *kCloseNames[kReasons] = {"join", "none", "cap1024", "target", "tex-raw", "tex-war", "frame-z", "union", "partial512"};
++    static constexpr const char *kCloseNames[kReasons] = {"join", "none", "cap2048", "target", "tex-raw", "tex-war", "frame-z", "union", "partial512"};
+     uint64_t statsClose[kReasons]{}, statsCloseSize[kReasons]{};
+     uint64_t totClose[kReasons]{}, totCloseSize[kReasons]{}; // GOW-Port: never reset; printed at teardown (replay benchmark)
+ 
+diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
+@@ -64,7 +64,7 @@
+ // batch's primitives in order.
+ layout(push_constant) uniform Push { int originX; int originY; uint first; uint count; int maxX; int maxY; } pc;
+ uint curPrim;
+-shared uint hit[32]; // GOW-Port: kMaxBatch (1024) bits
++shared uint hit[64]; // GOW-Port: kMaxBatch (2048) bits, one word per thread of the tile
+ shared uint tileMinZ, killAt, useHiz; // GOW-Port: stateless per-tile HiZ (see main)
+ #define P prims[curPrim]
+ 
+@@ -611,8 +611,7 @@
+     // GOW-Port: the 64 threads of a tile first test the batch's rectangles against the tile together and keep a bitmask of
+     // the primitives that touch it; each thread then walks only those, in the same ascending order.
+     ivec2 tile0 = ivec2(pc.originX, pc.originY) + ivec2(gl_WorkGroupID.xy) * 8;
+-    if (gl_LocalInvocationIndex < 32u)
+-        hit[gl_LocalInvocationIndex] = 0u;
++    hit[gl_LocalInvocationIndex] = 0u;
+     if (gl_LocalInvocationIndex == 0u)
+     {
+         tileMinZ = 0xFFFFFFFFu;
+diff --git a/ps2xTest/src/ps2_gs_vulkan_tests.cpp b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+--- a/ps2xTest/src/ps2_gs_vulkan_tests.cpp
++++ b/ps2xTest/src/ps2_gs_vulkan_tests.cpp
+@@ -428,6 +428,20 @@
+         return out;
+     }
+ 
++    // 1500 small sprites on a grid: no shared page hazard, so they form one batch of 1500 primitives.
++    std::vector<GSPrimitiveBatch> bigBatchScene()
++    {
++        std::vector<GSPrimitiveBatch> out;
++        for (int k = 0; k < 1500; ++k)
++        {
++            auto s = prim(GS_PRIM_SPRITE, GS_PSM_CT32, false);
++            const float x = float(4 + 16 * (k % 38)), y = float(4 + 16 * (k / 38 % 27));
++            vertex(s, 0, x, y, 0); vertex(s, 1, x + 12, y + 12, 0x80000000u + 0x00010203u * uint32_t(k));
++            out.push_back(s);
++        }
++        return out;
++    }
++
+     template <typename Backend>
+     std::vector<uint8_t> render(Backend &backend)
+     {
+@@ -647,6 +661,7 @@
+                 {"Z written, same pages read as texture", zTextureScene(true), 2},
+                 {"twelve distant sprites", cornerScene(), 1},
+                 {"primitives at x = 2047", wideScene(), 1},
++                {"1500 sprites in one batch", bigBatchScene(), 1},
+             };
+             for (const Case &c : cases)
+             {
