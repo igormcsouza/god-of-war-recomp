@@ -13,10 +13,18 @@ index 58b51e8..03e6989 100644
  
      void Initialize(uint8_t *vram, uint32_t vramSize) override;
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-index 52e7cf2..1eecbca 100644
+index 52e7cf2..07d2a87 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
-@@ -582,6 +582,8 @@ struct GSVulkanBackend::Impl
+@@ -77,6 +77,7 @@ namespace
+     {
+         int32_t originX, originY;
+         uint32_t first, count;
++        int32_t maxX, maxY; // GOW-Port: union rectangle corner (HiZ reads stay inside it)
+     };
+     using PageSet = std::bitset<512>;
+ 
+@@ -582,6 +583,8 @@ struct GSVulkanBackend::Impl
      std::map<std::string, uint64_t> statsFallback, statsRunEnd, statsRunWaitUs;
      // GOW-Port: GPU-side numbers. Bucket = union rectangle / sum of the primitives' own rectangles (<=2x, <=8x, <=32x, more).
      double statsGpuBusyNs = 0, statsGpuSpanNs = 0;
@@ -25,7 +33,7 @@ index 52e7cf2..1eecbca 100644
      uint64_t statsDispatches = 0, statsUnionPx = 0, statsCoveredPx = 0, statsWalkPx = 0, statsDispatchPrims = 0;
      uint64_t statsBucketN[4]{}, statsBucketUnionPx[4]{}, statsBucketCoveredPx[4]{};
      double statsBucketNs[4]{};
-@@ -655,6 +657,7 @@ struct GSVulkanBackend::Impl
+@@ -655,6 +658,7 @@ struct GSVulkanBackend::Impl
                  const Dispatch &disp = dispatches[i][d];
                  const double t = ns(ts[2 + 2 * d], ts[3 + 2 * d]);
                  statsGpuBusyNs += t;
@@ -33,7 +41,16 @@ index 52e7cf2..1eecbca 100644
                  const double ratio = disp.coveredPx ? static_cast<double>(disp.unionPx) / static_cast<double>(disp.coveredPx) : 1e9;
                  const int b = ratio <= 2.0 ? 0 : ratio <= 8.0 ? 1 : ratio <= 32.0 ? 2 : 3;
                  ++statsBucketN[b];
-@@ -899,6 +902,8 @@ struct GSVulkanBackend::Impl
+@@ -886,7 +890,7 @@ struct GSVulkanBackend::Impl
+             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queryPool, cmdIndex * kQueriesPerCmd + queriesUsed[cmdIndex]);
+         if (dispatched)
+             memoryBarrier(VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+-        const Push push{batchRect[0], batchRect[1], batchFirst, batchCount};
++        const Push push{batchRect[0], batchRect[1], batchFirst, batchCount, batchRect[2], batchRect[3]};
+         vkCmdPushConstants(cmd, s.pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
+         vkCmdDispatch(cmd, static_cast<uint32_t>(batchRect[2] - batchRect[0]) / 8u + 1u,
+                       static_cast<uint32_t>(batchRect[3] - batchRect[1]) / 8u + 1u, 1u);
+@@ -899,6 +903,8 @@ struct GSVulkanBackend::Impl
              const uint64_t u = static_cast<uint64_t>(batchRect[2] - batchRect[0] + 1) * static_cast<uint64_t>(batchRect[3] - batchRect[1] + 1);
              dispatches[cmdIndex].push_back({u, batchPixels, batchCount});
              ++statsDispatches;
@@ -42,7 +59,7 @@ index 52e7cf2..1eecbca 100644
              statsUnionPx += u;
              statsCoveredPx += batchPixels;
              statsWalkPx += u * batchCount;
-@@ -951,6 +956,14 @@ GSVulkanBackend::~GSVulkanBackend()
+@@ -951,6 +957,14 @@ GSVulkanBackend::~GSVulkanBackend()
      Finish();
  }
  
@@ -57,11 +74,39 @@ index 52e7cf2..1eecbca 100644
  bool GSVulkanBackend::IsReady() const
  {
      return m_impl != nullptr;
+@@ -1162,6 +1176,7 @@ const char *GSVulkanBackend::RecordGpu(const GSPrimitiveBatch &batch)
+             return "z-alias";
+         }
+         aliasing = true;
++        rec.mode |= 0x40000u; // GOW-Port: M_ZALIAS, frame writes can change Z (the tile HiZ gives up)
+     }
+     writes = frames | depths;
+     const PageSet texHazard = ((rec.zbuf & 0x4000000u) || noFeedbackOpt() ? writes : frames); // Z pages that are only tested are read-only
 diff --git a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-index c61d964..784f988 100644
+index c61d964..8edcf52 100644
 --- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
 +++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_shader_export.cpp
-@@ -122,12 +122,26 @@ uint blend(uint src, uint dst)
+@@ -60,9 +60,10 @@ layout(std430, binding = 3) readonly buffer PrimBuffer { Prim prims[]; };
+ // A dispatch covers the union rectangle (origin) of a batch of primitives [first, first + count) that may
+ // run in any workgroup order against each other; each pixel is owned by one thread, which applies the
+ // batch's primitives in order.
+-layout(push_constant) uniform Push { int originX; int originY; uint first; uint count; } pc;
++layout(push_constant) uniform Push { int originX; int originY; uint first; uint count; int maxX; int maxY; } pc;
+ uint curPrim;
+ shared uint hit[32]; // GOW-Port: kMaxBatch (1024) bits
++shared uint tileMinZ, killAt, useHiz; // GOW-Port: stateless per-tile HiZ (see main)
+ #define P prims[curPrim]
+ 
+ const uint M_TRIANGLE = 0x100u;
+@@ -73,6 +74,7 @@ const uint M_TME = 0x4000u;
+ const uint M_FST = 0x8000u;
+ const uint M_LINEAR = 0x10000u;
+ const uint M_ZIP = 0x20000u;
++const uint M_ZALIAS = 0x40000u;
+ const uint A_ABE = 0x10000u;
+ const uint A_PABE = 0x20000u;
+ const uint A_COLCLAMP = 0x40000u;
+@@ -122,12 +124,26 @@ uint blend(uint src, uint dst)
  // Correctly rounded float(n / d) = q * 2^-shift for 0 < n < d, as float(double(n) * (1.0 / d)) on the CPU.
  int64_t ratioMantissa(int64_t n, int64_t d, out int shift)
  {
@@ -90,7 +135,7 @@ index c61d964..784f988 100644
      if (2l * r > d || (2l * r == d && (q & 1l) != 0l))
          ++q;
      shift = s + 23;
-@@ -239,6 +253,8 @@ uint lookupClut(uint index)
+@@ -239,6 +255,8 @@ uint lookupClut(uint index)
      return 0xFFFF00FFu;
  }
  
@@ -99,7 +144,7 @@ index c61d964..784f988 100644
  uint samplePoint(int u, int v)
  {
      uint lo = P.clampLo;
-@@ -246,7 +262,7 @@ uint samplePoint(int u, int v)
+@@ -246,7 +264,7 @@ uint samplePoint(int u, int v)
      u = wrapCoordinate(u, int(P.tsize & 0xFFFFu), lo & 3u, (lo >> 4u) & 0x3FFu, (lo >> 14u) & 0x3FFu);
      v = wrapCoordinate(v, int(P.tsize >> 16u), (lo >> 2u) & 3u, (lo >> 24u) | ((hi & 3u) << 8u), (hi >> 2u) & 0x3FFu);
      uint psm = P.tex >> 24u;
@@ -108,7 +153,7 @@ index c61d964..784f988 100644
      switch (psm)
      {
      case 0x00u: case 0x30u: case 0x01u: case 0x31u:
-@@ -317,6 +333,105 @@ float fabsQ(float q)
+@@ -317,6 +335,105 @@ float fabsQ(float q)
      return abs(q) > 1.0e-8 ? q : 1.0;
  }
  
@@ -214,7 +259,7 @@ index c61d964..784f988 100644
  void shade(ivec2 xy)
  {
      uint mode = P.mode;
-@@ -349,6 +464,20 @@ void shade(ivec2 xy)
+@@ -349,6 +466,20 @@ void shade(ivec2 xy)
          }
      }
  
@@ -235,7 +280,7 @@ index c61d964..784f988 100644
      if ((mode & M_TME) != 0u)
      {
          precise float texUf;
-@@ -408,28 +537,16 @@ void shade(ivec2 xy)
+@@ -408,28 +539,16 @@ void shade(ivec2 xy)
      // Destination alpha test (passesDestinationAlphaTest): CT32 bit 31, CT16/CT16S bit 15; CT24 always passes.
      if ((P.test & 0x4000u) != 0u && psm != 1u)
      {
@@ -266,7 +311,7 @@ index c61d964..784f988 100644
          fb = is16 ? rgba5551To8888(raw) : (psm == 1u ? (raw | 0x80000000u) : raw);
      }
      if (abe)
-@@ -443,9 +560,9 @@ void shade(ivec2 xy)
+@@ -443,9 +562,39 @@ void shade(ivec2 xy)
      if (is16)
          pixel = rgba8888To5551(pixel);
      if (writeRgb || writeAlpha)
@@ -275,14 +320,84 @@ index c61d964..784f988 100644
      if (writeDepth && (P.zbuf & 0x4000000u) != 0u)
 -        writePixelRaw(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
 +        targetWrite(zpsm, zbp, fbw, uint(xy.x), uint(xy.y), z);
++}
++
++// GOW-Port: a primitive that cannot change VRAM (all colour bits masked and no Z write, Z test NEVER, alpha test NEVER with
++// AFAIL=KEEP) is dropped from the tile lists. Colour masks only count for the 32/24-bit formats: 16-bit ones round-trip.
++bool deadPrim()
++{
++    uint ztst = (P.zbuf >> 24u) & 3u;
++    bool zWrite = (P.zbuf & 0x4000000u) != 0u;
++    if (ztst == 0u)
++        return true;
++    uint psm = P.mode & 0xFFu;
++    if ((P.test & 1u) != 0u && ((P.test >> 1u) & 7u) == 0u && ((P.test >> 12u) & 3u) == 0u)
++        return true;
++    uint mask = psm == 1u ? 0x00FFFFFFu : psm == 0u ? 0xFFFFFFFFu : 0u;
++    return mask != 0u && (P.fbmsk & mask) == mask && !zWrite;
++}
++
++// GOW-Port: conservative range of the Z a primitive can produce (z of the vertices +-2 for the fixed-point rounding).
++bool zRange(out int64_t zlo, out int64_t zhi)
++{
++    int64_t z0 = int64_t(P.z);
++    zlo = z0;
++    zhi = z0;
++    if ((P.mode & M_TRIANGLE) != 0u && (P.mode & M_ZIP) != 0u)
++    {
++        int64_t z1 = z0 + int64_t(P.zd[0]), z2 = z0 + int64_t(P.zd[1]);
++        zlo = min(z0, min(z1, z2)) - 2l;
++        zhi = max(z0, max(z1, z2)) + 2l;
++    }
++    return zlo >= 0l && zhi <= 0xFFFFFFFFl;
  }
  
  void main()
-@@ -461,7 +578,24 @@ void main()
+@@ -456,12 +605,70 @@ void main()
+     ivec2 tile0 = ivec2(pc.originX, pc.originY) + ivec2(gl_WorkGroupID.xy) * 8;
+     if (gl_LocalInvocationIndex < 32u)
+         hit[gl_LocalInvocationIndex] = 0u;
++    if (gl_LocalInvocationIndex == 0u)
++    {
++        tileMinZ = 0xFFFFFFFFu;
++        killAt = 0xFFFFFFFFu;
++        useHiz = 0u;
++    }
++    barrier();
++    // GOW-Port: tile HiZ without state between dispatches. The Z of the tile is read once at the start; stored Z only grows
++    // (ZTST GEQUAL/GREATER writes), so min(stored) stays a lower bound until a primitive that can lower Z (ZTST ALWAYS with a
++    // Z write, a write whose Z exceeds the Z format, a frame/Z alias) touches the tile: killAt. A GEQUAL/GREATER primitive
++    // whose largest Z is below that bound fails the Z test in every pixel of the tile and never enters the pixel loop.
++    uint zkind = FMT_KIND[fmtOf((prims[pc.first].zbuf >> 16u) & 0xFFu)];
++    int64_t zmask = zkind == KIND_32 ? 0xFFFFFFFFl : zkind == KIND_24 ? 0xFFFFFFl : zkind == KIND_16 ? 0xFFFFl : -1l;
++    for (uint k = gl_LocalInvocationIndex; k < pc.count; k += 64u)
++    {
++        curPrim = pc.first + k;
++        if (!(P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y) || deadPrim())
++            continue;
++        uint ztst = (P.zbuf >> 24u) & 3u;
++        int64_t zlo, zhi;
++        bool bounded = zRange(zlo, zhi);
++        if ((P.zbuf & 0x4000000u) != 0u && (ztst == 1u || (P.mode & M_ZALIAS) != 0u || !bounded || zhi > zmask))
++            atomicMin(killAt, k);
++        else if ((P.mode & M_ZALIAS) != 0u)
++            atomicMin(killAt, k);
++        if (ztst >= 2u && bounded)
++            useHiz = 1u;
++    }
++    barrier();
++    if (useHiz != 0u && xy.x <= pc.maxX && xy.y <= pc.maxY)
++    {
++        curPrim = pc.first;
++        atomicMin(tileMinZ, targetRead((P.zbuf >> 16u) & 0xFFu, P.zbuf & 0xFFFFu, P.frame >> 16u, uint(xy.x), uint(xy.y)));
++    }
+     barrier();
+     for (uint k = gl_LocalInvocationIndex; k < pc.count; k += 64u)
      {
          curPrim = pc.first + k;
-         if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y)
+-        if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y)
 -            atomicOr(hit[k >> 5], 1u << (k & 31u));
++        if (P.rect[0] <= tile0.x + 7 && P.rect[2] >= tile0.x && P.rect[1] <= tile0.y + 7 && P.rect[3] >= tile0.y && !deadPrim())
 +        {
 +            bool outside = false;
 +            if ((P.mode & M_TRIANGLE) != 0u)
@@ -298,13 +413,20 @@ index c61d964..784f988 100644
 +                        outside = true;
 +                }
 +            }
++            uint ztst = (P.zbuf >> 24u) & 3u;
++            if (!outside && useHiz != 0u && ztst >= 2u && k <= killAt)
++            {
++                int64_t zlo, zhi;
++                if (zRange(zlo, zhi) && (ztst == 2u ? zhi < int64_t(tileMinZ) : zhi <= int64_t(tileMinZ)))
++                    outside = true;
++            }
 +            if (!outside)
 +                atomicOr(hit[k >> 5], 1u << (k & 31u));
 +        }
      }
      barrier();
      for (uint w = 0u; w < (pc.count + 31u) >> 5; ++w)
-@@ -476,6 +610,7 @@ void main()
+@@ -476,6 +683,7 @@ void main()
                  shade(xy);
          }
      }

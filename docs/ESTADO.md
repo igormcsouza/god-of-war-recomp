@@ -7276,3 +7276,7 @@ Real levers stay the same: per-present GPU time (~11-16 ms) and the `record-ring
 ## Vulkan kernel: register-resident frame/Z words (2026-10-15)
 Replay GPU 1328 -> 1188 ms (-10.6%), byte-identical to the CPU replay; `ps2x_tests` 636 pass. Memoising `locate()` gave nothing.
 Details and limits (16-bit targets still go to memory; occupancy/merge-batches not tried): docs/VULKAN.md.
+
+## Vulkan GS: dead-prim skip + stateless tile HiZ (2026-10-15)
+Replay GPU 1209 -> 1181 ms (-2.3%), VRAM identical to the CPU replay, 636 tests pass; dead-prim skip no effect on this capture. Details
+in docs/VULKAN.md. Not measured: real-game FPS, screenshots (HiZ is byte-identical in the replay, so low risk).
