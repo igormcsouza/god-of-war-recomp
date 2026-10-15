@@ -119,3 +119,14 @@ directly, without `Flush`, which is why the library default stays CPU.
 Still open: CLUT versions per primitive and non-conflicting transfers (so `LoadClut`/`BeginTransfer`, ~100-160 run
 ends per second, don't wait for the GPU), page-level CPU/GPU overlap checks, fog, lines/points, destination alpha
 test, a GPU compositor for `Present`.
+
+## GPU timing and tile culling (2026-10-14)
+
+- **GPU timestamps** (`PS2X_GS_VULKAN_STATS=1` only; zero overhead otherwise, no query pool is created). A `VkQueryPool` holds
+  a begin/end pair per command buffer plus a pair around each dispatch (barrier + dispatch, so intervals tile the busy time).
+  `timestampValidBits` (36 on Intel RPL-P) and `timestampPeriod` (52.08 ns) are read from the queue family/device limits. Two
+  extra lines per second: `[gow-gs-vk-gpu] gpu_busy_ms dispatches avg_dispatch_ms prims/dispatch union_Mpx covered_Mpx
+  walk_Mpx avg_union`, and a histogram by union/covered ratio (<=2x, <=8x, <=32x, more) with GPU ms per bucket. Run ends
+  now print their CPU wait: `LoadClut=144(350ms)`.
+- **Tile culling.** Each 8x8 workgroup tests the batch's rectangles against its tile cooperatively (shared bitmask, up to 1024
+  prims) and each thread walks only the hits, in order. Output is byte-identical (ps2x_tests 630/630).
