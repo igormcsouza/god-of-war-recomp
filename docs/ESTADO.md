@@ -7102,3 +7102,19 @@ See docs/VULKAN.md "Frame/Z alias on the GPU": `z-alias` fallbacks ~300/s -> 0 i
 `cpudraw_ms` ~255 -> ~150), byte-identical in the Vulkan-vs-CPU test; window FPS unchanged (~13 on this heavy scene,
 GPU-bound, `finish_ms` ~540 ms/s). Top costs now: GPU dispatch time, `tex-feedback` CPU fallbacks, `record-ring`/`Flush()` run ends.
 gdb sampling and the intro re-profile were not obtained. A/B switch: `GOW_VK_NO_ZALIAS=1`.
+
+### Vulkan GS: replay benchmark and shader optimizations (2026-10-15)
+
+Added `tools/render/bench_vk.cpp` + `scripts/compilar_bench_vk.sh` (GS capture replay through the Vulkan backend, GPU ms from
+timestamps, byte compare with the CPU replay) and `ps2recomp-gs-vulkan-perf.patch` (shader: early Z test before texturing,
+triangle-edge tile culling; `GSVulkanBackend::GpuTotals`). `GOW_GS_REPLAY_TRACE` limit 64 -> 768 MiB. Usage and profile: docs/VULKAN.md.
+
+| Measure | Before | After |
+|---|---|---|
+| Replay GPU ms (121 presents, 1.93M prims) | 1662 | 1319 (-21%) |
+| GPU ms per presented frame | 13.7 | 10.9 |
+| Replay VRAM vs CPU backend | identical | identical |
+| Game FPS (3 runs, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`) | ~13 (earlier, heavier moment) | 17.9 / 21.8 / 15.0 |
+| `ps2x_tests` | 634 pass | 634 pass |
+The kernel is latency-bound by the serial per-pixel primitive walk. Screenshots (`GOW_SCREENSHOT_AT`) were not re-inspected this
+round; exactness rests on the CPU byte compare. 121 patches apply on a fresh pinned tree.

@@ -22,7 +22,7 @@
 
 namespace gow_gs_replay
 {
-    constexpr uint64_t kLimit = 64ull << 20;
+    constexpr uint64_t kLimit = 768ull << 20; // GOW-Port: was 64 MiB; benchmark captures need several gameplay frames
     constexpr uint32_t kRecordLimit = 16u << 20;
     // GOW-Port: seleccionar un tramo tardío sin cambiar el límite del volcado.
     struct CaptureOptions { double after=150, seconds=3; bool atTextureFlush=false; uint32_t state=11; uint64_t fromTick=0; };
