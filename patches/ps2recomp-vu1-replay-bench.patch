@@ -1,0 +1,161 @@
+diff --git a/ps2xRuntime/src/lib/vu/ps2_vu1_replay.cpp b/ps2xRuntime/src/lib/vu/ps2_vu1_replay.cpp
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_replay.cpp
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_replay.cpp
+@@ -4,12 +4,15 @@
+ //   GOW_VU1_REPLAY=<carpeta>                         (en el ejecutable del juego) repite lo grabado con el código
+ //                                                    compilado enlazado y con el intérprete y compara VF/VI/ACC/Q/P/I/R,
+ //                                                    flags, PC, ciclos y la memoria de datos. Sale sin arrancar el juego.
++//   GOW_VU1_REPLAY_BENCH=<N>                         tras comprobar, repite N veces lo grabado solo con el código compilado y
++//                                                    imprime ns por ciclo de VU (medida repetible del coste del código generado).
+ // Los archivos contienen micromemoria y datos del juego: no se publican. Sin carpeta o sin archivos, se omite.
+ #include "runtime/ps2_vu1.h"
+ #include "runtime/ps2_memory.h"
+ #include "runtime/gs/gs_frontend.h"
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+@@ -18,6 +21,13 @@
+ #include <memory>
+ #include <string>
+ #include <vector>
++#if defined(__linux__)
++#include <csignal>
++#include <dlfcn.h>
++#include <map>
++#include <time.h>
++#include <ucontext.h>
++#endif
+ 
+ namespace
+ {
+@@ -69,6 +79,52 @@
+     f.write(reinterpret_cast<const char *>(data), PS2_VU1_DATA_SIZE);
+ }
+ 
++#if defined(__linux__)
++namespace
++{
++// GOW-Port: GOW_VU1_REPLAY_SAMPLE=1 con GOW_VU1_REPLAY_BENCH: muestreador de RIP (SIGPROF cada 100 us de CPU) para
++// perfilar el código generado sin perf (reloj de pared: úsese con el proceso solo en un núcleo). Imprime "[vu1-sample] <desplazamiento en la imagen> <cuenta>" (nm / addr2line).
++uint64_t g_rip[1u << 22];
++volatile uint32_t g_ripN = 0;
++timer_t g_timer;
++void sampleHandler(int, siginfo_t *, void *uc)
++{
++    if (g_ripN < (1u << 22))
++        g_rip[g_ripN++] = static_cast<uint64_t>(static_cast<ucontext_t *>(uc)->uc_mcontext.gregs[REG_RIP]);
++}
++void sampleStart()
++{
++    struct sigaction sa {};
++    sa.sa_sigaction = sampleHandler;
++    sa.sa_flags = SA_SIGINFO | SA_RESTART;
++    sigaction(SIGPROF, &sa, nullptr);
++    sigevent ev {};
++    ev.sigev_notify = SIGEV_SIGNAL;
++    ev.sigev_signo = SIGPROF;
++    timer_t timer;
++    if (timer_create(CLOCK_MONOTONIC, &ev, &timer) != 0)
++        return;
++    itimerspec its {};
++    its.it_interval.tv_nsec = its.it_value.tv_nsec = 20000;
++    timer_settime(timer, 0, &its, nullptr);
++    g_timer = timer;
++}
++void sampleStop()
++{
++    itimerspec off {};
++    timer_settime(g_timer, 0, &off, nullptr);
++    Dl_info info {};
++    dladdr(reinterpret_cast<void *>(&sampleStop), &info);
++    std::map<uint64_t, uint32_t> hist;
++    for (uint32_t k = 0; k < g_ripN; ++k)
++        ++hist[g_rip[k] - reinterpret_cast<uint64_t>(info.dli_fbase)];
++    std::fprintf(stderr, "[vu1-sample] total=%u\n", g_ripN);
++    for (const auto &[a, c] : hist)
++        std::fprintf(stderr, "[vu1-sample] %llx %u\n", static_cast<unsigned long long>(a), c);
++}
++} // namespace
++#endif
++
+ namespace
+ {
+ struct Outcome
+@@ -95,6 +151,30 @@
+     return {vu->state(), {mem.getVU1Data(), mem.getVU1Data() + PS2_VU1_DATA_SIZE}, vu->lastRunHitBudget()};
+ }
+ 
++struct Input
++{
++    Header h;
++    VU1State state;
++    std::vector<uint8_t> code, data;
++};
++
++// Como en el juego: un intérprete que persiste y una micromemoria que solo se reescribe cuando cambia el programa.
++void benchOne(PS2Memory &mem, GS &gs, VU1Interpreter &vu, const Input &in, const std::vector<uint8_t> *&loaded)
++{
++    if (loaded == nullptr || *loaded != in.code)
++    {
++        std::memcpy(mem.getVU1Code(), in.code.data(), in.code.size());
++        uint32_t first;
++        std::memcpy(&first, in.code.data(), sizeof(first));
++        mem.write32(0x11008000u, first);
++        loaded = &in.code;
++    }
++    std::memcpy(mem.getVU1Data(), in.data.data(), in.data.size());
++    vu.state() = in.state;
++    vu.execute(mem.getVU1Code(), PS2_VU1_CODE_SIZE, mem.getVU1Data(), PS2_VU1_DATA_SIZE, gs, &mem, in.h.startPc, in.h.top,
++               in.h.itop, in.h.maxCycles);
++}
++
+ const char *difference(const Outcome &a, const Outcome &b)
+ {
+     const VU1State &x = a.state, &y = b.state;
+@@ -140,6 +220,9 @@
+     GS gs;
+     gs.init(mem.getGSVRAM(), 4u * 1024u * 1024u, &mem.gs());
+     unsigned long long cycles = 0;
++    std::vector<Input> inputs;
++    const char *benchSpec = std::getenv("GOW_VU1_REPLAY_BENCH");
++    const unsigned long benchReps = benchSpec ? std::strtoul(benchSpec, nullptr, 10) : 0ul;
+     for (const auto &path : files)
+     {
+         std::ifstream f(path, std::ios::binary);
+@@ -165,6 +248,33 @@
+             return 1;
+         }
+         cycles += ref.state.cycles;
++        if (benchReps)
++            inputs.push_back({h, state, std::move(code), std::move(data)});
++    }
++    if (benchReps)
++    {
++        // GOW-Port: mide solo el código compilado (la primera pasada ya comprobó que coincide con el intérprete).
++#if defined(__linux__)
++        const char *sampleSpec = std::getenv("GOW_VU1_REPLAY_SAMPLE");
++        const bool sampling = sampleSpec && *sampleSpec && *sampleSpec != '0';
++        if (sampling)
++            sampleStart();
++#endif
++        const auto t0 = std::chrono::steady_clock::now();
++        auto vu = std::make_unique<VU1Interpreter>();
++        vu->setDirectRegisterWrites(true);
++        vu->setCompiledProgramsEnabled(true);
++        const std::vector<uint8_t> *loaded = nullptr;
++        for (unsigned long r = 0; r < benchReps; ++r)
++            for (const Input &in : inputs)
++                benchOne(mem, gs, *vu, in, loaded);
++        const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
++#if defined(__linux__)
++        if (sampling)
++            sampleStop();
++#endif
++        std::printf("VU1 replay bench: %lu x %zu runs, %.3f ns per VU cycle (%.1f ms total)\n", benchReps, inputs.size(),
++                    ns / (static_cast<double>(cycles) * static_cast<double>(benchReps)), ns / 1e6);
+     }
+     std::printf("VU1 replay: %zu recorded executions bit-identical (compiled vs interpreter), %llu VU cycles\n",
+                 files.size(), cycles);
