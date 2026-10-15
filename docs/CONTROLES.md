@@ -960,3 +960,15 @@ GLFW (name and six axes read; physical button presses not yet verified in game).
 - `PS2X_GS_RASTER_THREADS=N`: CPU rasterizer threads (see `docs/ESTADO.md`, Linux M2).
 - `GOW_SCREENSHOT_AT=<s>[,<s>...]` / `GOW_SCREENSHOT_DIR`: save PNG screenshots of the window.
 - The window title shows the live FPS.
+
+## Display options (English)
+
+Runtime window options (`patches/ps2recomp-display-options.patch`), also set by the Linux launcher:
+
+| Variable / key | Effect |
+|---|---|
+| `GOW_FULLSCREEN=1` | Starts in borderless fullscreen (raylib `ToggleBorderlessWindowed`). **F11** toggles at runtime. ESC is unchanged: it closes the window. |
+| `GOW_SCALE_FILTER=nearest\|bilinear\|sharp-bilinear` | Upscale filter for the GS image (default `bilinear`; unknown values fall back to it). `sharp-bilinear` is a small shader that keeps texel interiors flat and blends only across texel edges. |
+| `GOW_WINDOW_SCALE=<n>` | Initial window size multiplier over 640x448 (1..8, default 1). |
+
+The image is always letterboxed/pillarboxed to keep the aspect ratio. The window title keeps the FPS counter.

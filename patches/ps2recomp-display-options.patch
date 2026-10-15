@@ -1,0 +1,205 @@
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index aa05a8a..1fdca5e 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1,4 +1,5 @@
+ #include "ps2_runtime.h"
++#include "runtime/display_options.h" // GOW-Port
+ #include "runtime/gs/gs_host_present.h" // GOW-Port: consumidor privado del host.
+ #include "ps2_log.h"
+ #include "runtime/ps2_perf.h"
+@@ -789,7 +790,9 @@ bool PS2Runtime::initialize(const char *title)
+         InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title); // raylib vita does not support audio
+ #else
+         SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+-        InitWindow(HOST_WINDOW_WIDTH, HOST_WINDOW_HEIGHT, title);
++        // GOW-Port: GOW_WINDOW_SCALE=<n> multiplies the initial window size.
++        const int gowWinScale = ps2x::ParseWindowScale(std::getenv("GOW_WINDOW_SCALE"));
++        InitWindow(HOST_WINDOW_WIDTH * gowWinScale, HOST_WINDOW_HEIGHT * gowWinScale, title);
+ #endif
+         g_gowBaseTitle = title ? title : "";
+         m_hostWindowOwned = IsWindowReady();
+@@ -813,6 +816,9 @@ bool PS2Runtime::initialize(const char *title)
+         startSpu2Audio(m_iopSubsystem.get()); // GOW-Port
+ #endif
+         SetTargetFPS(60);
++        // GOW-Port: GOW_FULLSCREEN=1 starts borderless fullscreen; F11 toggles (see main loop).
++        if (ps2x::ParseFlag(std::getenv("GOW_FULLSCREEN")))
++            ToggleBorderlessWindowed();
+         if (m_debugUiInitCallback)
+         {
+             m_debugUiInitCallback(*this, m_debugUiUserData);
+@@ -2659,6 +2665,9 @@ void PS2Runtime::run()
+                 return out;
+             }();
+             static size_t nextShot = 0;
++            // GOW-Port: F11 toggles borderless fullscreen (ESC still closes the window).
++            if (IsKeyPressed(KEY_F11))
++                ToggleBorderlessWindowed();
+             const auto now = std::chrono::steady_clock::now();
+             const double wall = std::chrono::duration<double>(now - fpsStart).count();
+             if (wall >= 1.0)
+diff --git a/ps2xRuntime/src/lib/gs/gs_host_present.cpp b/ps2xRuntime/src/lib/gs/gs_host_present.cpp
+index 3e1a2d5..bbaaea0 100644
+--- a/ps2xRuntime/src/lib/gs/gs_host_present.cpp
++++ b/ps2xRuntime/src/lib/gs/gs_host_present.cpp
+@@ -1,4 +1,5 @@
+ // GOW-Port: contexto host, selección de frames y dibujo raylib usados por el port.
++#include "runtime/display_options.h" // GOW-Port
+ #include "runtime/gs/gs_host_present.h"
+ #include "runtime/gs/gs_host_present_diag.h" // GOW-Port: ventana sin lecturas GPU adicionales.
+ #include "runtime/gs/gs_frontend.h"
+@@ -13,6 +14,18 @@
+ 
+ namespace
+ {
++// GOW-Port: GOW_SCALE_FILTER. Sharp-bilinear = bilinear only across the pixel edges (crisp, no shimmer).
++const char *kSharpFs = R"(#version 330
++in vec2 fragTexCoord; in vec4 fragColor; out vec4 finalColor;
++uniform sampler2D texture0; uniform vec2 texSize; uniform float scale;
++void main(){
++  vec2 px = fragTexCoord * texSize; vec2 fl = floor(px); vec2 d = px - fl - 0.5;
++  float r = 0.5 - 0.5 / max(scale, 1.0);
++  vec2 f = (d - clamp(d, -r, r)) * max(scale, 1.0) + 0.5;
++  finalColor = texture(texture0, (fl + f) / texSize) * fragColor;
++})";
++ps2x::ScaleFilter gowFilter() { static const auto f = ps2x::ParseScaleFilter(std::getenv("GOW_SCALE_FILTER")); return f; }
++
+     constexpr uint32_t kWidth = 640u;
+     constexpr uint32_t kHeight = 512u;
+     constexpr uint32_t kDisplayHeight = 448u;
+@@ -210,7 +223,34 @@ GSHostPresentation::View GSHostPresentation::renderFrame(GS &gs, uint64_t vsyncT
+                                 (screenHeight - destinationHeight) * 0.5f,
+                                 destinationWidth, destinationHeight};
+     // GOW-Port: textura del PBO con filas en orden; no invertir source.height.
++    // GOW-Port: filter applied only when it changes (textures may be shared/borrowed).
++    static unsigned lastTex = 0u;
++    static Shader sharp{};
++    static bool sharpTried = false;
++    const auto filter = gowFilter();
++    if (selected.texture.id != lastTex)
++    {
++        SetTextureFilter(selected.texture, filter == ps2x::ScaleFilter::Nearest ? TEXTURE_FILTER_POINT : TEXTURE_FILTER_BILINEAR);
++        lastTex = selected.texture.id;
++    }
++    if (filter == ps2x::ScaleFilter::SharpBilinear && !sharpTried)
++    {
++        sharpTried = true;
++        sharp = LoadShaderFromMemory(nullptr, kSharpFs);
++        if (!IsShaderValid(sharp))
++            std::cerr << "[gow-display] sharp-bilinear shader failed; using bilinear" << std::endl;
++    }
++    const bool useSharp = filter == ps2x::ScaleFilter::SharpBilinear && IsShaderValid(sharp);
++    if (useSharp)
++    {
++        const float texSize[2] = {static_cast<float>(selected.texture.width), static_cast<float>(selected.texture.height)};
++        SetShaderValue(sharp, GetShaderLocation(sharp, "texSize"), texSize, SHADER_UNIFORM_VEC2);
++        SetShaderValue(sharp, GetShaderLocation(sharp, "scale"), &scale, SHADER_UNIFORM_FLOAT);
++        BeginShaderMode(sharp);
++    }
+     DrawTexturePro(selected.texture, source, destination, Vector2{0.0f, 0.0f}, 0.0f, WHITE);
++    if (useSharp)
++        EndShaderMode();
+     if (overlay)
+         overlay();
+     {
+diff --git a/ps2xTest/src/main.cpp b/ps2xTest/src/main.cpp
+index 2ed1828..7b6cea4 100644
+--- a/ps2xTest/src/main.cpp
++++ b/ps2xTest/src/main.cpp
+@@ -13,6 +13,7 @@ void register_ps2_runtime_interrupt_tests();
+ void register_ps2_memory_tests();
+ void register_ps2_vu1_tests();
+ void register_linux_defaults_tests();
++void register_display_options_tests(); // GOW-Port
+ void register_ps2_vu_tests();
+ void register_ps2_gs_tests();
+ void register_gs_external_tests(); // GOW-Port
+@@ -58,6 +59,7 @@ int main()
+     register_ps2_memory_tests();
+     register_ps2_vu1_tests();
+     register_linux_defaults_tests();
++    register_display_options_tests(); // GOW-Port
+     register_ps2_vu_tests();
+     register_ps2_gs_tests();
+     register_gs_external_tests(); // GOW-Port
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 0169062..eb17fbe 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -32,6 +32,7 @@ add_library(ps2_test_lib STATIC
+     src/ps2_memory_tests.cpp
+     src/ps2_vu1_tests.cpp
+     src/linux_defaults_tests.cpp # GOW-Port: Linux threading defaults.
++    src/display_options_tests.cpp # GOW-Port
+     src/ps2_vu_tests.cpp
+     src/ps2_gs_tests.cpp
+     src/ps2_gs_external_tests.cpp # GOW-Port: transporte opcional sin perder tags.
+diff --git a/ps2xRuntime/include/runtime/display_options.h b/ps2xRuntime/include/runtime/display_options.h
+new file mode 100644
+index 0000000..f9f9ad4
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/display_options.h
+@@ -0,0 +1,31 @@
++// GOW-Port: host display options (GOW_FULLSCREEN, GOW_SCALE_FILTER, GOW_WINDOW_SCALE). Header-only, no raylib.
++#pragma once
++#include <cstdlib>
++#include <cstring>
++#include <strings.h>
++
++namespace ps2x
++{
++enum class ScaleFilter { Bilinear, SharpBilinear, Nearest };
++
++// Unknown or empty values fall back to bilinear (the runtime's historical behaviour).
++inline ScaleFilter ParseScaleFilter(const char *v)
++{
++    if (!v)
++        return ScaleFilter::Bilinear;
++    if (!strcasecmp(v, "nearest") || !strcasecmp(v, "point"))
++        return ScaleFilter::Nearest;
++    if (!strcasecmp(v, "sharp-bilinear") || !strcasecmp(v, "sharp_bilinear") || !strcasecmp(v, "sharp"))
++        return ScaleFilter::SharpBilinear;
++    return ScaleFilter::Bilinear;
++}
++
++inline bool ParseFlag(const char *v) { return v && *v && std::strcmp(v, "0") != 0; }
++
++// Initial window size multiplier; <=0 or garbage -> 1 (clamped to 8).
++inline int ParseWindowScale(const char *v)
++{
++    const int n = v ? std::atoi(v) : 1;
++    return n < 1 ? 1 : (n > 8 ? 8 : n);
++}
++} // namespace ps2x
+diff --git a/ps2xTest/src/display_options_tests.cpp b/ps2xTest/src/display_options_tests.cpp
+new file mode 100644
+index 0000000..1c516a0
+--- /dev/null
++++ b/ps2xTest/src/display_options_tests.cpp
+@@ -0,0 +1,25 @@
++#include "MiniTest.h"
++#include "runtime/display_options.h"
++
++// GOW-Port: parsing of the display env values.
++void register_display_options_tests()
++{
++    MiniTest::Case("DisplayOptions", [](TestCase &tc)
++    {
++        tc.Run("scale filter parsing", [](TestCase &t)
++        {
++            using ps2x::ScaleFilter;
++            t.IsTrue(ps2x::ParseScaleFilter(nullptr) == ScaleFilter::Bilinear, "default bilinear");
++            t.IsTrue(ps2x::ParseScaleFilter("bogus") == ScaleFilter::Bilinear, "unknown -> bilinear");
++            t.IsTrue(ps2x::ParseScaleFilter("Nearest") == ScaleFilter::Nearest, "nearest");
++            t.IsTrue(ps2x::ParseScaleFilter("sharp-bilinear") == ScaleFilter::SharpBilinear, "sharp-bilinear");
++        });
++        tc.Run("flag and window scale parsing", [](TestCase &t)
++        {
++            t.IsTrue(!ps2x::ParseFlag(nullptr) && !ps2x::ParseFlag("0") && !ps2x::ParseFlag(""), "off");
++            t.IsTrue(ps2x::ParseFlag("1"), "on");
++            t.IsTrue(ps2x::ParseWindowScale(nullptr) == 1 && ps2x::ParseWindowScale("x") == 1, "default 1");
++            t.IsTrue(ps2x::ParseWindowScale("2") == 2 && ps2x::ParseWindowScale("99") == 8, "clamped");
++        });
++    });
++}

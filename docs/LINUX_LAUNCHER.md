@@ -43,7 +43,8 @@ The header check reads only the ISO sectors that describe the root directory and
 | Control | Effect |
 |---|---|
 | ISO + Browse | Prefilled with the resolved ISO (see above). Validated on Play with the normal ELF SHA-256 check; the error text is shown in red. |
-| Fullscreen | Exports `GOW_FULLSCREEN=1`. **Pending runtime support**: the runtime does not read it yet. |
+| Fullscreen | Exports `GOW_FULLSCREEN=1` (borderless fullscreen at start; F11 toggles in game). |
+| Scaling | Bilinear (default, exports nothing) / Sharp bilinear / Nearest: exports `GOW_SCALE_FILTER=sharp-bilinear` / `nearest`. Saved as `scaling` in `settings.json`; older files without it load as Bilinear. |
 | Show FPS | Stored only (applies with the Vulkan backend). The window title already shows FPS. |
 | Internal resolution 1x/2x/3x | Stored only (applies with the Vulkan backend). |
 | Raster threads | `PS2X_GS_RASTER_THREADS` (0/Auto = unset). |

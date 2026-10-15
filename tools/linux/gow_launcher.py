@@ -295,9 +295,13 @@ def _choose_iso() -> Path:
     raise IsoError("specify the ISO with --iso (no graphical picker is available)")
 
 
+# Launcher label -> GOW_SCALE_FILTER value (Bilinear is the runtime default, so it exports nothing).
+SCALING_ENV = {"Bilinear": None, "Sharp bilinear": "sharp-bilinear", "Nearest": "nearest"}
+
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
     "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "gpu": "Auto",
+    "scaling": "Bilinear",
 }
 
 
@@ -323,6 +327,8 @@ def load_settings(path: Path | None = None) -> dict:
                 ok = type(value) is type(default)
             if ok:
                 result[key] = value
+    if result["scaling"] not in SCALING_ENV:
+        result["scaling"] = "Bilinear"
     if result["resolution_scale"] not in (1, 2, 3):
         result["resolution_scale"] = 1
     result["raster_threads"] = max(0, min(result["raster_threads"], 256))
@@ -359,11 +365,13 @@ def remember_iso(iso: Path, path: Path | None = None) -> None:
 
 def settings_to_env(settings: dict) -> dict[str, str]:
     """Environment variables for the runner. Only options the runtime already reads are mapped
-    (plus GOW_FULLSCREEN, not yet read by the runtime). show_fps and resolution_scale are stored
+    (GOW_FULLSCREEN, GOW_SCALE_FILTER included). show_fps and resolution_scale are stored
     only: they apply with the Vulkan backend."""
     env: dict[str, str] = {}
     if settings.get("fullscreen"):
         env["GOW_FULLSCREEN"] = "1"
+    if SCALING_ENV.get(settings.get("scaling")):
+        env["GOW_SCALE_FILTER"] = SCALING_ENV[settings["scaling"]]
     if settings.get("debug_ui"):
         env["GOW_DEBUG_UI"] = "1"
     if settings.get("pad_index") is not None:
@@ -525,6 +533,7 @@ def settings_window(settings: dict) -> dict | None:
     pad = tkinter.StringVar(value="Auto" if pad_index is None else
                             next((v for v in pad_values if v.startswith(f"{pad_index}:")), str(pad_index)))
     gpu = tkinter.StringVar(value=settings["gpu"])
+    scaling = tkinter.StringVar(value=settings["scaling"])
     error = tkinter.StringVar()
     frame = ttk.Frame(root, padding=10)
     frame.grid()
@@ -533,7 +542,7 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Button(frame, text="Browse...", command=lambda: iso.set(filedialog.askopenfilename(
         filetypes=[("ISO image", "*.iso"), ("All files", "*")]) or iso.get())).grid(row=0, column=2)
     ttk.Label(frame, textvariable=error, foreground="red", wraplength=480).grid(row=1, column=0, columnspan=3, sticky="w")
-    ttk.Checkbutton(frame, text="Fullscreen (pending runtime support)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Fullscreen (F11 toggles in game)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Show FPS (applies with Vulkan backend)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
     ttk.Label(frame, text="Internal resolution (applies with Vulkan backend)").grid(row=4, column=0, columnspan=2, sticky="w")
     ttk.Combobox(frame, textvariable=scale, values=["1x", "2x", "3x"], state="readonly", width=8).grid(row=4, column=2)
@@ -545,6 +554,8 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
     ttk.Label(frame, text="GPU (Auto = discrete first)").grid(row=9, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=gpu, values=["Auto"] + detect_gpus(), width=40).grid(row=9, column=1, columnspan=2, sticky="w")
+    ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
+    ttk.Combobox(frame, textvariable=scaling, values=list(SCALING_ENV), state="readonly", width=16).grid(row=10, column=1, columnspan=2, sticky="w")
 
     def play() -> None:
         nonlocal result
@@ -560,10 +571,11 @@ def settings_window(settings: dict) -> dict | None:
         result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
                   "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
-                  "mute_audio": mute.get(), "gpu": gpu.get().strip() or "Auto"}
+                  "mute_audio": mute.get(), "gpu": gpu.get().strip() or "Auto",
+                  "scaling": scaling.get()}
         root.destroy()
 
-    ttk.Button(frame, text="Play", command=play).grid(row=10, column=2, sticky="e", pady=8)
+    ttk.Button(frame, text="Play", command=play).grid(row=11, column=2, sticky="e", pady=8)
     root.mainloop()
     return result
 

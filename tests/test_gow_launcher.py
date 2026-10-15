@@ -189,6 +189,20 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(env, {"GOW_FULLSCREEN": "1", "GOW_DEBUG_UI": "1", "GOW_PAD_INDEX": "0",
                                "PS2X_GS_RASTER_THREADS": "3"})
 
+    def test_scaling_env_mapping_roundtrip_and_old_files(self) -> None:
+        self.assertNotIn("GOW_SCALE_FILTER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
+        for label, value in (("Sharp bilinear", "sharp-bilinear"), ("Nearest", "nearest")):
+            self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, scaling=label)),
+                             {"GOW_SCALE_FILTER": value})
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, scaling="Nearest"), path)
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Nearest")
+            path.write_text('{"debug_ui": true}')  # file written before the key existed
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
+            path.write_text('{"scaling": "bogus"}')
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
+
     def test_gpu_env_mapping(self) -> None:
         self.assertNotIn("PS2X_VK_DEVICE", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, gpu="NVIDIA")),
