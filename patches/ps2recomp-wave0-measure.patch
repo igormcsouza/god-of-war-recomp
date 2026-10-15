@@ -1,0 +1,386 @@
+--- a/ps2xRuntime/include/runtime/ps2_pipe_stats.h
++++ b/ps2xRuntime/include/runtime/ps2_pipe_stats.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ // GOW-Port: contadores opt-in (PS2X_PIPE_STATS=1) de espera por etapa del pipeline EE->VU1->GIF->GS.
++#include <algorithm>
+ #include <atomic>
+ #include <chrono>
+ #include <cstdint>
+@@ -12,11 +13,15 @@
+ enum Slot : int
+ {
+     VsyncLock, SyncVu1, SyncFront, PublishWait, GsIdle, GsBusy, DrainWait, GuestWait,
+-    Vu1Idle, Vu1Busy, FrontIdle, FrontBusy, SlotCount
++    Vu1Idle, Vu1Busy, FrontIdle, FrontBusy,
++    // GOW-Port: VU1 worker sub-buckets (inside vu1_busy). vu1_exec = microprogram run (MSCAL/MSCNT) and INCLUDES xgkick
++    // (PATH1 copy + arbiter + GS-front enqueue); the others are disjoint from it.
++    VifUnpack, VifMpg, VifDirect, Vu1Exec, Xgkick, Arbiter, SlotCount
+ };
+ inline const char *const kNames[SlotCount] = {"ee_vsync_lock", "ee_sync_vu1", "ee_sync_front", "publish_wait", "gs_idle",
+                                               "gs_busy", "drain_wait", "guest_wait", "vu1_idle", "vu1_busy",
+-                                              "front_idle", "front_busy"};
++                                              "front_idle", "front_busy", "vif_unpack", "vif_mpg", "vif_direct",
++                                              "vu1_exec", "xgkick", "arbiter"};
+ inline bool enabled()
+ {
+     static const bool on = [] { const char *v = std::getenv("PS2X_PIPE_STATS"); return v && *v && *v != '0'; }();
+@@ -24,6 +29,17 @@
+ }
+ inline std::atomic<uint64_t> g_ns[SlotCount];
+ inline std::atomic<uint64_t> g_n[SlotCount];
++// GOW-Port: per-microprogram table, key = start PC / 8 (VU1 code is 16 KiB = 2048 instruction pairs); MSCNT resumes
++// are keyed by the PC they resume at, offset by 2048. Time is wall ns around VU1::execute/resume; cycles are VU1 cycles.
++constexpr int kProgSlots = 4096;
++inline std::atomic<uint64_t> g_progNs[kProgSlots], g_progN[kProgSlots], g_progCyc[kProgSlots];
++inline void recordProgram(bool resume, uint32_t pc, uint64_t ns, uint64_t cycles)
++{
++    const uint32_t i = ((pc >> 3) & 2047u) + (resume ? 2048u : 0u);
++    g_progNs[i].fetch_add(ns, std::memory_order_relaxed);
++    g_progN[i].fetch_add(1, std::memory_order_relaxed);
++    g_progCyc[i].fetch_add(cycles, std::memory_order_relaxed);
++}
+ inline std::atomic<uint64_t> g_qHigh{0};
+ inline std::atomic<uint64_t> g_frontHigh{0};
+ inline void raise(std::atomic<uint64_t> &a, uint64_t v)
+@@ -38,9 +54,28 @@
+         return;
+     std::thread([] {
+         uint64_t prevNs[SlotCount] = {}, prevN[SlotCount] = {};
+-        for (;;)
++        uint64_t prevPNs[kProgSlots] = {}, prevPN[kProgSlots] = {}, prevPCyc[kProgSlots] = {};
++        for (int tick = 1;; ++tick)
+         {
+             std::this_thread::sleep_for(std::chrono::seconds(1));
++            if (tick % 5 == 0) // top microprograms over the last 5 s, per wall second
++            {
++                int order[kProgSlots], n = 0;
++                uint64_t total = 0;
++                for (int i = 0; i < kProgSlots; ++i)
++                    if (g_progN[i].load() != prevPN[i]) { order[n++] = i; total += g_progNs[i].load() - prevPNs[i]; }
++                std::sort(order, order + n, [&](int a, int b) { return g_progNs[a].load() - prevPNs[a] > g_progNs[b].load() - prevPNs[b]; });
++                std::fprintf(stderr, "[pipe-vu1] programs=%d total=%.0fms/s top:", n, double(total) / 5e6);
++                for (int k = 0; k < n && k < 8; ++k)
++                {
++                    const int i = order[k];
++                    const double ns = double(g_progNs[i].load() - prevPNs[i]), calls = double(g_progN[i].load() - prevPN[i]);
++                    std::fprintf(stderr, " %s%03X=%.0fms/s,%.0f/s,%.0fus/call,%.1fns/cyc", i >= 2048 ? "cnt@" : "pc=0x", (i & 2047) * 8,
++                                 ns / 5e6, calls / 5.0, ns / calls / 1e3, ns / std::max(1.0, double(g_progCyc[i].load() - prevPCyc[i])));
++                }
++                std::fprintf(stderr, "\n");
++                for (int i = 0; i < kProgSlots; ++i) { prevPNs[i] = g_progNs[i].load(); prevPN[i] = g_progN[i].load(); prevPCyc[i] = g_progCyc[i].load(); }
++            }
+             std::fprintf(stderr, "[pipe]");
+             for (int i = 0; i < SlotCount; ++i)
+             {
+--- a/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
++++ b/ps2xRuntime/src/lib/ps2_vif1_interpreter.cpp
+@@ -3,6 +3,7 @@
+ #include <immintrin.h>
+ #endif
+ #include "runtime/ps2_memory.h"
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include <cstring>
+ #include <vector>
+ #include <algorithm>
+@@ -450,6 +451,7 @@
+         }
+         else if (opcode == VIF_MPG)
+         {
++            ps2_pipe::Scope pipeScope(ps2_pipe::VifMpg); // GOW-Port: PS2X_PIPE_STATS
+             uint32_t destAddr = (uint32_t)imm * 8u;
+             const uint32_t instructionCount = (num == 0u) ? 256u : static_cast<uint32_t>(num);
+             const uint32_t mpgBytes = instructionCount * 8u;
+@@ -471,6 +473,7 @@
+         }
+         else if (opcode == VIF_DIRECT || opcode == VIF_DIRECTHL)
+         {
++            ps2_pipe::Scope pipeScope(ps2_pipe::VifDirect); // GOW-Port: PS2X_PIPE_STATS
+             // GOW-Port: IMMEDIATE=0 significa 65536 QW, nunca más de 1 MiB.
+             const uint32_t payloadBytes = ((imm == 0u) ? 65536u : static_cast<uint32_t>(imm)) * 16u;
+             const uint32_t availableBytes = sizeBytes - pos;
+@@ -501,6 +504,7 @@
+         }
+         else if ((opcode & 0x60) == 0x60)
+         {
++            ps2_pipe::Scope pipeScope(ps2_pipe::VifUnpack); // GOW-Port: PS2X_PIPE_STATS
+             uint8_t vn = (opcode >> 2) & 0x3;
+             uint8_t vl = opcode & 0x3;
+             const bool maskEnable = (opcode & 0x10u) != 0u;
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -3,6 +3,7 @@
+ #include "runtime/gs/gs_host_present.h" // GOW-Port: consumidor privado del host.
+ #include "ps2_log.h"
+ #include "runtime/ps2_perf.h"
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ #include "ps2_stubs.h"
+ #include "ps2_syscalls.h"
+ #include "game_overrides.h"
+@@ -691,6 +692,20 @@
+                      static_cast<unsigned long long>(count));
+ }
+ 
++namespace
++{
++// GOW-Port: record one VU1 microprogram run into the PS2X_PIPE_STATS tables.
++void pipeRecordVu1(bool resume, uint32_t pc, std::chrono::steady_clock::time_point t0, uint64_t c0, uint64_t c1)
++{
++    const uint64_t ns = static_cast<uint64_t>(
++        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count());
++    ps2_pipe::startPrinter();
++    ps2_pipe::g_ns[ps2_pipe::Vu1Exec].fetch_add(ns, std::memory_order_relaxed);
++    ps2_pipe::g_n[ps2_pipe::Vu1Exec].fetch_add(1, std::memory_order_relaxed);
++    ps2_pipe::recordProgram(resume, pc, ns, c1 - c0);
++}
++} // namespace
++
+ bool PS2Runtime::syncCoreSubsystems()
+ {
+     uint8_t *const rdram = m_memory.getRDRAM();
+@@ -737,9 +752,17 @@
+                                          (cpuContext->vu0_fbrst & (1u << 10)) != 0u;
+                                      m_vu1.state().tBitEnabled =
+                                          (cpuContext->vu0_fbrst & (1u << 11)) != 0u;
+-                                     m_vu1.execute(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
+-                                                   m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
+-                                                   m_gs, &m_memory, startPC, top, itop, 65536);
++                                     {
++                                         // GOW-Port: PS2X_PIPE_STATS per-microprogram time (includes the XGKICK copies it triggers).
++                                         const bool timed = ps2_pipe::enabled();
++                                         const auto t0 = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
++                                         const uint64_t c0 = timed ? m_vu1.state().cycles : 0u;
++                                         m_vu1.execute(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
++                                                       m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
++                                                       m_gs, &m_memory, startPC, top, itop, 65536);
++                                         if (timed)
++                                             pipeRecordVu1(false, startPC, t0, c0, m_vu1.state().cycles);
++                                     }
+                                      gowReportVu1Budget(m_vu1, "MSCAL", startPC);
+                                      cpuContext->vu0_vpu_stat =
+                                          (cpuContext->vu0_vpu_stat & ~0x0600u) |
+@@ -759,9 +782,17 @@
+                                          (cpuContext->vu0_fbrst & (1u << 10)) != 0u;
+                                      m_vu1.state().tBitEnabled =
+                                          (cpuContext->vu0_fbrst & (1u << 11)) != 0u;
+-                                     m_vu1.resume(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
+-                                                  m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
+-                                                  m_gs, &m_memory, top, itop, 65536);
++                                     {
++                                         const bool timed = ps2_pipe::enabled();
++                                         const auto t0 = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
++                                         const uint64_t c0 = timed ? m_vu1.state().cycles : 0u;
++                                         const uint32_t resumePc = m_vu1.state().pc;
++                                         m_vu1.resume(m_memory.getVU1Code(), PS2_VU1_CODE_SIZE,
++                                                      m_memory.getVU1Data(), PS2_VU1_DATA_SIZE,
++                                                      m_gs, &m_memory, top, itop, 65536);
++                                         if (timed)
++                                             pipeRecordVu1(true, resumePc, t0, c0, m_vu1.state().cycles);
++                                     }
+                                      gowReportVu1Budget(m_vu1, "MSCNT", 0xFFFFu);
+                                      cpuContext->vu0_vpu_stat =
+                                          (cpuContext->vu0_vpu_stat & ~0x0600u) |
+--- a/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
++++ b/ps2xRuntime/src/lib/vu/ps2_vu1_core.cpp
+@@ -18,6 +18,7 @@
+ #include <string>
+ #include <ps2_log.h>
+ #include "runtime/ps2_perf.h"
++#include "runtime/ps2_pipe_stats.h" // GOW-Port
+ 
+ // GOW-Port: la aritmética de VU no depende de /fp:fast. El runtime se compila con /fp:fast, que deja al
+ // compilador fusionar a*b+c en FMA según dónde esté el código: el intérprete y el microcódigo compilado
+@@ -1072,6 +1073,7 @@
+ 
+ void VU1Interpreter::xgkickCopy()
+ {
++    ps2_pipe::Scope pipeScope(ps2_pipe::Xgkick); // GOW-Port: PS2X_PIPE_STATS (PATH1 copy + arbiter + GS-front enqueue)
+     if (!m_xgkick.active || !m_activeVuData || m_activeVuDataSize == 0u)
+         return;
+ 
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -357,7 +357,10 @@
+         ps2_pipe::Scope pipeBusy(ps2_pipe::Vu1Busy);
+         processVIF1Data(data.data(), static_cast<uint32_t>(data.size()));
+         if (m_gifArbiter)
++        {
++            ps2_pipe::Scope arbiterScope(ps2_pipe::Arbiter); // GOW-Port
+             m_gifArbiter->drain();
++        }
+         publishGsFrontBatch(worker);
+         {
+             std::lock_guard<std::mutex> lock(worker.mutex);
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_vulkan_backend.cpp
+@@ -25,6 +25,8 @@
+ #include <unordered_map>
+ #include <cstdlib>
+ #include <cstring>
++#include <filesystem>
++#include <vector>
+ 
+ namespace
+ {
+@@ -261,8 +263,83 @@
+         pipelineInfo.stage.module = module;
+         pipelineInfo.stage.pName = "main";
+         pipelineInfo.layout = s.pipelineLayout;
+-        const VkResult pipelineResult = vkCreateComputePipelines(s.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &s.pipeline);
++        // GOW-Port: persistent VkPipelineCache in $XDG_CACHE_HOME (or ~/.cache)/gow-one-recomp/vk_pipeline_cache.bin.
++        // The loader validates the header (vendor, device, driver UUID) and ignores a foreign blob, so a stale file is harmless.
++        // PS2X_VK_NO_PIPELINE_CACHE=1 skips it (A/B). Any failure falls back to no cache.
++        std::string cachePath;
++        std::vector<char> cacheBlob;
++        VkPipelineCache pipelineCache = VK_NULL_HANDLE;
++        if (const char *off = std::getenv("PS2X_VK_NO_PIPELINE_CACHE"); !(off && *off && *off != '0'))
++        {
++            const char *xdg = std::getenv("XDG_CACHE_HOME");
++            const char *home = std::getenv("HOME");
++            if (xdg && *xdg)
++                cachePath = std::string(xdg) + "/gow-one-recomp";
++            else if (home && *home)
++                cachePath = std::string(home) + "/.cache/gow-one-recomp";
++            if (!cachePath.empty())
++            {
++                cachePath += "/vk_pipeline_cache.bin";
++                if (FILE *f = std::fopen(cachePath.c_str(), "rb"))
++                {
++                    std::fseek(f, 0, SEEK_END);
++                    const long size = std::ftell(f);
++                    std::fseek(f, 0, SEEK_SET);
++                    if (size > 0 && size < (64l << 20))
++                    {
++                        cacheBlob.resize(static_cast<size_t>(size));
++                        if (std::fread(cacheBlob.data(), 1, cacheBlob.size(), f) != cacheBlob.size())
++                            cacheBlob.clear();
++                    }
++                    std::fclose(f);
++                }
++                VkPipelineCacheCreateInfo cacheInfo{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};
++                cacheInfo.initialDataSize = cacheBlob.size();
++                cacheInfo.pInitialData = cacheBlob.empty() ? nullptr : cacheBlob.data();
++                if (vkCreatePipelineCache(s.device, &cacheInfo, nullptr, &pipelineCache) != VK_SUCCESS)
++                    pipelineCache = VK_NULL_HANDLE;
++            }
++        }
++        const auto pipelineT0 = std::chrono::steady_clock::now();
++        const VkResult pipelineResult = vkCreateComputePipelines(s.device, pipelineCache, 1, &pipelineInfo, nullptr, &s.pipeline);
++        const double pipelineMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pipelineT0).count();
+         vkDestroyShaderModule(s.device, module, nullptr);
++        if (pipelineCache != VK_NULL_HANDLE)
++        {
++            if (pipelineResult == VK_SUCCESS)
++            {
++                size_t size = 0;
++                std::vector<char> data;
++                if (vkGetPipelineCacheData(s.device, pipelineCache, &size, nullptr) == VK_SUCCESS && size > 0)
++                {
++                    data.resize(size);
++                    if (vkGetPipelineCacheData(s.device, pipelineCache, &size, data.data()) != VK_SUCCESS)
++                        data.clear();
++                    else
++                        data.resize(size);
++                }
++                // Rewrite only when the blob changed (first run, driver update): temp file + rename keeps it atomic.
++                if (!data.empty() && (data.size() != cacheBlob.size() || std::memcmp(data.data(), cacheBlob.data(), data.size()) != 0))
++                {
++                    std::error_code ec;
++                    std::filesystem::create_directories(std::filesystem::path(cachePath).parent_path(), ec);
++                    const std::string tmp = cachePath + ".tmp";
++                    if (FILE *f = std::fopen(tmp.c_str(), "wb"))
++                    {
++                        const bool ok = std::fwrite(data.data(), 1, data.size(), f) == data.size();
++                        std::fclose(f);
++                        if (ok)
++                            std::rename(tmp.c_str(), cachePath.c_str());
++                        else
++                            std::remove(tmp.c_str());
++                    }
++                }
++            }
++            vkDestroyPipelineCache(s.device, pipelineCache, nullptr);
++        }
++        if (const char *v = std::getenv("PS2X_GS_VULKAN_STATS"); v && *v && *v != '0')
++            std::fprintf(stderr, "[gow-gs] compute pipeline created in %.1f ms (cache %s, %zu bytes loaded)\n", pipelineMs,
++                         cachePath.empty() ? "off" : (cacheBlob.empty() ? "miss" : "hit"), cacheBlob.size());
+         if (pipelineResult != VK_SUCCESS)
+             return "vkCreateComputePipelines failed";
+ 
+@@ -661,6 +738,15 @@
+         if (now - statsStart < std::chrono::seconds(1))
+             return;
+         std::string line, gpuLine;
++        // GOW-Port: batch-close histogram (reason=count/average prims in the closed batch); run ends are counted below.
++        std::string closeLine;
++        for (int r = 1; r < kReasons; ++r)
++            if (statsClose[r])
++                closeLine += std::string(" ") + kCloseNames[r] + "=" + std::to_string(statsClose[r]) + "/" +
++                             std::to_string(statsCloseSize[r] / statsClose[r]);
++        std::fill(std::begin(statsClose), std::end(statsClose), 0);
++        std::fill(std::begin(statsCloseSize), std::end(statsCloseSize), 0);
++        std::fprintf(stderr, "[gow-gs-vk-close]%s\n", closeLine.c_str());
+         for (const auto &[reason, count] : statsFallback)
+             line += " " + reason + "=" + std::to_string(count);
+         line += " | batches=" + std::to_string(statsBatches) + " finish_ms=" + std::to_string(statsFinishUs / 1000u) + " record_ms=" + std::to_string(statsRecordUs / 1000u) +
+@@ -979,21 +1065,33 @@
+         batchCount = 0;
+     }
+ 
+-    // True if `rec` (touching `reads`/`writes` pages) can join the open batch.
+-    bool canJoin(const PrimRecord &rec, const uint32_t key[3], const PageSet &reads, const PageSet &writes,
+-                 const PageSet &frames, const PageSet &depths) const
++    // GOW-Port: why a batch closed (stats only). Reason 0 = the primitive joins the open batch.
++    enum CloseReason : int { kJoin, kNoBatch, kCap, kTarget, kTexRaw, kTexWar, kFrameZ, kUnion, kPartial, kReasons };
++    static constexpr const char *kCloseNames[kReasons] = {"join", "none", "cap1024", "target", "tex-raw", "tex-war", "frame-z", "union", "partial512"};
++    uint64_t statsClose[kReasons]{}, statsCloseSize[kReasons]{};
++
++    // 0 if `rec` (touching `reads`/`writes` pages) can join the open batch, else the CloseReason.
++    int joinBlock(const PrimRecord &rec, const uint32_t key[3], const PageSet &reads, const PageSet &writes,
++                  const PageSet &frames, const PageSet &depths) const
+     {
+-        if (!batchCount || batchCount >= kMaxBatch || std::memcmp(key, batchKey, sizeof(batchKey)) != 0)
+-            return false;
+-        if ((reads & batchWrites).any() || (writes & batchReads).any() || (frames & batchDepths).any() ||
+-            (depths & batchFrames).any())
+-            return false;
++        if (!batchCount)
++            return kNoBatch;
++        if (batchCount >= kMaxBatch)
++            return kCap;
++        if (std::memcmp(key, batchKey, sizeof(batchKey)) != 0)
++            return kTarget;
++        if ((reads & batchWrites).any())
++            return kTexRaw;
++        if ((writes & batchReads).any())
++            return kTexWar;
++        if ((frames & batchDepths).any() || (depths & batchFrames).any())
++            return kFrameZ;
+         // Every thread of the union rectangle walks the whole batch: keep that near the useful work.
+         const int x0 = std::min(batchRect[0], rec.rect[0]), y0 = std::min(batchRect[1], rec.rect[1]);
+         const int x1 = std::max(batchRect[2], rec.rect[2]), y1 = std::max(batchRect[3], rec.rect[3]);
+         const uint64_t unionPixels = static_cast<uint64_t>(x1 - x0 + 1) * static_cast<uint64_t>(y1 - y0 + 1);
+         const uint64_t sum = batchPixels + static_cast<uint64_t>(rec.rect[2] - rec.rect[0] + 1) * (rec.rect[3] - rec.rect[1] + 1);
+-        return (batchCount + 1u) * unionPixels <= 64u * sum + 1048576u;
++        return (batchCount + 1u) * unionPixels <= 64u * sum + 1048576u ? kJoin : kUnion;
+     }
+ 
+     void memoryBarrier(VkPipelineStageFlags dstStage, VkAccessFlags dstAccess)
+@@ -1350,9 +1448,15 @@
+     }
+     impl.runReads |= reads;
+     impl.runWrites |= writes;
+-    if (!impl.canJoin(rec, key, reads, writes, frames, depths))
++    if (const int blocked = impl.joinBlock(rec, key, reads, writes, frames, depths))
+     {
+-        if (impl.primCount - impl.primsAtSubmit >= kSubmitEvery)
++        const bool partial = impl.primCount - impl.primsAtSubmit >= kSubmitEvery;
++        if (impl.statsEnabled && impl.batchCount)
++        {
++            ++impl.statsClose[partial ? Impl::kPartial : blocked];
++            impl.statsCloseSize[partial ? Impl::kPartial : blocked] += impl.batchCount;
++        }
++        if (partial)
+             impl.submitPartial();
+         else
+             impl.emitBatch(); // a barrier then separates it from the next one

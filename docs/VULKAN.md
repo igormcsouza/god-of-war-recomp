@@ -493,3 +493,54 @@ it at the first prim that can lower Z: ZTST ALWAYS with Z write, Z beyond the Z 
 [0, 2^32), or a frame/Z alias prim (new mode flag `M_ZALIAS` 0x40000, set where `aliasing` is decided). Gain is small because
 the min over a tile is dominated by far/cleared pixels and the 17x overdraw here is mostly visible blended layers. Step 3 (64x32
 page binning) and the real-game FPS A/B were not done (budget); `ps2EntryRunner` not rebuilt/run with the change.
+
+## Wave 0 measurements: GS ceiling, VU1 breakdown, batch closes, pipeline cache (2026-10-15)
+
+Tooling (`patches/ps2recomp-wave0-measure.patch`, all opt-in, no behaviour change):
+- `PS2X_PIPE_STATS=1` gained VU1-worker sub-buckets in the `[pipe]` line: `vif_unpack`, `vif_mpg`, `vif_direct`, `vu1_exec`
+  (microprogram run; **includes** the XGKICK work it triggers), `xgkick` (PATH1 copy + arbiter push + GS-front enqueue),
+  `arbiter` (`drain()` after each VIF packet). Every 5 s a `[pipe-vu1]` line lists the top 8 microprograms (`pc=0xNNN` = MSCAL
+  start, `cnt@NNN` = MSCNT resume PC): ms per wall second, calls/s, us per call, wall ns per VU1 cycle. Timers add two
+  `steady_clock` reads per XGKICK copy and per microprogram only when enabled.
+- `PS2X_GS_VULKAN_STATS=1` prints `[gow-gs-vk-close] reason=count/avg_prims_in_closed_batch` per second. Reasons: `union`
+  (the union-rectangle heuristic), `partial512` (forced submit every 512 prims), `tex-raw` / `tex-war` (texture pages vs the
+  batch's writes / reads), `frame-z`, `target` (frame/Z/TEST key changed), `cap1024`, `none`.
+- Null GS ceiling: no new code; `PS2X_GS_DISCARD_DRAWS=1` (threaded backend) drops every primitive in the GS worker while
+  transfers, CLUT loads, FINISH and Present still run, so the game logic sees a GS that renders in zero time.
+
+Run: `GOW_SKIP_FMV=1 GOW_PAD_TEST=1 GOW_AUDIO=0 GOW_DELTA_DIAG=1 GOW_PERF_FRAME_PC=0x001837B8 PS2X_GS_VULKAN_STATS=1 PS2X_PIPE_STATS=1`,
+RTX 5050, defaults, 95 s, one runner on the machine; window t=55-72 s (rainy fight, pad script still in the same state in both runs).
+
+| | default | GS draws dropped |
+|---|---|---|
+| FPS (guest flips/s, median) | 15.0 | 15.0 |
+| game speed | 0.99 | 0.99 |
+| `gs_busy` / `gs_idle` ms/s | 692 / 304 | 162 / 836 |
+| `vu1_busy` / `vu1_exec` ms/s | 869 / 832 | 853 / 823 |
+| `guest_wait` (EE idle) ms/s | 634 | 634 |
+
+The game quantises its frame time to whole vblanks (15 FPS = 4 vblanks), so FPS moves in steps (60/30/20/15). With an infinitely
+fast GS the scene stays at 15.0: the GS is not the limiter at 15 FPS; the VU1 worker is (86% of a core, ~55 ms per displayed
+frame). After t=74 s the null run diverged (22-29 FPS, game state differs without drawing), so only the t=55-72 window is a
+like-for-like comparison. The intro/loading card ran at 60 FPS in the null run for 4 s (t=29-33), also in the default run's scene it is 30.
+
+VU1 split (ms per wall second, base run): `vu1_exec` 832 of `vu1_busy` 869; `vif_unpack` 20 (2%), `xgkick` 16 (2%, inside exec),
+`vif_mpg` 0, `vif_direct` 1, `arbiter` ~0. So the time is the generated microcode itself, not unpack or the GIF hand-off.
+Three programs account for it: `pc=0x018` ~330 ms/s (8.8k calls/s, 37 us each, 12.4 ns/cycle), `pc=0x000` ~320 (13.6k/s, 24 us,
+13.8 ns/cycle), `pc=0x030` ~200 (7.2k/s, 28 us, 14.2 ns/cycle). The real VU1 runs at 3.3 ns/cycle, so the generated code is ~4x
+slower than hardware per cycle; 60 FPS needs vu1_exec <= ~13 ms/frame, i.e. about 4x less time in these three programs.
+
+Batch closes (median per second, avg prims of the closed batch): `union` 3,170 (147), `partial512` 1,370 (339), `tex-raw` 1,310 (1),
+`target` 705 (8), `tex-war` 290 (4), `frame-z` 120 (1); `cap1024` and `none` do not appear. About 7,000 closes/s match the
+~6,400 dispatches/s. The union heuristic is the main structural closer (46%), as planned for item 2; `tex-raw` closes are 1-prim
+batches (feedback-like page overlaps) and `partial512` is the submit cadence, not a hazard.
+
+Pipeline cache and shaders: SPIR-V is compiled at build time (`gs_vulkan_shader_export` + `glslangValidator`, embedded in the
+binary); at run time there is exactly one compute pipeline, created during device init (never lazily during play). It had no
+`VkPipelineCache`. Now a cache is loaded from / saved to `$XDG_CACHE_HOME` or `~/.cache`/`gow-one-recomp/vk_pipeline_cache.bin`
+(88 KB on the RTX 5050; rewritten atomically only when the blob changed; a blob from another driver/device is ignored by the loader;
+`PS2X_VK_NO_PIPELINE_CACHE=1` disables it). Measured `vkCreateComputePipelines` (stats line `[gow-gs] compute pipeline created ...`):
+516 ms with a cold NVIDIA driver cache (`__GL_SHADER_DISK_CACHE=0`) and no VkPipelineCache; 0.6 ms with ours; 0.5 ms when the
+driver's own disk cache is warm. So the cache removes about half a second of startup only when the driver cache is cold (new driver,
+cleared cache, other machine); it cannot change steady-state FPS, because no pipeline is compiled after startup. Further shader
+precompilation would affect stutter only, and there is nothing left to compile.
