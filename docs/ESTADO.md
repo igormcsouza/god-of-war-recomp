@@ -6711,3 +6711,49 @@ Compiled VU1 is only ~5% faster than the interpreter here, so the 41% sample sha
 the compiled code still runs on the EE thread inside VIF1 processing. Next: `PS2X_VU1_HILO=1` (VU1 on its own thread,
 `ps2recomp-vu1-thread.patch`) and capturing more dumps from the intro/gameplay (an uncaptured program would fall back to the
 interpreter per pair).
+
+### Linux: threading/pacing matrix and new defaults (2026-10-14)
+
+Method: intro -> title, Vulkan GS, compiled VU1 (144 local dumps), `GOW_DELTA_DIAG=1 GOW_PERF_FRAME_PC=0x001837B8`, 40 s
+per run, FPS = `vid::Flip` count over the second half of the run (18 windows), per-thread CPU from `/proc/PID/task`.
+The default for every row is Vulkan + `PS2X_GS_THREAD=1` + compiled VU1. "Speed" is game seconds per wall second.
+
+| Config | FPS | Speed | Notes |
+|---|---|---|---|
+| default | 5.63 | 0.09 | GS thread 38%, EE 26% of a core |
+| `PS2X_GS_THREAD=0` | 5.41 | 0.09 | one thread at 53% |
+| `PS2X_VU1_HILO=1` | 5.97 | 0.31 | VU1 worker ~15% |
+| `HILO=1` + `PS2X_GS_FRENTE=1` | 5.88 | 0.39 | |
+| `GOW_GS_FINISH_ASINCRONO=1` | 6.30 | 0.11 | |
+| `HILO` + `FINISH_ASINCRONO` | 6.38 | 0.27 | |
+| `HILO` + `FRENTE` + `FINISH_ASINCRONO` | 6.66 / 6.58 / 6.59 (140 s) | 0.37-0.40 | best, repeatable |
+| same, `PS2X_GS_BACKEND=cpu` | 5.71 | 0.28 | GS thread 94% |
+| same, `PS2X_GS_QUEUE_CHUNKS=256` / `8` | 6.49 / 6.56 | 0.37 | queue depth irrelevant |
+| `PS2X_GS_RASTER_THREADS=1/4/8` | 5.52 / 5.61 / 5.44 | 0.09 | no effect (CPU fallback is ~1% of the work) |
+| `GOW_XGKICK_IMMEDIATE=1`, `PS2X_GS_COMPACT_QUEUE=0`, `PS2X_GS_QUEUE_CHUNKS=64`, `GOW_FAST_BOOT=1` | 5.62 / 5.51 / 5.53 / 5.45 | 0.09 | no effect |
+
+The README's 12 -> 25 fps (Windows, Athens docks) is not reproduced here: the same three knobs give +17% FPS on Linux in
+the intro, with a larger gain in game speed (the guest then runs ~15 Hz game ticks, delta 0.067 s, instead of 60 Hz ticks at
+4x lower rate). Speed values are only comparable between rows that share the same thread layout.
+
+**Where the EE thread blocks** (best config, 62 + 30 gdb samples of every thread). The EE thread (`EeScheduler::run`) is
+~90% in a `pthread_mutex_lock` inside `GS::notifyExternalVSync` (the `GS::m_stateMutex` recursive mutex). The holder is the GIF
+producer (`gsFrontLoop` -> `GS::processGIFPacket`/`vertexKick`), which in turn waits in `GSThreadedBackend::PublishLocked`
+(queue backpressure, 56/62 samples) for the GS thread; the GS thread is in `drmSyncobjWait` (GPU fence, 41/62) or running
+CPU fallbacks (`DrawSprite` -> `SampleTexture`, ~25%). The VU1 worker waits on its condvar (46/62) and compiled-VU1 code
+shows up in only ~7 samples. So the chain EE -> `m_stateMutex` -> GIF thread -> GS queue -> GPU fence is the limiter; a
+deeper queue does not help, i.e. the GS thread's throughput (GPU waits + fallbacks) is the actual cap.
+
+**Defaults chosen.** New `patches/ps2recomp-linux-defaults.patch` (last in `compilar.ps1`): on Linux `main()` calls
+`ps2x::ApplyLinuxThreadingDefaults()` (`runtime/linux_defaults.h`), which `setenv(..., overwrite=0)`s `PS2X_VU1_HILO=1`,
+`PS2X_GS_FRENTE=1`, `GOW_GS_FINISH_ASINCRONO=1`. Opt out per knob (`PS2X_VU1_HILO=0` etc.; FINISH needs a value other than 1).
+Test: `LinuxDefaults` in `ps2xTest/src/linux_defaults_tests.cpp` (suite 630/630). Verification: 140 s run with the defaults
+reaches the title at 30 s with a screenshot matching the baseline's title (flames, logo, "New Game"); later frames are
+a transition (black at 48 s, title again at 56-72 s; black at 70 and 120 s in the 140 s run were not inspected further,
+the game was past the title in that run). No hang in 140 s, but the README warns of occasional hangs with these knobs,
+so soak-test before relying on it. From a clean pinned-commit tree all 114 patches in `compilar.ps1` order apply.
+
+**Next steps.** (1) Hold `m_stateMutex` for less time or make `notifyExternalVSync` lock-free/queued so the EE never waits
+on the GIF thread. (2) Per-primitive CLUT versions and non-overlapping uploads to cut GPU fence waits (GS thread is the cap).
+(3) Draw `tex-feedback`/`z-alias` on the GPU. (4) Soak test (30+ min, gameplay) for the async-FINISH hang before keeping the
+default on Windows too.
