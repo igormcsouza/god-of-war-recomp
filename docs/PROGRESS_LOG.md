@@ -35,3 +35,4 @@ Newest entries at the bottom. Detailed investigation lives in `ESTADO.md` and `V
 
 ## Log
 - 2026-10-15: Intro-movie garbage hunt. Garbage starts ~5-10 frames after the MPEG starts, not at the end, and the visible picture is NOT our decoded buffer. Root cause still open; see ESTADO.md 'Intro movie garbage is not an end-of-stream problem'. Added `GOW_MPEG_DIAG`.
+- 2026-10-15: Emulator research (PCSX2 GameDB/GSRendererHW/Gif_Unit/IPU) written to docs/EMULATOR_RESEARCH.md with ranked ideas for intro-FMV garbage and feedback/z-alias perf.
