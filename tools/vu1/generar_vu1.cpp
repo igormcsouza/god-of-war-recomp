@@ -101,6 +101,8 @@ struct VU1CompiledGenerator
     }
 };
 
+#include "static_schedule.h"
+
 namespace
 {
     using Pair = VU1CompiledGenerator::Pair;
@@ -174,6 +176,7 @@ int main(int argc, char **argv)
         else
             inputs.push_back(argv[a]);
     }
+    const bool noStatic = std::getenv("GOW_VU1_GEN_NO_STATIC") != nullptr;
     VU1Interpreter vu;
     std::vector<Code> codes;
     for (const std::string &input : inputs)
@@ -254,6 +257,7 @@ int main(int argc, char **argv)
     // Bloques de cada dirección, en el orden en que se generan.
     std::map<uint32_t, std::vector<std::string>> blockCases;
     std::set<std::pair<uint32_t, std::vector<uint32_t>>> seenBlocks;
+    size_t staticBlocks = 0, staticPairs = 0, totalBlockPairs = 0;
     size_t blockCount = 0, deadCount = 0, fmacCount = 0, prunedReads = 0, keptReads = 0, prunedPairs = 0;
     for (const Code &code : codes)
     {
@@ -444,6 +448,7 @@ int main(int argc, char **argv)
             body << "};\n"
                  << "        if (!VU1CompiledAccess::block(vu, c, " << head << "u, words, sizeof(words)))\n            return 0;\n"
                  << "        g_blockPairs += " << length << "u;\n";
+            std::vector<std::string> stepText, stepTypes;
             for (size_t i = 0; i < length; ++i)
             {
                 const Pair &p = code.pairs[pcs[i] / 8u];
@@ -471,15 +476,36 @@ int main(int argc, char **argv)
                 }
                 // GOW-Port: los pares que no abren el bloque se saltan las comprobaciones de entrada (Chained).
                 // stepPairT solo consulta las lecturas en readyCycleT, así que R sustituye a K sin más cambios.
-                body << "        if (!VU1CompiledAccess::step<" << r << ", " << (dead[i] ? "true" : "false") << ", "
+                std::ostringstream step;
+                step << "        if (!VU1CompiledAccess::step<" << r << ", " << (dead[i] ? "true" : "false") << ", "
                      << (plain ? "true" : "false") << ", " << (i > 0u ? "true" : "false") << ">(vu, c))\n            return 2;\n";
                 if (i + 1u < length && !plain)
-                    body << "        if (VU1CompiledAccess::pc(vu) != " << pcs[i + 1u] << "u)\n            return 1;\n";
+                    step << "        if (VU1CompiledAccess::pc(vu) != " << pcs[i + 1u] << "u)\n            return 1;\n";
+                stepText.push_back(step.str());
+                stepTypes.push_back(r);
+                body << stepText.back();
             }
             body << "        return 1;\n    }\n";
             parts[part] << body.str();
             declarations << "    int " << name << "(VU1Interpreter &vu, C &c);\n";
-            blockCases[head].push_back(name);
+            // GOW-Port: versión con temporización estática del bloque (static_schedule.h); el despachador la prefiere.
+            std::string entry = name;
+            {
+                std::vector<const Pair *> blockPairs;
+                for (const uint32_t pc : pcs)
+                    blockPairs.push_back(&code.pairs[pc / 8u]);
+                const vu1s::Plan sp = vu1s::plan(blockPairs);
+                totalBlockPairs += length;
+                if (sp.region != 0u && !noStatic)
+                {
+                    entry = "s" + name.substr(1);
+                    parts[part] << vu1s::emit(sp, entry, name, head, words, pcs, stepTypes, dead, stepText);
+                    declarations << "    int " << entry << "(VU1Interpreter &vu, C &c);\n";
+                    ++staticBlocks;
+                    staticPairs += sp.region;
+                }
+            }
+            blockCases[head].push_back(entry);
             ++blockCount;
         }
     }
@@ -490,7 +516,9 @@ int main(int argc, char **argv)
         "// Mismo modo de coma flotante que el intérprete de VU (MSVC no expande en línea entre modos distintos).\n"
         "#if defined(_MSC_VER)\n#pragma float_control(precise, on, push)\n#pragma fp_contract(off)\n#endif\n\n"
         "using P = VU1CompiledAccess::P;\nusing C = VU1CompiledAccess::C;\n\n"
-        "namespace vu1c_gen\n{\n    inline unsigned long long g_blockPairs = 0;\n}\n\n"
+        "namespace vu1c_gen\n{\n    inline unsigned long long g_blockPairs = 0;\n    inline unsigned long long g_staticHits = 0, g_staticMisses = 0;\n"
+        "    // GOW_VU1_NO_STATIC=1: sin temporizacion estatica de bloques (comparar con la ruta par a par).\n"
+        "    inline const bool g_staticOn = std::getenv(\"GOW_VU1_NO_STATIC\") == nullptr;\n}\n\n"
         "// Sin comprobaciones de desbordamiento de pila (/GS): los arreglos locales son de tamaño fijo.\n"
         "#if defined(_MSC_VER)\n#define VU1C_FAST __declspec(safebuffers)\n#else\n#define VU1C_FAST\n#endif\n\n";
     const std::string footer = "\n#if defined(_MSC_VER)\n#pragma float_control(pop)\n#endif\n";
@@ -519,6 +547,8 @@ int main(int argc, char **argv)
         << "    struct Stats\n    {\n        unsigned long long compiled = 0, interpreted = 0;\n"
         << "        ~Stats()\n        {\n            if (std::getenv(\"GOW_VU1C_DIAG\"))\n"
         << "                std::fprintf(stderr, \"[vu1c] compilados=%llu interpretados=%llu\\n\", compiled + vu1c_gen::g_blockPairs, interpreted);\n        }\n    } g_stats;\n"
+        << "    struct StaticStats\n    {\n        ~StaticStats()\n        {\n            if (std::getenv(\"GOW_VU1C_DIAG\"))\n"
+        << "                std::fprintf(stderr, \"[vu1s] static_blocks=%llu fallback_blocks=%llu\\n\", vu1c_gen::g_staticHits, vu1c_gen::g_staticMisses);\n        }\n    } g_staticStats;\n"
         << "    struct Range\n    {\n        uint32_t lo = 0, hi = 0xFFFFFFFFu;\n        bool blocks = true;\n        Range()\n        {\n"
         << "            if (const char *v = std::getenv(\"GOW_VU1C_RANGO\"))\n            {\n"
         << "                char *end = nullptr;\n                lo = static_cast<uint32_t>(std::strtoul(v, &end, 16));\n"
@@ -615,6 +645,8 @@ int main(int argc, char **argv)
     writeIfChanged(base + "/programa0.cpp", out.str());
     std::printf("[generar_vu1] %zu funciones de par, %zu bloques, %zu de %zu FMAC con flags muertos, %zu imagenes\n",
                 pairFns.size(), blockCount, deadCount, fmacCount, codes.size());
+    std::printf("[generar_vu1] bloques estaticos: %zu de %zu, %zu de %zu pares con temporizacion fija\n", staticBlocks, blockCount,
+                staticPairs, totalBlockPairs);
     std::printf("[generar_vu1] esperas imposibles: %zu de %zu lecturas en bloques, %zu pares con struct R\n",
                 prunedReads, prunedReads + keptReads, prunedPairs);
     return 0;

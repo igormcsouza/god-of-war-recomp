@@ -590,3 +590,36 @@ cycle offset of every pair at generation time (in-block writers with latency > d
 the entry check fails. Expected: scoreboard + bookkeeping ~30-35% of block time, i.e. ~1.4-1.5x more on top of Finding 1 (about
 2.2x total from the original). Exactness check: GOW_VU1C env switches already allow compiled-vs-interpreter runs; a record/replay
 of VU1 state per MSCAL would be the proper test. The remaining 40% (FMAC flag math) would need a cheaper exact-flag proof.
+
+### Wave 1c: VU1 exactness check and static block timing (2026-10-15)
+
+**Exactness check (no game data in the repo).** `patches/ps2recomp-vu1-replay.patch`: `GOW_VU1_RECORD=<dir>[,every[,max]]` saves the
+input of every N-th VU1 program run (state, 16 KB microcode, 16 KB data; ~35 KB each, local only). `GOW_VU1_REPLAY=<dir>
+ps2EntryRunner` re-runs each file with the compiled code linked into the runner and with the interpreter and compares
+VF/VI/ACC/Q/P/I/R, MAC/status/clip, PC, cycles and the VU data memory; it prints `SKIPPED` and returns 0 when the folder is absent.
+Synthetic side (CI): `tests/vu1_block_test.cpp` (randomized multi-block programs with in-block stalls, DIV/WAITQ queues, branches,
+LQ/SQ/ILW/ISW, flag reads), wired in `tools/ci/pruebas_vu1.cmake` and `pruebas.yml`.
+
+**Static block timing** (`patches/ps2recomp-vu1-static-block.patch`, `tools/vu1/static_schedule.h`, hooked in `generar_vu1.cpp`).
+For the prefix of a block without branch/E/D/T, DIV/EFU/XGKICK or out-of-line lower ops, the generator computes each pair's cycle
+offset (in-block RAW stalls are constants) and the live-in reads (registers not written earlier in the prefix). The `sXXXX` block
+function checks once at entry that no live-in is pending past its pair, no XGKICK is active and no queue (Q/P/stores) is due before
+the prefix ends; then each pair only sets `m_cycle` and runs the lane math (`stepPairStaticT`), no `readyCycleT`, no `markPairWrites`,
+no per-pair commit/XGKICK checks; at the end it stores the last writer's ready cycle per register lane and the exit PC/cycle. If the
+check fails it calls the old per-pair block (`bXXXX`). `GOW_VU1_NO_STATIC=1` forces the old path at run time (A/B);
+`GOW_VU1_GEN_NO_STATIC=1` at generation time omits the static functions; `GOW_VU1C_DIAG=1` prints `[vu1s] static_blocks= fallback_blocks=`.
+It is written to rebase onto upstream PR #91 (open, `ps2recomp-vu1-static-timing.patch`): that PR adds `skipReadyChecks` to
+`stepPairT` and a live-in `noWait` guard (the same idea limited to blocks without in-block stalls, keeping per-pair writes/commits);
+this change does not touch `stepPairT` or the `[vu1c]` line, it adds `stepPairStaticT`, new access helpers and a separate `[vu1s]` line,
+so the two can coexist (the static function can reuse their `StaticRead` table; PR #91 then only matters for the non-static tail).
+
+Results (rainy fight, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1 GOW_AUDIO=0`, defaults, 95 s, window t=55-88 s, two runs each, interleaved static / `GOW_VU1_NO_STATIC=1`):
+ns per VU cycle for the three hot programs (pc 0x018 / 0x000 / 0x030): static 8.3 / 9.2 / 8.7 and 8.0 / 9.2 / 8.5; old path 8.9 / 10.1 / 9.4 and
+9.1 / 9.9 / 9.4 (about -8%); `vu1_exec` 688 / 666 vs 696 / 720 ms/s; VU1 per displayed frame ~35.5 vs ~38 ms; window FPS median 18.8 / 19.2 vs
+20.0 / 19.0 (noise; the GS is the other cap at ~19-20 FPS). Hit rate: 591 of 1,383 blocks (5,692 of 10,759 pairs) have a static prefix; at run time
+60% of block entries take it (233,741 static vs 158,037 fallback in the replay), the rest fail the entry check (XGKICK active, a queue due, a
+live-in still pending) or are ineligible. Replay of 3,000 recorded executions (8.3 M VU cycles) is bit-identical with static on and off. **The
+expected 1.4-1.5x did NOT materialize (about 1.08x):** the scoreboard reads were already mostly pruned by the earlier "impossible waits"
+analysis and the compiler folds the constant `m_vfReady` stores, so what is left is the FMAC lane math and exact-flag logic (~40%) plus flag
+queue pushes, which static timing does not touch. Not done (budget): dead-flag elimination across the whole block (MAC/status/clip not read before
+the block ends and overwritten), VF kept in locals/SIMD registers across pairs, taking the static path while XGKICK is active.
