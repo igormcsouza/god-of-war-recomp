@@ -7020,3 +7020,31 @@ sound-stream reads vs the ring at `[0x30DE10+0x14]`), looking for a write outsid
 of clean and strip frames (`PS2X_GS_DIAG`, CPU backend); (3) check the recompiled `mult $zero,rs,rt`.
 Verified: all patches apply in order on a fresh pinned clone and the result equals the working tree. `ps2x_tests` were
 not rerun (diagnostic-only change; the runner builds). Game processes were killed after the runs.
+
+## Intro movie garbage: PATH1 flood located, cause still open (2026-10-15, Linux, NVIDIA RTX 5050)
+
+Added `GOW_GIF_TRACE=1|2` (`patches/ps2recomp-gif-trace-diag.patch`, registered last in `compilar.ps1`): from the first
+decoded picture served, `[gow-gif]` prints one summary per served picture (packets/quadwords per GIF path, masked
+packets, packets whose tag walk does not end at the packet size). `=2` also prints every packet (path, source address,
+size, first tag), limited by `GOW_GIF_TRACE_MAX` (default 300000) and `GOW_GIF_TRACE_SERVED=<n>`.
+Run: script `5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, Vulkan backend, 45-55 s. Screens: clean Kratos frame at 30 s, flat
+salmon/purple polygons with image strips at 40 s.
+
+Findings:
+- Interval of picture 1 (first clean frame): 2646 PATH1 packets / 248k qw, 186 PATH2, 0 PATH3 (normal engine frame).
+- Interval of picture 2: **296,200 PATH1 packets (26.9M qw)**, 11k PATH2, 3 PATH3 (one tag-walk mismatch = a split
+  IMAGE chunk, expected). So the EE (or a VU1 program loop) kicks about 110 frames of geometry while the game is
+  between GetPicture 1 and 2; afterwards GetPicture advances (served 3..60) with almost no GIF traffic.
+  The flood is made of ordinary-looking mesh batches (`0x302e4003...`, `0x402e4004...`) plus 114k empty 1-qw EOP kicks;
+  it is NOT PATH3: masked PATH3 count is 0 throughout and no PATH3 packet is seen during the flood.
+- Eliminated: PATH3 mask/EOP/IMT/DIRECTHL handling (no masked or interleaved PATH3 traffic at all in the failing
+  interval), data past EOP (no PATH1/2 packet mismatches), and the decoded picture buffer as source (earlier finding).
+- Likely: the game's render loop runs without waiting (vsync/stream/IPU sync returns immediately or a poll never
+  progresses), replaying the same display lists with stale or overwritten VU1 data, so the failure is in EE-side
+  scheduling/waits around `sceMpegGetPicture` (the stub continues after `waitExternal`/`waitVSync` instead of
+  returning, then is re-entered by the resume callback and pops a second frame), not in GIF arbitration.
+
+Next steps (not done, budget): (1) log VSync/`sceMpegGetPicture` entries and EE PC per tick during interval 2 to see
+which loop spins (the 87% EE CPU poll `sub_00188B80`); (2) make `sceMpegGetPicture` return right after the wait is
+registered and test; (3) log VIF1 DMA chain tag addresses for the flood to see whether the lists are stale.
+No behaviour change shipped; `ps2x_tests` and a fresh-clone patch application were NOT rerun this session.

@@ -1,0 +1,107 @@
+diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -7,6 +7,8 @@
+ #include <deque>
+ #include <thread>
+ #include <cstdio>
++#include <mutex>
++#include <cstdlib>
+ #include <cstring>
+ #include <limits>
+ #include <stdexcept>
+@@ -2450,11 +2452,73 @@
+         m_gifArbiter->drain();
+ }
+ 
++extern std::atomic<uint32_t> g_gowMpegServed;
++
++// GOW-Port: GOW_GIF_TRACE=1 registra los paquetes GIF ([gow-gif]) desde la primera imagen MPEG servida:
++// path, origen (direccion EE/SPR/cadena), tamano y recorrido de tags (si no cuadra, el paquete esta partido
++// o tiene datos que no son un tag). GOW_GIF_TRACE_MAX acota las lineas (por defecto 300000).
++static void gowGifTrace(const uint8_t *rdram, const uint8_t *spr, GifPathId pathId,
++                        const uint8_t *data, uint32_t sizeBytes, bool masked)
++{
++    static const bool on = []() { const char *e = std::getenv("GOW_GIF_TRACE"); return e && *e && *e != '0'; }();
++    if (!on || g_gowMpegServed.load(std::memory_order_relaxed) == 0u)
++        return;
++    // GOW_GIF_TRACE=1: un resumen por imagen MPEG servida; GOW_GIF_TRACE=2: ademas cada paquete (acotado por
++    // GOW_GIF_TRACE_MAX, por defecto 300000) y siempre los que no cuadran con su recorrido de tags.
++    static const bool full = []() { const char *e = std::getenv("GOW_GIF_TRACE"); return e && *e == '2'; }();
++    static const uint32_t cap = []() { const char *e = std::getenv("GOW_GIF_TRACE_MAX"); return e ? static_cast<uint32_t>(std::strtoul(e, nullptr, 0)) : 300000u; }();
++    static const uint32_t onlyServed = []() { const char *e = std::getenv("GOW_GIF_TRACE_SERVED"); return e ? static_cast<uint32_t>(std::strtoul(e, nullptr, 0)) : 0u; }();
++    static std::atomic<uint32_t> n{0u};
++    static std::mutex mtx;
++    static uint32_t curServed = 0u, pk[4] = {0, 0, 0, 0}, qw[4] = {0, 0, 0, 0}, bad = 0u, maskedPk = 0u;
++    const uint32_t served = g_gowMpegServed.load(std::memory_order_relaxed);
++    char src[32];
++    if (data >= rdram && data < rdram + PS2_RAM_SIZE)
++        std::snprintf(src, sizeof(src), "ee:%07X", static_cast<unsigned>(data - rdram));
++    else if (data >= spr && data < spr + PS2_SCRATCHPAD_SIZE)
++        std::snprintf(src, sizeof(src), "spr:%05X", static_cast<unsigned>(data - spr));
++    else
++        std::snprintf(src, sizeof(src), "buf");
++    uint64_t lo = 0u;
++    uint32_t off = 0u, tags = 0u;
++    while (off + 16u <= sizeBytes && tags < 4096u)
++    {
++        std::memcpy(&lo, data + off, 8);
++        const uint32_t loops = static_cast<uint32_t>(lo & 0x7FFFu);
++        const uint32_t fmt = static_cast<uint32_t>((lo >> 58u) & 3u);
++        uint32_t nreg = static_cast<uint32_t>((lo >> 60u) & 15u);
++        if (!nreg) nreg = 16u;
++        ++tags;
++        const uint32_t payload = fmt == 0u ? loops * nreg * 16u : fmt == 1u ? ((loops * nreg + 1u) / 2u) * 16u : loops * 16u;
++        off += 16u + payload;
++    }
++    const bool mismatch = off != sizeBytes;
++    std::memcpy(&lo, data, 8);
++    std::lock_guard<std::mutex> lock(mtx);
++    if (served != curServed)
++    {
++        std::fprintf(stderr, "[gow-gif] served=%u p1=%u/%uqw p2=%u/%uqw p3=%u/%uqw mismatch=%u masked=%u\n", curServed, pk[1], qw[1], pk[2], qw[2], pk[3], qw[3], bad, maskedPk);
++        curServed = served;
++        pk[1] = pk[2] = pk[3] = qw[1] = qw[2] = qw[3] = bad = maskedPk = 0u;
++    }
++    const uint32_t pi = static_cast<uint32_t>(pathId) & 3u;
++    ++pk[pi];
++    qw[pi] += sizeBytes / 16u;
++    bad += mismatch ? 1u : 0u;
++    maskedPk += masked ? 1u : 0u;
++    const uint32_t id = n.fetch_add(1u, std::memory_order_relaxed);
++    if ((full || (mismatch && id < cap)) && id < cap && (onlyServed == 0u || onlyServed == served))
++        std::fprintf(stderr, "[gow-gif] #%u p%d %s n=%u tags=%u %s%sfirst=%016llx served=%u\n", id,
++                     static_cast<int>(pathId), src, sizeBytes / 16u, tags, mismatch ? "MISMATCH " : "", masked ? "masked " : "",
++                     static_cast<unsigned long long>(lo), served);
++}
++
+ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool drainImmediately, bool path2DirectHl)
+ {
+     if (!data || sizeBytes < 16)
+         return;
+     syncVu1Worker(); // GOW-Port: desde el EE, después de lo que tenga pendiente el hilo de VU1
++    gowGifTrace(m_rdram, m_scratchpad, pathId, data, sizeBytes, m_path3Masked && pathId == GifPathId::Path3);
+ 
+     if (pathId == GifPathId::Path3)
+     {
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -21,6 +21,9 @@
+ 
+ #include "Syscalls/Helpers/State.h"
+ 
++// GOW-Port: contador de imagenes servidas, lo lee el trazador de paquetes GIF (GOW_GIF_TRACE).
++std::atomic<uint32_t> g_gowMpegServed{0u};
++
+ namespace ps2_stubs
+ {
+     namespace
+@@ -2546,6 +2549,7 @@
+         if (haveFrame)
+         {
+             writeDecodedFrameToGuest(rdram, imageAddr, frame);
++            g_gowMpegServed.store(frameCount + 1u, std::memory_order_relaxed);
+         }
+         else if (frameCount == 0u)
+         {
