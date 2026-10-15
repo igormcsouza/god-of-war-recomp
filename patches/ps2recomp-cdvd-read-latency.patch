@@ -1,0 +1,130 @@
+diff --git a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
+index f114770..b5cf63b 100644
+--- a/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
++++ b/ps2xIOP/src/emulator/imports/iop_cdvd.cpp
+@@ -238,6 +238,7 @@ namespace ps2x::iop::detail
+                             callback.address,
+                             callback.gp,
+                             kCdvdCallbackRead,
++                            readCycles(a1),
+                         };
+                     }
+                     cpu.gpr[2] = 1u;
+@@ -391,6 +392,21 @@ namespace ps2x::iop::detail
+             return interruptEventFlagId;
+         }
+ 
++        // GOW-Port: sceCdRead completaba al instante y smpd (hilo unico de lectura) adelantaba el streaming de la
++        // musica de 989snd a la velocidad de la RAM: un fichero de 1,9 MB vaciaba el hilo durante ~1 s de audio y la
++        // musica se quedaba sin datos y reiniciaba su primer fragmento. Un DVD da ~8 MB/s (GOW_CD_MBPS; 0 = instantaneo).
++        static uint64_t readCycles(uint32_t sectors) noexcept
++        {
++            static const double mbps = []
++            {
++                const char *value = std::getenv("GOW_CD_MBPS");
++                return value != nullptr ? std::atof(value) : 8.0;
++            }();
++            if (mbps <= 0.0)
++                return 0u;
++            return static_cast<uint64_t>(static_cast<double>(sectors) * kSectorSize * 36864000.0 / (mbps * 1.0e6));
++        }
++
+         void signalCommandComplete()
+         {
+             if (interruptEventFlagId != 0)
+diff --git a/ps2xIOP/src/emulator/imports/iop_cdvd.h b/ps2xIOP/src/emulator/imports/iop_cdvd.h
+index 2ca6048..69c8ac2 100644
+--- a/ps2xIOP/src/emulator/imports/iop_cdvd.h
++++ b/ps2xIOP/src/emulator/imports/iop_cdvd.h
+@@ -23,6 +23,7 @@ namespace ps2x::iop::detail
+             uint32_t address = 0u;
+             uint32_t gp = 0u;
+             uint32_t reason = 0u;
++            uint64_t delayCycles = 0u; // GOW-Port: tiempo de transferencia del DVD (ciclos del IOP)
+         };
+ 
+         IopCdvd(IopHost &host, IopMemory &memory, IopKernel &kernel);
+diff --git a/ps2xIOP/src/emulator/iop_emulator.cpp b/ps2xIOP/src/emulator/iop_emulator.cpp
+index 3911d71..5df69dd 100644
+--- a/ps2xIOP/src/emulator/iop_emulator.cpp
++++ b/ps2xIOP/src/emulator/iop_emulator.cpp
+@@ -306,8 +306,12 @@ namespace ps2x::iop::detail
+             {
+                 if (const auto callback = cdvd.takeCompletionCallback())
+                 {
++                    // GOW-Port: sceCdRead tarda lo que tarda el DVD (IopCdvd::CompletionCallback::delayCycles):
++                    // el hilo que lee se duerme hasta entonces y el callback llega con la lectura ya hecha.
++                    if (callback->delayCycles != 0u)
++                        kernel.delayCurrentUntil(totalCycles + callback->delayCycles, cpu);
+                     pendingGuestCallbacks.emplace(
+-                        totalCycles + kCdvdCompletionCycles,
++                        totalCycles + kCdvdCompletionCycles + callback->delayCycles,
+                         ScheduledGuestCallback{
+                             callback->address,
+                             callback->gp,
+diff --git a/ps2xIOP/tests/iop_compat_test_support.h b/ps2xIOP/tests/iop_compat_test_support.h
+index 21831fe..d42d8d7 100644
+--- a/ps2xIOP/tests/iop_compat_test_support.h
++++ b/ps2xIOP/tests/iop_compat_test_support.h
+@@ -62,7 +62,7 @@ namespace iop_test
+         uint32_t allocateGuest(uint32_t, uint32_t) override { return 0u; }
+         void freeGuest(uint32_t) override {}
+         void audioCommand(uint32_t, uint32_t, GuestBuffer, GuestBuffer) override { ++audioCalls; }
+-        std::string hostPath(HostPathKind) const override { return {}; }
++        std::string hostPath(HostPathKind kind) const override { return kind == HostPathKind::CdImage ? cdImage : std::string(); } // GOW-Port: cdImage
+         std::string translateGuestPath(std::string_view path) const override { return std::string(path); }
+         uint64_t openHostFile(std::string_view) override { return file.empty() ? 0u : 1u; }
+         bool hostFileSize(uint64_t handle, uint64_t &size) const override
+@@ -107,6 +107,7 @@ namespace iop_test
+         }
+ 
+         std::vector<uint8_t> guest;
++        std::string cdImage; // GOW-Port: ruta del CdImage (vacia = sin imagen); los datos salen de `file`
+         std::vector<uint8_t> file;
+         std::vector<std::string> logs;
+         std::vector<MemoryCardRequest> cardCalls;
+diff --git a/ps2xTest/src/ps2_iop_tests.cpp b/ps2xTest/src/ps2_iop_tests.cpp
+index 4be26c5..fff7296 100644
+--- a/ps2xTest/src/ps2_iop_tests.cpp
++++ b/ps2xTest/src/ps2_iop_tests.cpp
+@@ -269,6 +269,40 @@ void register_ps2_iop_tests()
+             t.IsTrue(value(6) >= 1u && value(6) <= 12u, "month should be valid");
+         });
+ 
++        // GOW-Port: sceCdRead debe tardar lo que tarda el DVD. Si completa al instante, el hilo lector de smpd
++        // adelanta el streaming de la musica de 989snd (un fichero de 1,9 MB deja sin datos al stream).
++        tc.Run("IOP sceCdRead completion is delayed by the DVD transfer time", [](TestCase &t)
++        {
++            using namespace ps2x::iop::detail;
++            iop_test::Host host;
++            host.cdImage = "image.iso";
++            host.file.assign(64u * 2048u, 0u);
++            IopMemory memory;
++            const uint32_t buffer = memory.allocate(16u * 2048u);
++            IopKernel kernel(memory);
++            kernel.reset();
++            IopCdvd cdvd(host, memory, kernel);
++            cdvd.reset();
++            IopCpuState cpu{};
++            cpu.gpr[4] = 0x4000u; // callback
++            t.IsTrue(cdvd.dispatchImport(37u, cpu), "sceCdCallback should be handled");
++            const auto readSectors = [&](uint32_t sectors)
++            {
++                cpu.gpr[4] = 0u;
++                cpu.gpr[5] = sectors;
++                cpu.gpr[6] = buffer;
++                t.IsTrue(cdvd.dispatchImport(6u, cpu), "sceCdRead should be handled");
++                t.Equals(cpu.gpr[2], 1u, "sceCdRead should succeed");
++                const auto completion = cdvd.takeCompletionCallback();
++                t.IsTrue(completion.has_value(), "sceCdRead should queue its completion callback");
++                return completion ? completion->delayCycles : 0u;
++            };
++            const uint64_t one = readSectors(1u);
++            const uint64_t sixteen = readSectors(16u);
++            t.IsTrue(one > 1000u, "one sector should take longer than an instant completion (8 MB/s = ~9400 cycles)");
++            t.IsTrue(sixteen + 16u >= one * 16u && sixteen <= one * 16u + 16u, "the transfer time should scale with the sector count");
++        });
++
+         tc.Run("unknown SID remains unhandled without a loaded IRX", [](TestCase &t)
+         {
+             iop_test::Host host;
