@@ -52,6 +52,7 @@ The header check reads only the ISO sectors that describe the root directory and
 | Debug UI | `GOW_DEBUG_UI=1`. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
 | Skip movies (FMV, workaround) | `GOW_SKIP_FMV=1`: skips the pre-rendered movies. Use it while movie audio and the screen after a cutscene are still being fixed. |
+| Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See `docs/CONTROLES.md`. |
 | GPU | `gpu` setting, `Auto` by default (discrete GPU first, then integrated). Any other value is a device index or a name substring and sets `PS2X_VK_DEVICE`. The list comes from `vulkaninfo --summary` (empty if it is not installed; you can still type a value). |
 
 `--mute` forces audio off for a single run, with or without the window (and works with `--iso`
