@@ -115,6 +115,11 @@ Remove-Item Env:GOW_SKIP_FMV
 del `GODOFWAR.TOC` (nombre sin extensión: `A01MP05`, `MA360`, `D01MP02`...; la intro pide `Semo01`) para probar cada FMV sin
 jugar hasta ella; la última de la lista se repite. `GOW_MOVIE_DIAG=1` registra cada petición (`[gow-fmv] request`) y el estado del
 reproductor cada 5 s (`[gow-movie]`).
+`GOW_PLAY_FMV_CHAIN=<nombre>[@banderas_hex][,...]` (diagnóstico, desactivado por defecto) encadena películas en una sola sesión: cuando
+una película ha sonado y el estado `[0x29C838]` vuelve a 0, se espera ~1,5 s y se pide la siguiente con la función del juego (`0x188CA0`)
+y se arranca con `0x188F00(0)` + `0x188E80(0)` como hace `0x1B2958`; usa los argumentos de la primera petición salvo las banderas `a2`
+(`A01MP05@6ef7`; el juego usa `0x7eff` para `Semo01`/`a01MP02` y `0x6ef7` para `a01mp05`). Con `GOW_MOVIE_DIAG=1` registra cada cambio de estado,
+cada parada (`[gow-fmv] stop`) y `request #N name=<pedida> -> <sustituta>`. Ejemplo: `GOW_PLAY_FMV=A01MP05 GOW_PLAY_FMV_CHAIN=A01MP05@6ef7,A01MP02@7eff`.
 
 `GOW_FAST_BOOT=1` permite repetir diagnósticos sin esperar la animación de entrada: solo su consulta
 de finalización (`ra=0x0021E714`) devuelve la duración total cuando el nivel ya está cargado.

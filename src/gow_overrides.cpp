@@ -98,8 +98,82 @@ namespace
         padReturn(ctx, 4u);
     }
 
+    // GOW_PLAY_FMV_CHAIN=<nombre>[@banderas_hex][,...] (diagnóstico, desactivado por defecto): encadena películas en una
+    // sola sesión sin jugar hasta ellas, para buscar estado que una película deja a la siguiente. Se sondea desde la
+    // lectura del mando (una vez por fotograma, en el hilo principal del EE). Cuando una película ha sonado (estado
+    // [0x29C838] >= 10) y el estado vuelve a 0, se espera ~1,5 s (el juego limpia la película al terminar) y se pide la
+    // siguiente con la misma función que usa el juego (0x188CA0) y los argumentos de su primera petición; las banderas
+    // (a2) pueden darse por película (el juego usa 0x7eff para Semo01 y a01MP02 y 0x6ef7 para a01mp05).
+    uint32_t gChainArgs[3] = {0, 0, 0};
+    void gowChainMoviePoll(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime, bool &yielded)
+    {
+        yielded = false;
+        static std::vector<std::string> names = [] {
+            std::vector<std::string> v;
+            if (const char *list = std::getenv("GOW_PLAY_FMV_CHAIN"))
+                for (const char *p = list; *p;)
+                {
+                    const char *end = std::strchr(p, ',');
+                    if (!end) end = p + std::strlen(p);
+                    if (end > p) v.emplace_back(p, end);
+                    p = *end ? end + 1 : end;
+                }
+            return v;
+        }();
+        static size_t next = 0;
+        static bool played = false;
+        static int wait = 0;
+        static bool startPending = false;
+        const uint32_t state = readGuest32(rdram, 0x29C838u);
+        if (startPending && state == 10u)
+        {
+            // Película lista (estado 10): el juego (0x1B2AF0) llama a 0x188F00(0) y 0x188E80(0) para arrancarla.
+            startPending = false;
+            const uint32_t ra = GPR_U32(ctx, 31), saved[4] = {GPR_U32(ctx, 4), GPR_U32(ctx, 5), GPR_U32(ctx, 6), GPR_U32(ctx, 7)};
+            std::fprintf(stderr, "[gow-fmv] chain start\n");
+            SET_GPR_U32(ctx, 4, 0u);
+            sub_00188F00_0x188f00(rdram, ctx, runtime);
+            ctx->pc = ra; SET_GPR_U32(ctx, 31, ra);
+            SET_GPR_U32(ctx, 4, 0u);
+            sub_00188E80_0x188e80(rdram, ctx, runtime);
+            if (ctx->pc != ra) { yielded = true; return; }
+            for (int i = 0; i < 4; ++i) SET_GPR_U32(ctx, 4 + i, saved[i]);
+            return;
+        }
+        if (next >= names.size()) return;
+        if (state >= 10u) { played = true; wait = 90; }
+        if (!(state == 0u && played && gChainArgs[0] && --wait <= 0)) return;
+        played = false;
+        std::string name = names[next++];
+        uint32_t flags = gChainArgs[1];
+        if (const size_t at = name.find('@'); at != std::string::npos)
+        {
+            flags = static_cast<uint32_t>(std::strtoul(name.c_str() + at + 1, nullptr, 16));
+            name.resize(at);
+        }
+        auto *scratch = padBuffer(rdram, 0x9F000u, 32);
+        if (!scratch || name.size() >= 32) return;
+        std::memcpy(scratch, name.c_str(), name.size() + 1);
+        const uint32_t ra = GPR_U32(ctx, 31), saved[4] = {GPR_U32(ctx, 4), GPR_U32(ctx, 5), GPR_U32(ctx, 6), GPR_U32(ctx, 7)};
+        std::fprintf(stderr, "[gow-fmv] chain request %zu name=%s flags=%x\n", next, name.c_str(), flags);
+        SET_GPR_U32(ctx, 4, 0x9F000u);
+        SET_GPR_U32(ctx, 5, gChainArgs[0]);
+        SET_GPR_U32(ctx, 6, flags);
+        SET_GPR_U32(ctx, 7, gChainArgs[2]);
+        sub_00188CA0_0x188ca0(rdram, ctx, runtime);
+        startPending = true;
+        if (ctx->pc != ra) { yielded = true; return; } // la petición cedió: seguirá desde su punto y volverá al llamador
+        for (int i = 0; i < 4; ++i) SET_GPR_U32(ctx, 4 + i, saved[i]);
+    }
+
     void gowPad2Read(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        if (static const bool chain = std::getenv("GOW_PLAY_FMV_CHAIN") != nullptr; chain)
+        {
+            bool yielded = false;
+            gowChainMoviePoll(rdram, ctx, runtime, yielded);
+            if (yielded) return;
+        }
         auto *buffer = padBuffer(rdram, GPR_U32(ctx, 5), 18);
         const auto *socket = padSocket(ctx);
         uint8_t state[32]{};
@@ -142,6 +216,16 @@ namespace
             // GOW_MOVIE_DIAG=1: estado del reproductor de FMV (contexto 0x304F20 y anillo de audio hacia el IOP) cada 5 s.
             static const bool movieDiag = [] { const char *d = std::getenv("GOW_MOVIE_DIAG"); return d && d[0] == '1'; }();
             static double nextMovieDiag = 0;
+            if (movieDiag)
+            {
+                static uint32_t prevState = 0;
+                const uint32_t cur = readGuest32(rdram, 0x29C838u);
+                if (cur != prevState)
+                {
+                    std::fprintf(stderr, "[gow-fmv] state %u -> %u t=%.2f\n", prevState, cur, seconds);
+                    prevState = cur;
+                }
+            }
             if (movieDiag && seconds >= nextMovieDiag)
             {
                 nextMovieDiag = seconds + 5;
@@ -425,11 +509,29 @@ namespace
             {
                 std::memcpy(scratch, name.c_str(), name.size() + 1);
                 SET_GPR_U32(ctx, 4, 0x9F000u);
-                std::fprintf(stderr, "[gow-fmv] playing %s instead\n", name.c_str());
+                std::fprintf(stderr, "[gow-fmv] request #%u name=%.31s -> %s\n", calls,
+                             asked ? reinterpret_cast<const char *>(asked) : "<invalid>", name.c_str());
             }
         }
+        if (calls == 0) { gChainArgs[0] = GPR_U32(ctx, 5); gChainArgs[1] = GPR_U32(ctx, 6); gChainArgs[2] = GPR_U32(ctx, 7); }
         ++calls;
         sub_00188CA0_0x188ca0(rdram, ctx, runtime);
+    }
+
+    // GOW_MOVIE_DIAG=1: registra cada parada del reproductor de peliculas (0x188F20) con su estado y quien la pide.
+    void gowDiagMovieStop(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
+    {
+        if (ctx->pc == 0x00188F20u)
+        {
+            const uint32_t mc = readGuest32(rdram, 0x304F20u), inner = readGuest32(rdram, 0x304DC8u + 0x40u);
+            std::fprintf(stderr,
+                         "[gow-fmv] stop state=%u ra=%x ctx[140]=%d [144]=%u [154]=%u [50]=%u [54]=%u isEndWord=%u 29c870=%x 304db0=%x 331078=%x\n",
+                         readGuest32(rdram, 0x29C838u), GPR_U32(ctx, 31), static_cast<int32_t>(readGuest32(rdram, mc + 0x140u)),
+                         readGuest32(rdram, mc + 0x144u), readGuest32(rdram, mc + 0x154u), readGuest32(rdram, mc + 0x50u),
+                         readGuest32(rdram, mc + 0x54u), readGuest32(rdram, inner), readGuest32(rdram, 0x29C870u),
+                         readGuest32(rdram, 0x304DB0u), readGuest32(rdram, 0x331078u));
+        }
+        sub_00188F20_0x188f20(rdram, ctx, runtime);
     }
 
     void gowSkipMovieReady(uint8_t *, R5900Context *ctx, PS2Runtime *) { padReturn(ctx, 1u); }
@@ -1176,8 +1278,10 @@ namespace
             runtime.replaceFunction(0x00100C50u, gowDiagAnimationTime);
             runtime.replaceFunction(0x00100BF0u, gowDiagAnimationDuration);
         }
-        if (std::getenv("GOW_PLAY_FMV") || std::getenv("GOW_MOVIE_DIAG"))
+        if (std::getenv("GOW_PLAY_FMV") || std::getenv("GOW_MOVIE_DIAG") || std::getenv("GOW_PLAY_FMV_CHAIN"))
             runtime.replaceFunction(0x00188CA0u, gowPlayMovieLoad);
+        if (std::getenv("GOW_MOVIE_DIAG"))
+            runtime.replaceFunction(0x00188F20u, gowDiagMovieStop);
         if (const char *skip = std::getenv("GOW_SKIP_FMV"); skip && std::strcmp(skip, "1") == 0)
         {
             runtime.replaceFunction(0x00188CA0u, gowSkipMovieLoad);

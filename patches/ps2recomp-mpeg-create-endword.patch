@@ -1,0 +1,61 @@
+diff --git a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+index 6c8da00..9ad9c0d 100644
+--- a/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
++++ b/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp
+@@ -2097,6 +2097,13 @@ namespace ps2_stubs
+         const uint32_t innerSize = static_cast<uint32_t>(iVar2_signed) - 0x118u;
+ 
+         mpegGuestWrite32(rdram, param_1 + 0x40, uVar3);
++        // GOW-Port: sceMpegIsEnd (codigo del juego) lee *(*(mpeg+0x40)) y sceMpegGetPicture lo pone a 1 al terminar el flujo.
++        // God of War reutiliza el mismo bloque para cada pelicula y no siempre llama a sceMpegReset entre una y otra: la
++        // libmpeg real inicializa aqui el estado del flujo (como sceMpegReset), asi que la pelicula siguiente empezaba
++        // "terminada" y el juego la abortaba en su estado 6 ("unexpected MPEG error???").
++        mpegGuestWrite32(rdram, uVar3 + 0x00u, 0u);
++        mpegGuestWrite32(rdram, uVar3 + 0x04u, 0u);
++        mpegGuestWrite32(rdram, uVar3 + 0x08u, 0u);
+ 
+         const uint32_t a1_init = uVar3 + 0x118u;
+         mpegGuestWrite32(rdram, puVar4 + 0x0, a1_init);
+diff --git a/ps2xTest/src/ps2_runtime_expansion_tests.cpp b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+index 179d208..ac97c72 100644
+--- a/ps2xTest/src/ps2_runtime_expansion_tests.cpp
++++ b/ps2xTest/src/ps2_runtime_expansion_tests.cpp
+@@ -965,6 +965,38 @@ void register_ps2_runtime_expansion_tests()
+             runtime.requestStop();
+         });
+ 
++        // GOW-Port: God of War reutiliza el mismo bloque libmpeg para cada pelicula y sceMpegGetPicture pone a 1 la palabra
++        // que lee su sceMpegIsEnd al terminar el flujo. Sin sceMpegReset entre peliculas, la tercera empezaba "terminada" y
++        // el juego la abortaba en su estado 6 ("unexpected MPEG error???"): sceMpegCreate debe dejarla a 0.
++        tc.Run("sceMpegCreate clears the end-of-stream word left by the previous movie", [](TestCase &t)
++        {
++            PS2Runtime runtime;
++            std::vector<uint8_t> rdram(PS2_RAM_SIZE, 0u);
++            ps2_stubs::resetMpegStubState();
++            constexpr uint32_t kMpegAddr = 0x00123000u;
++            constexpr uint32_t kBuffer = 0x00130000u;
++            R5900Context createCtx{};
++            setRegU32(createCtx, 4, kMpegAddr);
++            setRegU32(createCtx, 5, kBuffer);
++            setRegU32(createCtx, 6, 0x2000u);
++            ps2_stubs::sceMpegCreate(rdram.data(), &createCtx, &runtime);
++            // Fin del primer flujo: sceMpegGetPicture marca el fin en *(*(mpeg + 0x40)).
++            ps2_stubs::notifyMpegCdStreamStart();
++            ps2_stubs::notifyMpegCdStreamEof();
++            R5900Context pictureCtx{};
++            setRegU32(pictureCtx, 4, kMpegAddr);
++            setRegU32(pictureCtx, 5, 0x00140000u);
++            ps2_stubs::sceMpegGetPicture(rdram.data(), &pictureCtx, &runtime);
++            const uint32_t inner = Ps2FastRead32(rdram.data(), kMpegAddr + 0x40u);
++            t.Equals(Ps2FastRead32(rdram.data(), inner), 1u, "the first movie ends with the end word set");
++
++            ps2_stubs::resetMpegStubState();
++            ps2_stubs::sceMpegCreate(rdram.data(), &createCtx, &runtime);
++            t.Equals(Ps2FastRead32(rdram.data(), Ps2FastRead32(rdram.data(), kMpegAddr + 0x40u)), 0u,
++                     "a new sceMpegCreate must not inherit the end word of the previous movie");
++            runtime.requestStop();
++        });
++
+         tc.Run("sceMpegDemuxPssRing runs stream callbacks before its guest caller continues", [](TestCase &t)
+         {
+             PS2Runtime runtime;
