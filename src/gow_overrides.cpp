@@ -9,6 +9,7 @@
 #include "gow_pad2_packet.h"
 #include "gow_gs_replay.h" // GOW-Port: captura opcional y acotada para comparar backends.
 #include "runtime/gs/gs_display.h" // GOW-Port: native display state + GS FINISH handshake (step 5).
+#include "gow_cheat.h" // GOW-Port: GOW_CHEAT debug mod (god / noenemies).
 #include <ps2_recompiled_functions.h>
 void sub_00110E40_0x110e40(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime); // GOW-Port: pose blend entry, for GOW_BLEND_DIAG
 void sub_0017D778_0x17d778(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime); // GOW-Port: frame time step, for GOW_HZ=120
@@ -280,6 +281,7 @@ namespace
 
     void gowPad2Read(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        gow_cheat::poll(rdram); // GOW-Port: GOW_CHEAT (debug)
         gowPad2ReadState(rdram, ctx, runtime);
         gowWarpPoll(rdram, ctx, runtime);
     }
@@ -2190,6 +2192,8 @@ namespace
             runtime.replaceFunction(0x00157A60u, gowDiagProcessModel);
             runtime.replaceFunction(0x00169120u, gowDiagModelClip);
         }
+        if (gow_cheat::god() || gow_cheat::noEnemies() || gow_cheat::diag())
+            runtime.replaceFunction(0x001E0A80u, gow_cheat::setHealth); // GOW-Port: GOW_CHEAT
         runtime.replaceFunction(0x00180E50u, gowDiagPathSelect);
         runtime.replaceFunction(0x00180D08u, gowDiagAttachNode);
         runtime.replaceFunction(0x00183360u, gowDisplaySetup);
