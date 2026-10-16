@@ -154,6 +154,7 @@ $spu2LoopLatchPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-loop-latch.pat
 $spu2AdmaPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-adma.patch'
 $mpegEndAudioPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-end-audio.patch'
 $mpegPumpVsyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-pump-vsync.patch'
+$mpegCreateEndwordPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-create-endword.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -332,6 +333,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2LoopLatchPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2AdmaPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegEndAudioPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegPumpVsyncPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegCreateEndwordPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
