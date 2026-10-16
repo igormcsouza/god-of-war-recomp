@@ -8,6 +8,7 @@
 #include "gow_gs_replay.h" // GOW-Port: captura opcional y acotada para comparar backends.
 #include "gow_gs_pcsx2_client.h" // GOW-Port: espejo GIF/DX11 opcional desde arranque.
 #include "gow_camera_probe.h"
+#include "gow_cheat.h"
 #include "gow_model_probe.h"
 #include "gow_skin_probe.h"
 #include "runtime/gs/gs_host_present_diag.h" // GOW-Port: parser de tick uint64 del parche de ventana.
@@ -168,6 +169,7 @@ namespace
 
     void gowPad2Read(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)
     {
+        gow_cheat::poll(rdram); // GOW-Port: GOW_CHEAT (depuración)
         if (static const bool chain = std::getenv("GOW_PLAY_FMV_CHAIN") != nullptr; chain)
         {
             bool yielded = false;
@@ -1308,6 +1310,8 @@ namespace
             runtime.replaceFunction(0x00157A60u, gowDiagProcessModel);
             runtime.replaceFunction(0x00169120u, gowDiagModelClip);
         }
+        if (gow_cheat::god() || gow_cheat::noEnemies() || gow_cheat::diag())
+            runtime.replaceFunction(0x001E0A80u, gow_cheat::setHealth); // GOW-Port: GOW_CHEAT
         runtime.replaceFunction(0x00180E50u, gowDiagPathSelect);
         runtime.replaceFunction(0x00180D08u, gowDiagAttachNode);
         runtime.replaceFunction(0x0027B7E8u, gowPad2Init);
