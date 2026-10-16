@@ -220,6 +220,20 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, skip_movies=True)),
                          {"GOW_SKIP_FMV": "1"})
 
+    def test_cheats_env_mapping_and_compat(self) -> None:
+        d = launcher.DEFAULT_SETTINGS
+        self.assertNotIn("GOW_CHEAT", launcher.settings_to_env(d))
+        self.assertEqual(launcher.settings_to_env(dict(d, cheat_god=True))["GOW_CHEAT"], "god")
+        self.assertEqual(launcher.settings_to_env(dict(d, cheat_god=True, cheat_noenemies=True))["GOW_CHEAT"],
+                         "god,noenemies")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text('{"debug_ui": true}')  # file from before the cheats existed
+            loaded = launcher.load_settings(path)
+            self.assertFalse(loaded["cheat_god"] or loaded["cheat_noenemies"])
+            launcher.save_settings(dict(loaded, cheat_noenemies=True), path)
+            self.assertTrue(launcher.load_settings(path)["cheat_noenemies"])
+
     def test_mute_audio_roundtrip_and_old_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
