@@ -982,3 +982,34 @@ Runtime window options (`patches/ps2recomp-display-options.patch`), also set by 
 | `GOW_WINDOW_SCALE=<n>` | Initial window size multiplier over 640x448 (1..8, default 1). |
 
 The image is always letterboxed/pillarboxed to keep the aspect ratio. The window title keeps the FPS counter.
+
+## GOW_CHEAT: modo depuración para saltarse los combates (2026-10-15)
+
+Desactivado por defecto. `GOW_CHEAT` es una lista separada por comas (`god`, `noenemies`, `diag`) y sirve para llegar
+rápido a escenas posteriores sin pelear (por ejemplo, tras las películas Semo01 -> a01mp05 -> a01MP02):
+
+```sh
+GOW_CHEAT=god,noenemies ./ps2EntryRunner SCUS_973.99     # normal, con las películas
+```
+
+- `god`: Kratos no pierde vida (el valor nunca baja; la barra del HUD se queda llena).
+- `noenemies`: cada enemigo se queda con vida 0 en cuanto aparece, y la lógica de muerte del propio juego hace el resto
+  (los scripts que esperan "todos muertos" avanzan; las oleadas siguientes aparecen y mueren igual). Además cualquier daño
+  a un enemigo lo mata. No hay que atacar.
+- `diag`: registra `[gow-cheat:hp]` (cambios de vida: objeto, quien llama, antes/después; máx. 300 por tipo) y
+  `[gow-cheat] enemy spawned/kill`.
+- `GOW_CHEAT_DUMP=<s1,s2,...>` (investigación): vuelca los 32 MB de RAM del EE en `GOW_CHEAT_DUMP_DIR` (o `.`) a esos
+  segundos desde la primera lectura del mando.
+
+Estructuras halladas (ELF SCUS-97399, por diferencias de volcados de RAM y lectura del código recompilado):
+criaturas (Kratos y enemigos comparten clase, vtable en +4 = `0x2BA528`, tamaño `0x360`, Kratos en `0x795800` en el
+primer nivel); vida actual en `+0x178` (float), máxima en `+0x17C`; Kratos = `[[0x29CD58]]`. `0x1E0A80` es SetHealth
+(`a0`=this, `f12`=nuevo valor, acota a `[0, máx]`) y es la única escritura de vida: daño (`0x1E0A98`) y curación
+(`0x1E0BA0`) pasan por ella. `0x1DE718` reinicia al actor al aparecer y llama a SetHealth(máx) desde `0x1DE818`; así se
+detectan los enemigos de cualquier nivel. El mod reemplaza `0x1E0A80` y, una vez por fotograma (lectura del mando, hilo
+EE), pone a 0 la vida de los enemigos conocidos.
+
+Verificado (partida nueva con tarjeta vacía, `GOW_SKIP_FMV=1`, primera pelea en cubierta): sin mod Kratos muere hacia los
+110 s; con `god` sigue con la barra llena a los 120 s con 47 golpes recibidos; con `noenemies` los 6 enemigos de la
+oleada mueren al aparecer y las oleadas posteriores también, y el tutorial/juego continúa. No verificado: avanzar hasta la
+zona de las cajas/arqueros ni otros niveles; los enemigos que no sean de esa clase de criatura no se tocan.
