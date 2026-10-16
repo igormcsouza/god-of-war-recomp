@@ -298,10 +298,14 @@ def _choose_iso() -> Path:
 # Launcher label -> GOW_SCALE_FILTER value (Bilinear is the runtime default, so it exports nothing).
 SCALING_ENV = {"Bilinear": None, "Sharp bilinear": "sharp-bilinear", "Nearest": "nearest"}
 
+# Debug cheats (GOW_CHEAT): (key, label). Adding a cheat is one entry here; its setting is "cheat_<key>".
+CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemies (enemies die on spawn)")]
+
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
     "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "skip_movies": False, "gpu": "Auto",
     "scaling": "Bilinear",
+    **{f"cheat_{key}": False for key, _ in CHEATS},
 }
 
 
@@ -382,6 +386,9 @@ def settings_to_env(settings: dict) -> dict[str, str]:
         env["GOW_AUDIO"] = "0"
     if settings.get("skip_movies"):
         env["GOW_SKIP_FMV"] = "1"
+    cheats = [key for key, _ in CHEATS if settings.get(f"cheat_{key}")]
+    if cheats:  # overrides an exported GOW_CHEAT only when at least one box is ticked
+        env["GOW_CHEAT"] = ",".join(cheats)
     if settings.get("gpu") not in (None, "", "Auto"):
         env["PS2X_VK_DEVICE"] = settings["gpu"]
     return env
@@ -537,6 +544,7 @@ def settings_window(settings: dict) -> dict | None:
                             next((v for v in pad_values if v.startswith(f"{pad_index}:")), str(pad_index)))
     gpu = tkinter.StringVar(value=settings["gpu"])
     scaling = tkinter.StringVar(value=settings["scaling"])
+    cheat_vars = {key: tkinter.BooleanVar(value=settings[f"cheat_{key}"]) for key, _ in CHEATS}
     error = tkinter.StringVar()
     frame = ttk.Frame(root, padding=10)
     frame.grid()
@@ -560,6 +568,10 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Combobox(frame, textvariable=gpu, values=["Auto"] + detect_gpus(), width=40).grid(row=9, column=1, columnspan=2, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=scaling, values=list(SCALING_ENV), state="readonly", width=16).grid(row=10, column=1, columnspan=2, sticky="w")
+    cheat_frame = ttk.LabelFrame(frame, text="Cheats (debug)", padding=6)
+    cheat_frame.grid(row=12, column=0, columnspan=3, sticky="we", pady=4)
+    for key, label in CHEATS:
+        ttk.Checkbutton(cheat_frame, text=label, variable=cheat_vars[key]).grid(sticky="w")
 
     def play() -> None:
         nonlocal result
@@ -576,10 +588,10 @@ def settings_window(settings: dict) -> dict | None:
                   "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
                   "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
                   "mute_audio": mute.get(), "skip_movies": skip.get(), "gpu": gpu.get().strip() or "Auto",
-                  "scaling": scaling.get()}
+                  "scaling": scaling.get(), **{f"cheat_{k}": v.get() for k, v in cheat_vars.items()}}
         root.destroy()
 
-    ttk.Button(frame, text="Play", command=play).grid(row=12, column=2, sticky="e", pady=8)
+    ttk.Button(frame, text="Play", command=play).grid(row=13, column=2, sticky="e", pady=8)
     root.mainloop()
     return result
 

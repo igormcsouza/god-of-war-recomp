@@ -992,6 +992,9 @@ rápido a escenas posteriores sin pelear (por ejemplo, tras las películas Semo0
 GOW_CHEAT=god,noenemies ./ps2EntryRunner SCUS_973.99     # normal, con las películas
 ```
 
+El launcher de Linux tiene la sección "Cheats (debug)" con una casilla por cheat (`god`, `noenemies`); las marcadas se
+exportan como `GOW_CHEAT` (si hay alguna marcada, sustituye al `GOW_CHEAT` exportado a mano; `diag` solo por variable).
+
 - `god`: Kratos no pierde vida (el valor nunca baja; la barra del HUD se queda llena).
 - `noenemies`: cada enemigo se queda con vida 0 en cuanto aparece, y la lógica de muerte del propio juego hace el resto
   (los scripts que esperan "todos muertos" avanzan; las oleadas siguientes aparecen y mueren igual). Además cualquier daño
