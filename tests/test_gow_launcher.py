@@ -1,0 +1,422 @@
+"""Synthetic tests for the ISO reader and Linux launch preparation."""
+
+from __future__ import annotations
+
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import stat
+import tempfile
+import unittest
+from unittest.mock import patch
+
+
+MODULE = Path(__file__).resolve().parents[1] / "tools/linux/gow_launcher.py"
+spec = importlib.util.spec_from_file_location("gow_launcher", MODULE)
+assert spec is not None and spec.loader is not None
+import sys
+
+launcher = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = launcher
+spec.loader.exec_module(launcher)
+
+
+def both16(value: int) -> bytes:
+    return value.to_bytes(2, "little") + value.to_bytes(2, "big")
+
+
+def both32(value: int) -> bytes:
+    return value.to_bytes(4, "little") + value.to_bytes(4, "big")
+
+
+def record(name: bytes, extent: int, size: int, *, directory: bool = False) -> bytes:
+    length = 33 + len(name) + (len(name) % 2 == 0)
+    data = bytearray(length)
+    data[0] = length
+    data[2:10] = both32(extent)
+    data[10:18] = both32(size)
+    data[25] = 2 if directory else 0
+    data[28:32] = both16(1)
+    data[32] = len(name)
+    data[33:33 + len(name)] = name
+    return bytes(data)
+
+
+def make_iso(path: Path, *, boot: str = "SCUS_973.99", bad_name: bytes | None = None,
+             corrupt_extent: bool = False) -> bytes:
+    elf = b"\x7fELF" + b"recomp-fixture"
+    contents = {
+        b"SYSTEM.CNF;1": f"BOOT2 = cdrom0:\\{boot};1\r\n".encode(),
+        b"SCUS_973.99;1": elf,
+        b"SMPD_IOP.IRX;1": b"smpd",
+        b"989NOMID.IRX;1": b"989snd",
+        b"LIBSD.IRX;1": b"libsd",
+    }
+    if bad_name:
+        contents[bad_name] = b"bad"
+    sectors = 64
+    image = bytearray(sectors * launcher.SECTOR)
+    pvd = bytearray(launcher.SECTOR)
+    pvd[:7] = b"\x01CD001\x01"
+    pvd[80:88] = both32(sectors)
+    pvd[128:132] = both16(launcher.SECTOR)
+    root = bytearray(launcher.SECTOR)
+    entries = [record(b"\x00", 20, launcher.SECTOR, directory=True),
+               record(b"\x01", 20, launcher.SECTOR, directory=True)]
+    for index, (name, content) in enumerate(contents.items(), start=21):
+        extent = 80 if corrupt_extent and name.startswith(b"SCUS") else index
+        entries.append(record(name, extent, len(content)))
+        image[index * launcher.SECTOR:index * launcher.SECTOR + len(content)] = content
+    root[:sum(map(len, entries))] = b"".join(entries)
+    pvd[156:190] = record(b"\x00", 20, launcher.SECTOR, directory=True)
+    image[16 * launcher.SECTOR:17 * launcher.SECTOR] = pvd
+    image[17 * launcher.SECTOR:17 * launcher.SECTOR + 7] = b"\xffCD001\x01"
+    image[20 * launcher.SECTOR:21 * launcher.SECTOR] = root
+    path.write_bytes(image)
+    return elf
+
+
+class LauncherTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.iso = self.root / "my disc with spaces.iso"
+        self.cache = self.root / "private cache"
+
+    def test_prepare_reuses_valid_cache_and_repairs_corruption(self) -> None:
+        elf_bytes = make_iso(self.iso)
+        import hashlib
+
+        with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()):
+            elf = launcher.prepare(self.iso, self.cache)
+            self.assertEqual(elf.read_bytes(), elf_bytes)
+            self.assertEqual((elf.parent / "IOP_MOD/smpd_iop.irx").read_bytes(), b"smpd")
+            self.assertEqual(launcher.prepare(self.iso, self.cache), elf)
+            (elf.parent / "IOP_MOD/smpd_iop.irx").write_bytes(b"roto")
+            self.assertEqual(launcher.prepare(self.iso, self.cache), elf)
+            self.assertEqual((elf.parent / "IOP_MOD/smpd_iop.irx").read_bytes(), b"smpd")
+            self.assertEqual(stat.S_IMODE(self.cache.stat().st_mode), 0o700)
+            manifest = json.loads((elf.parent / "manifest.json").read_text())
+            self.assertEqual(manifest["sha256"][launcher.ELF_NAME], launcher.ELF_SHA256)
+
+    def test_changed_iso_invalidates_cache(self) -> None:
+        elf_bytes = make_iso(self.iso)
+        import hashlib
+
+        with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()):
+            first = launcher.prepare(self.iso, self.cache)
+            old = self.iso.stat()
+            os.utime(self.iso, ns=(old.st_atime_ns, old.st_mtime_ns + 1_000_000))
+            second = launcher.prepare(self.iso, self.cache)
+            self.assertNotEqual(first, second)
+
+    def test_wrong_revision_or_elf_hash(self) -> None:
+        make_iso(self.iso, boot="SLUS_000.00")
+        with self.assertRaisesRegex(launcher.IsoError, "revision"):
+            launcher.prepare(self.iso, self.cache)
+        make_iso(self.iso)
+        with self.assertRaisesRegex(launcher.IsoError, "SHA-256"):
+            launcher.prepare(self.iso, self.cache)
+
+    def test_rejects_traversal_and_corrupt_extent(self) -> None:
+        make_iso(self.iso, bad_name=b"../ESCAPE;1")
+        with self.assertRaisesRegex(launcher.IsoError, "unsafe"):
+            launcher.prepare(self.iso, self.cache)
+        make_iso(self.iso, corrupt_extent=True)
+        with self.assertRaisesRegex(launcher.IsoError, "outside ISO"):
+            launcher.prepare(self.iso, self.cache)
+        self.assertFalse((self.root / "ESCAPE").exists())
+
+    def test_launch_passes_paths_and_iso_to_runner(self) -> None:
+        elf_bytes = make_iso(self.iso)
+        import hashlib
+
+        runner = self.root / "runner con espacios" / "ps2EntryRunner"
+        runner.parent.mkdir()
+        runner.write_text("#!/bin/sh\nexit 0\n")
+        runner.chmod(0o755)
+        with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()), \
+             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache),
+                                     "XDG_CONFIG_HOME": str(self.root / "cfg")}), \
+             patch.object(launcher.subprocess, "call", return_value=7) as call:
+            self.assertEqual(launcher.main(["--iso", str(self.iso), "--runner", str(runner)]), 7)
+        args, kwargs = call.call_args
+        self.assertEqual(args[0][0], str(runner))
+        self.assertEqual(Path(args[0][1]).name, launcher.ELF_NAME)
+        self.assertEqual(kwargs["cwd"], Path(args[0][1]).parent)
+        self.assertEqual(kwargs["env"]["GOW_ISO"], str(self.iso))
+
+    def test_prepare_only_never_starts_runtime_or_compiler(self) -> None:
+        elf_bytes = make_iso(self.iso)
+        import hashlib
+
+        with patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf_bytes).hexdigest()), \
+             patch.dict(os.environ, {"XDG_CACHE_HOME": str(self.cache),
+                                     "XDG_CONFIG_HOME": str(self.root / "cfg")}), \
+             patch.object(launcher.subprocess, "call") as call, \
+             patch.object(launcher.subprocess, "run") as run, \
+             patch.object(launcher.subprocess, "Popen") as popen:
+            self.assertEqual(launcher.main(["--iso", str(self.iso), "--prepare-only"]), 0)
+            call.assert_not_called()
+            run.assert_not_called()
+            popen.assert_not_called()
+
+
+class SettingsTest(unittest.TestCase):
+    def test_roundtrip_defaults_and_bad_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sub" / "settings.json"
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+            chosen = dict(launcher.DEFAULT_SETTINGS, iso="/x.iso", pad_index=2, raster_threads=4)
+            launcher.save_settings(chosen, path)
+            self.assertEqual(launcher.load_settings(path), chosen)
+            path.write_text('{"pad_index": 9, "resolution_scale": 7, "debug_ui": "yes", "junk": 1}')
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+            path.write_text("not json")
+            self.assertEqual(launcher.load_settings(path), launcher.DEFAULT_SETTINGS)
+
+    def test_settings_path_uses_xdg(self) -> None:
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/cfg"}):
+            self.assertEqual(launcher.settings_path(), Path("/cfg/gow-one-recomp/settings.json"))
+
+    def test_env_mapping(self) -> None:
+        # The runtime starts fullscreen unless told otherwise, so the choice is always exported.
+        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS), {"GOW_PANTALLA_COMPLETA": "0"})
+        env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, fullscreen=True, debug_ui=True,
+                                            pad_index=0, raster_threads=3, resolution_scale=3, gpu="NVIDIA"))
+        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1"})  # stored-only keys export nothing
+
+    def test_scaling_env_mapping_roundtrip_and_old_files(self) -> None:
+        self.assertNotIn("GOW_SCALER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, scaling="Bilinear"))["GOW_SCALER"],
+                         "bilinear")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, scaling="Bilinear"), path)
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
+            path.write_text('{"debug_ui": true}')  # file written before the key existed
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
+            path.write_text('{"scaling": "Nearest"}')  # label from the Vulkan-era launcher
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
+
+    def test_mute_audio_env_mapping(self) -> None:
+        self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True))["GOW_AUDIO"], "0")
+
+    def test_skip_movies_env_mapping(self) -> None:
+        self.assertNotIn("GOW_SKIP_FMV", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS)))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, skip_movies=True))["GOW_SKIP_FMV"], "1")
+
+    def test_cheats_env_mapping_and_compat(self) -> None:
+        d = launcher.DEFAULT_SETTINGS
+        self.assertNotIn("GOW_CHEAT", launcher.settings_to_env(d))
+        self.assertEqual(launcher.settings_to_env(dict(d, cheat_god=True))["GOW_CHEAT"], "god")
+        self.assertEqual(launcher.settings_to_env(dict(d, cheat_god=True, cheat_noenemies=True))["GOW_CHEAT"],
+                         "god,noenemies")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text('{"debug_ui": true}')  # file from before the cheats existed
+            loaded = launcher.load_settings(path)
+            self.assertFalse(loaded["cheat_god"] or loaded["cheat_noenemies"])
+            launcher.save_settings(dict(loaded, cheat_noenemies=True), path)
+            self.assertTrue(launcher.load_settings(path)["cheat_noenemies"])
+
+    def test_mute_audio_roundtrip_and_old_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, mute_audio=True), path)
+            self.assertTrue(launcher.load_settings(path)["mute_audio"])
+            # Settings written before the key existed: default False, other keys kept.
+            path.write_text('{"debug_ui": true, "pad_index": 1}')
+            loaded = launcher.load_settings(path)
+            self.assertIs(loaded["mute_audio"], False)
+            self.assertTrue(loaded["debug_ui"])
+            path.write_text('{"mute_audio": "yes"}')
+            self.assertIs(launcher.load_settings(path)["mute_audio"], False)
+
+    def test_mute_flag_is_one_run_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp) / "d.iso"
+            elf = make_iso(iso)
+            import hashlib
+            runner = Path(tmp) / "r"
+            runner.write_text("#!/bin/sh\n")
+            runner.chmod(0o755)
+            cfg = Path(tmp) / "cfg"
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg), "XDG_CACHE_HOME": tmp + "/c"}), \
+                 patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf).hexdigest()), \
+                 patch.object(launcher.subprocess, "call", return_value=0) as call:
+                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso)))
+                self.assertEqual(launcher.main(["--last", "--mute", "--runner", str(runner)]), 0)
+                self.assertEqual(call.call_args[1]["env"]["GOW_AUDIO"], "0")
+                self.assertFalse(launcher.load_settings()["mute_audio"])
+
+    def test_last_uses_saved_settings_without_gui(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = Path(tmp) / "d.iso"
+            elf = make_iso(iso)
+            import hashlib
+            runner = Path(tmp) / "r"
+            runner.write_text("#!/bin/sh\n")
+            runner.chmod(0o755)
+            cfg = Path(tmp) / "cfg"
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(cfg), "XDG_CACHE_HOME": tmp + "/c"}), \
+                 patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf).hexdigest()), \
+                 patch.object(launcher, "settings_window") as win, \
+                 patch.object(launcher.subprocess, "call", return_value=0) as call:
+                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso), fullscreen=True))
+                self.assertEqual(launcher.main(["--last", "--runner", str(runner)]), 0)
+                win.assert_not_called()
+            self.assertEqual(call.call_args[1]["env"]["GOW_PANTALLA_COMPLETA"], "1")
+
+
+class FakeTTY:
+    def isatty(self) -> bool:
+        return True
+
+
+class IsoResolutionTest(unittest.TestCase):
+    """ISO resolution and remembering. HOME is a temp dir, so the default scan dirs are inside it,
+    and the environment is cleared (no DISPLAY): nothing here needs a display or the real home."""
+
+    def setUp(self) -> None:
+        import hashlib
+
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.cfg = self.root / "cfg"
+        self.settings = self.cfg / "gow-one-recomp" / "settings.json"
+        self.runner = self.root / "runner"
+        self.runner.write_text("#!/bin/sh\n")
+        self.runner.chmod(0o755)
+        sha = hashlib.sha256(b"\x7fELF" + b"recomp-fixture").hexdigest()
+        patcher = patch.object(launcher, "ELF_SHA256", sha)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def env(self, **extra: str):
+        base = {"HOME": str(self.home), "XDG_CONFIG_HOME": str(self.cfg),
+                "XDG_CACHE_HOME": str(self.root / "cache")}
+        return patch.dict(os.environ, dict(base, **extra), clear=True)
+
+    def valid(self, relative: str) -> Path:
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        make_iso(path)
+        return path
+
+    def run_main(self, *args: str) -> tuple[int, object]:
+        with self.env(), patch.object(launcher.subprocess, "call", return_value=0) as call:
+            code = launcher.main([*args, "--runner", str(self.runner)])
+        return code, call
+
+    def saved_iso(self) -> object:
+        return json.loads(self.settings.read_text())["iso"]
+
+    def test_saved_iso_is_used_without_prompt(self) -> None:
+        iso = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso)), self.settings)
+        with patch.object(launcher, "_choose_iso", side_effect=AssertionError("prompted")):
+            code, call = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(iso.resolve()))
+
+    def test_gow_iso_env_wins_and_is_remembered(self) -> None:
+        saved = self.valid("saved.iso")
+        other = self.valid("other.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(GOW_ISO=str(other)), patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(other.resolve()))
+        self.assertEqual(self.saved_iso(), str(other.resolve()))
+
+    def test_invalid_gow_iso_env_falls_back_to_saved(self) -> None:
+        saved = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(GOW_ISO=str(self.root / "missing.iso")), \
+             patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(saved.resolve()))
+
+    def test_single_scan_match_is_used_and_saved(self) -> None:
+        found = self.valid("home/Games/Sony Playstation 2/God of War.iso")
+        (self.home / "Downloads").mkdir()
+        (self.home / "Downloads" / "not-gow.iso").write_bytes(b"\0" * 4096)  # not an ISO: skipped
+        with patch.object(launcher, "_choose_iso", side_effect=AssertionError("prompted")):
+            code, call = self.run_main()
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(found.resolve()))
+        self.assertEqual(self.saved_iso(), str(found.resolve()))
+
+    def test_several_matches_need_a_choice(self) -> None:
+        self.valid("home/Games/a.iso")
+        second = self.valid("home/Downloads/b.iso")
+        with patch.object(launcher.sys, "stdin", io.StringIO("")):  # not a terminal
+            code, call = self.run_main("--last")
+        self.assertEqual(code, 1)
+        call.assert_not_called()
+        self.assertFalse(self.settings.exists())
+        with patch.object(launcher.sys, "stdin", FakeTTY()), patch("builtins.input", return_value="2"):
+            code, call = self.run_main("--last")
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(second.resolve()))
+        self.assertEqual(self.saved_iso(), str(second.resolve()))
+
+    def test_window_is_prefilled_and_skipped_by_last(self) -> None:
+        saved = self.valid("saved.iso")
+        with self.env():
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(saved)), self.settings)
+        with self.env(DISPLAY=":0"), patch.object(launcher, "settings_window", return_value=None) as win:
+            self.assertEqual(launcher.main(["--runner", str(self.runner)]), 1)
+        self.assertEqual(win.call_args[0][0]["iso"], str(saved))
+        with self.env(DISPLAY=":0"), patch.object(launcher, "settings_window") as win, \
+             patch.object(launcher.subprocess, "call", return_value=0) as call:
+            self.assertEqual(launcher.main(["--last", "--runner", str(self.runner)]), 0)
+        win.assert_not_called()
+        self.assertEqual(call.call_args[1]["env"]["GOW_ISO"], str(saved.resolve()))
+
+    def test_iso_flag_is_remembered_and_one_run_flags_are_not(self) -> None:
+        iso = self.valid("disc.iso")
+        self.settings.parent.mkdir(parents=True)
+        self.settings.write_text(json.dumps({"debug_ui": True, "mute_audio": False, "future": 1}))
+        code, call = self.run_main("--iso", str(iso), "--mute")
+        self.assertEqual(code, 0)
+        self.assertEqual(call.call_args[1]["env"]["GOW_AUDIO"], "0")
+        saved = json.loads(self.settings.read_text())
+        self.assertEqual(saved, {"debug_ui": True, "mute_audio": False, "future": 1,
+                                 "iso": str(iso.resolve())})
+
+    def test_scan_finds_valid_isos_within_depth_and_skips_hidden(self) -> None:
+        base = self.root / "t"
+        ok = self.valid("t/ok.iso")
+        mid = self.valid("t/sub/mid.iso")
+        self.valid("t/.hidden/h.iso")
+        self.valid("t/sub/deep/d.iso")  # depth 3: outside the depth-2 scan
+        make_iso(base / "bad.iso", boot="SLUS_000.00")
+        (base / "notes.txt").write_text("x")
+        self.assertEqual(launcher.scan_isos([(base, 2)]), [ok.resolve(), mid.resolve()])
+
+    def test_scan_is_capped(self) -> None:
+        first = self.valid("t/a.iso")
+        self.valid("t/b.iso")
+        with patch.object(launcher, "MAX_SCAN_ENTRIES", 1):
+            self.assertEqual(launcher.scan_isos([(self.root / "t", 1)]), [first.resolve()])
+
+    def test_scan_dirs_include_gow_iso_dirs(self) -> None:
+        with self.env(GOW_ISO_DIRS=f"{self.root}/x:{self.root}/y"):
+            dirs = launcher.scan_dirs()
+        self.assertEqual(dirs[-2:], [(self.root / "x", 3), (self.root / "y", 3)])
+        self.assertIn((self.home / "Games", 1), dirs)
+
+
+if __name__ == "__main__":
+    unittest.main()
