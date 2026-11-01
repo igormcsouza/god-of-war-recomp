@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Fix: the first-run setup crashed on a fresh machine (its working folder did not exist yet). 0.1.0 is superseded.
+
 ## 0.1.0
 
 First release of this Linux-first fork.
