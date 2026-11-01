@@ -7870,7 +7870,7 @@ Portátil híbrido (Intel + RTX 5050), recorrido guionizado por las zonas de bar
 | 3 | 1344 | 55,2 | 43,5 | 1382 | 1043 |
 | 4 | 1792 | 53,9 | 39,4 | 1638 | 1694 |
 
-Dibujar a 1080 líneas exactas no cuesta nada medible. No se ha comparado la calidad de imagen.
+Dibujar a 1080 líneas exactas no cuesta nada medible. Calidad de imagen: el autor jugó con las cuatro escalas y todas se ven bien, también la 4.
 
 **Hallazgo (corrige una medida previa):** con `__NV_PRIME_RENDER_OFFLOAD=1` y `__GLX_VENDOR_LIBRARY_NAME=nvidia` el registro dice
 `[gs-hw] GL unavailable: OpenGL 4.x core context unavailable (EGL error 12288)` y el runtime cae en silencio al renderizador de CPU, así que
