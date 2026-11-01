@@ -17,6 +17,7 @@ traer `main` e integra los cambios (merge, nunca reescribas historia publicada).
 | Funciones, stubs y entry points del recompilador | `config/recomp.template.toml`, `config/funcmap.csv` |
 | Pruebas independientes del juego | `tests/` (las del runtime van dentro del parche, en `ps2xTest/`) |
 | Estado del port (mapa del README) | `docs/estado/datos.toml` |
+| Launcher, asistente de instalación y AppImage (Linux) | `tools/linux/`, `tools/appimage/`, `.github/workflows/release.yml`; pruebas en `tests/test_gow_launcher.py` y `tests/test_gow_setup.py` |
 | Registro de la investigación | `docs/ESTADO.md` y `docs/CONTROLES.md` |
 
 ## Parches de PS2Recomp
@@ -103,6 +104,12 @@ Lo que la CI no puede comprobar: hace falta el ELF, los IRX y la ISO (ver README
   también al subir a `main`).
 - Los tres README (`README.md`, `README.es.md`, `README.pt-BR.md`) deben decir lo mismo.
 - Documentación y comentarios en español; los commits pueden ir en español o en inglés.
+
+## Versiones
+
+`VERSION` y `CHANGELOG.md` mandan. Una versión = subir `VERSION`, anotar `CHANGELOG.md`, fusionar y empujar la etiqueta
+`vX.Y.Z`: `release.yml` construye el AppImage (solo constructor, sin archivos del juego) y lo adjunta; ver `docs/LINUX_APPIMAGE.md`.
+Una versión nunca adjunta el runner, el disco extraído, el microcódigo capturado ni C++ generado.
 
 ## Legal
 
