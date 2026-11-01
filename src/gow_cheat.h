@@ -1,4 +1,4 @@
-// GOW-Port: GOW_CHEAT (depuración, desactivado por defecto). Ver docs/CONTROLES.md.
+// GOW-Port: GOW_CHEAT (depuración, desactivado por defecto). See manual/reference/controls-and-menu-tests.md.
 #pragma once
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"

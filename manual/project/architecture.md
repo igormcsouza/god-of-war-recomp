@@ -54,5 +54,5 @@ sender, and the cheat hook (`src/gow_cheat.h`).
 CI runs without the game: config validation, patch application, stub-handler check, compiling `src/*.cpp` against the
 patched runtime, and the full `ps2x_tests` suite. Run the suite from `PS2Recomp/` (some tests read sources by relative path).
 
-!!! info "Source"
-    Condensed and translated from upstream's `docs/ARQUITECTURA.md` (Spanish), which holds more detail.
+!!! info "More detail"
+    The full translated architecture notes are in [Architecture details](../reference/architecture-details.md).

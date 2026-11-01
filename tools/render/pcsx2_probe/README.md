@@ -3,7 +3,7 @@
 Este proyecto compila fuentes **originales** de PCSX2 y una capa Host limitada.
 No contiene ni requiere el juego, BIOS, ELF o dumps para estos controles.
 La DLL también puede recibir el flujo del runtime mediante el espejo opcional
-de [PCSX2_GS.md](../../../docs/PCSX2_GS.md); el renderer habitual se conserva.
+de [PCSX2_GS.md](../../../manual/reference/pcsx2-gs.md); el renderer habitual se conserva.
 Windows x64, MSVC, Windows SDK, CMake/Ninja y CPU AVX2.
 
 Entradas fijadas:
@@ -103,7 +103,7 @@ No comprueba imagen visible, redimensionado o pérdida del dispositivo.
 Reapertura, captura, dumps y reemplazos de texturas no están implementados;
 sus operaciones abortan con diagnóstico. Los objetos
 SW originales se conservan; los controles GPU no validan esa ruta. Los resultados
-y pendientes de integración están en [PCSX2_GS.md](../../../docs/PCSX2_GS.md).
+y pendientes de integración están en [PCSX2_GS.md](../../../manual/reference/pcsx2-gs.md).
 
 ## ABI experimental de la DLL
 

@@ -1,6 +1,6 @@
 # Linux build
 
-The [`scripts/compilar_linux.py`](../scripts/compilar_linux.py) helper prepares PS2Recomp at the commit pinned
+The [`scripts/compilar_linux.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/scripts/compilar_linux.py) helper prepares PS2Recomp at the commit pinned
 in `scripts/common.ps1`, applies the ordered patch list from `scripts/compilar.ps1`, and builds the recompiler
 and runner.
 

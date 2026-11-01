@@ -117,7 +117,7 @@ def vu1_cmake_args() -> list[str]:
     Same contract as scripts/compilar.ps1; the two VU1N overrides point upstream's CMake at this repo's tools/."""
     path = local_dir("GOW_VU1_MICROCODIGO", CACHE / "vu1cap", "*.bin")
     if path is None:
-        print("No VU1 microcode folder: building with the VU1 interpreter (slow). See docs/LINUX_COMPILACION.md.")
+        print("No VU1 microcode folder: building with the VU1 interpreter (slow). See manual/install/from-source.md.")
         return []
     return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generar_vu1.cpp'}",
             f"-DPS2X_VU1N_GEN_OVERRIDE={ROOT / 'tools/vu1/vu1n_gen.py'}",

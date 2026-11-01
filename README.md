@@ -73,26 +73,26 @@ Waffle565's native runtime and turns it into something you can download and play
 | Native runtime (OpenGL render-target GS, native VU1 and IOP) replacing the earlier Vulkan renderer | about 55-59 FPS in gameplay on an RTX 5050 laptop, was about 21 |
 | Render scale option, 1080p by default | no measurable cost up to 4x |
 | FPS overlay in English with the 1% low of the last 5 minutes of gameplay (menus, movies and loading excluded) | unit-tested |
-| Launcher: fullscreen or windowed, FPS counter, scaler, render scale, mute, skip movies, cheats | [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md) |
+| Launcher: fullscreen or windowed, FPS counter, scaler, render scale, mute, skip movies, cheats | [`manual/reference/linux-launcher-details.md`](manual/reference/linux-launcher-details.md) |
 | Generic pad mapping for pads without an SDL mapping (for example a GameSir dongle) | controls verified |
-| **AppImage builder**: no game data inside, it builds the runtime from your own ISO on first run and installs the missing build packages itself | [releases](https://github.com/igormcsouza/god-of-war-recomp/releases), [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md) |
+| **AppImage builder**: no game data inside, it builds the runtime from your own ISO on first run and installs the missing build packages itself | [releases](https://github.com/igormcsouza/god-of-war-recomp/releases), [`manual/install/appimage.md`](manual/install/appimage.md) |
 | Automated release: pushing a `vX.Y.Z` tag builds and publishes the AppImage | [`release.yml`](.github/workflows/release.yml) |
 
 Verified here on Linux: menus, new game, combat, audio, movies with sound, save and load, and the released AppImage
 from a clean home. Not verified: other pads, Windows with this runtime, a full playthrough. Details and numbers in
-[`docs/ESTADO.md`](docs/ESTADO.md); version history in [`CHANGELOG.md`](CHANGELOG.md).
+[`manual/reference/research-log.md`](manual/reference/research-log.md); version history in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Current status
 
-<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
+<a href="manual/status-map/detalle.en.md"><img src="manual/status-map/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
 
-Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
+Per-library and per-component breakdown: [`manual/status-map/detalle.en.md`](manual/status-map/detalle.en.md). Regenerated from `manual/status-map/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
 
 Native Windows build on a Ryzen 7 5800XT with an RX 5700 XT (GS captures at 1024×894):
 
 <p align="center">
-  <img src="docs/capturas/menu.jpg" alt="Difficulty menu" width="49%">
-  <img src="docs/capturas/partida.jpg" alt="Fight on the ship" width="49%">
+  <img src="manual/images/menu.jpg" alt="Difficulty menu" width="49%">
+  <img src="manual/images/partida.jpg" alt="Fight on the ship" width="49%">
 </p>
 
 | Milestone | Status |
@@ -111,7 +111,7 @@ Native Windows build on a Ryzen 7 5800XT with an RX 5700 XT (GS captures at 1024
 
 The game boots, loads its data from the extracted disc and reaches gameplay with keyboard or controller. On Linux it
 averages about 55-59 fps in gameplay with dips to the mid 40s in heavy scenes. One freeze was seen once when picking
-up orbs and did not come back in over 10 minutes of play. See [`docs/ESTADO.md`](docs/ESTADO.md) for the measurements and their limits.
+up orbs and did not come back in over 10 minutes of play. See [`manual/reference/research-log.md`](manual/reference/research-log.md) for the measurements and their limits.
 
 ## Repository layout
 
@@ -122,9 +122,10 @@ up orbs and did not come back in over 10 minutes of play. See [`docs/ESTADO.md`]
 ├── config/
 │   ├── funcmap.csv               # Function map (name, start, end, size)
 │   └── recomp.template.toml      # PS2Recomp configuration (@ELF@, @MAP@, @OUT@)
-├── docs/                         # Technical documentation
-│   ├── capturas/                 # Screenshots for this page
-│   └── estado/                   # Status map data and generated SVG/tables
+├── manual/                       # The English manual (MkDocs): install, usage, project, reference
+│   ├── images/                   # Screenshots for this page
+│   └── status-map/               # Status map data and generated SVG/tables
+├── mkdocs.yml                    # Manual configuration
 ├── game/                         # YOUR extracted disc goes here: SCUS_973.99, IRX, PAK, .disc_layout (git-ignored)
 ├── patches/
 │   ├── ps2recomp-waffle-runtime.patch   # Waffle565's runtime on PS2Recomp @ c5a9d02
@@ -194,7 +195,7 @@ configurable with `GOW_WORK`), pins commit `c5a9d02`, applies the patches in `pa
 
 Release builds disable function and IOP RPC traces by default. For diagnostics, use
 `scripts\2_compilar.cmd -Trazas`. To measure game `vid::Flip` calls separately from window refreshes,
-run `powershell -File scripts\probar_rendimiento.ps1`; see [the profiling notes](docs/ESTADO.md#medicion-de-rendimiento-2026-10-05).
+run `powershell -File scripts\probar_rendimiento.ps1`; see [the profiling notes](manual/reference/research-log.md).
 
 **4. Run:**
 
@@ -203,13 +204,13 @@ scripts\3_ejecutar.cmd          :: 60 seconds, output in logs\
 scripts\3_ejecutar_manual.cmd   :: no time limit
 ```
 
-**F2** shows an FPS meter (also with `GOW_FPS=1`); see [`docs/CONTROLES.md`](docs/CONTROLES.md#medidor-de-fps).
+**F2** shows an FPS meter (also with `GOW_FPS=1`); see [`manual/reference/controls-and-menu-tests.md`](manual/reference/controls-and-menu-tests.md).
 The game starts in borderless fullscreen; **F11** switches to a window and back (`GOW_PANTALLA_COMPLETA=0` starts
 windowed). **F1** opens the runtime debugger.
 `GOW_PANORAMICO=ampliado` uses the enhanced widescreen (a wider view instead of cropping top and bottom, an idea by
 nemesis2000 and CRASHARKI); it draws more and costs performance.
 `GOW_HZ=120` (experimental) lets the game logic run above 60 frames per second (up to 120, depending on the scene and
-the computer) and presents up to 120 pictures per second; see [`docs/CONTROLES.md`](docs/CONTROLES.md#120-hz).
+the computer) and presents up to 120 pictures per second; see [`manual/reference/controls-and-menu-tests.md`](manual/reference/controls-and-menu-tests.md).
 
 **5. Native IOP (optional, as in Waffle565's port).** Compiles the game's 8 IRX modules ahead of time and
 shortens loading (gameplay starts at ~21 s instead of ~34 s). One run dumps the modules and the next build
@@ -226,9 +227,9 @@ scripts\2_compilar.cmd
 ## Linux
 
 This fork is Linux-first. Needs GCC/Clang, CMake, Ninja, Git, Python 3 with Tk, and an OpenGL 4.x GPU. Full guide:
-[`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md).
+[`manual/reference/linux-build-details.md`](manual/reference/linux-build-details.md).
 
-**Easiest:** download the `.AppImage` from the [releases](../../releases) and run it. It builds the runtime from your own ISO the first time (30+ min, depends on your CPU) and then opens the launcher; see [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md). From source:
+**Easiest:** download the `.AppImage` from the [releases](../../releases) and run it. It builds the runtime from your own ISO the first time (30+ min, depends on your CPU) and then opens the launcher; see [`manual/install/appimage.md`](manual/install/appimage.md). From source:
 
 ```sh
 python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # build (slow first time)
@@ -240,7 +241,7 @@ python3 tools/linux/gow_launcher.py                                     # settin
 The capture step saves the game's VU1 microprograms and IRX modules from your own ISO, so the build can compile them
 (without it the VU1 is interpreted, about 10 FPS). Measured on an RTX 5050 laptop: about 55 FPS average in
 gameplay, 60 in menus and movies. The launcher sets fullscreen or windowed, the FPS counter, scaler, mute, skip
-movies and debug cheats; see [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md). Pads without an SDL mapping (for
+movies and debug cheats; see [`manual/reference/linux-launcher-details.md`](manual/reference/linux-launcher-details.md). Pads without an SDL mapping (for
 example a GameSir dongle) get a generic Xbox-like layout; `GOW_PAD_DIAG=1` shows what the game reads.
 
 ## How it works
@@ -260,20 +261,19 @@ flowchart LR
     F <--> G
 ```
 
-More details in [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+More details in [`manual/reference/architecture-details.md`](manual/reference/architecture-details.md).
 
 ## Documentation
 
-The English manual (install, usage, evolution, architecture) is in [`manual/`](manual/) and built with MkDocs (`mkdocs serve`); it is published at https://igormcsouza.github.io/god-of-war-recomp/ once GitHub Pages is on. The older technical research logs are still in Spanish:
+All documentation is in the English manual in [`manual/`](manual/), built with MkDocs and published at
+<https://igormcsouza.github.io/god-of-war-recomp/> (`mkdocs serve` to read it locally). Start with:
 
-- [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) — pipeline, overrides, runtime patches and CI
-- [`docs/CONTROLES.md`](docs/CONTROLES.md) — controls and menu/input tests
-- [`docs/RENDERIZADO.md`](docs/RENDERIZADO.md) — optional CPU/threaded CPU/OpenGL renderers and comparisons
-- [`docs/RENDIMIENTO.md`](docs/RENDIMIENTO.md) — performance measurements, optional threads and VU1 optimizations
-- [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md), [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) — the Linux AppImage, launcher and build (English)
-- [`CHANGELOG.md`](CHANGELOG.md) — version history
-- [`AGENTS.md`](AGENTS.md) — project conventions for contributors and coding agents
-- [`docs/ESTADO.md`](docs/ESTADO.md) — current status, investigation log, known issues and next steps
+- [Install with the AppImage](manual/install/appimage.md) and [build from source](manual/install/from-source.md)
+- [Launcher](manual/usage/launcher.md), [controls](manual/usage/controls.md) and [environment variables](manual/usage/env-vars.md)
+- [How it evolved](manual/project/evolution.md), [performance](manual/project/performance.md) and [architecture](manual/project/architecture.md)
+- [Research log](manual/reference/research-log.md): the detailed investigation record, known issues and next steps
+- [`AGENTS.md`](AGENTS.md): conventions for contributors and coding agents, including how to document and how to merge upstream
+- [`CHANGELOG.md`](CHANGELOG.md): version history
 
 ## Credits and license
 
