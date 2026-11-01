@@ -28,6 +28,16 @@ jobs:
         run: python3 -m unittest discover -s tests -p test_vif_chain_extractor.py
       - name: Probar la seleccion de ventanas de rendimiento
         run: python3 -m unittest discover -s tests -p test_perf_summary.py
+      - name: Probar el asistente de instalacion y el punto de entrada del AppImage
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-tk >/dev/null
+          python3 -m unittest tests.test_gow_launcher tests.test_gow_setup
+      - name: Montar el AppDir del AppImage (sin appimagetool; no debe contener archivos del juego)
+        run: |
+          APPDIR_ONLY=1 tools/appimage/build_appimage.sh ci /tmp/appimg | tee /tmp/appdir.log
+          dir="$(sed -n 's/^AppDir assembled at //p' /tmp/appdir.log)"
+          "$dir/AppRun" --self-test
+          if find "$dir" \( -iname '*.iso' -o -iname 'SCUS_*' -o -iname '*.pak' -o -iname '*.irx' \) | grep -q .; then exit 1; fi
       - name: Probar la lectura de referencia PCSX2 sin el juego
         run: python3 -m unittest discover -s tests -p test_pcsx2_ee_reference.py
       - name: Probar el inspector de imágenes compartidas

@@ -1,0 +1,70 @@
+# Cuts a release: builds the "builder" AppImage (no game data, no recompiled game code) and attaches it.
+# Push a tag `vX.Y.Z` to publish a release; "Run workflow" builds the AppImage as a downloadable artifact only.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    name: AppImage
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then v="${GITHUB_REF_NAME#v}"; else v="$(cat VERSION)-dev"; fi
+          echo "value=$v" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "$v" != "$(cat VERSION)" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the VERSION file ($(cat VERSION))"; exit 1
+          fi
+
+      - name: Launcher tests
+        run: python3 -m unittest tests.test_gow_launcher
+
+      - name: Build the AppImage
+        run: tools/appimage/build_appimage.sh "${{ steps.version.outputs.value }}" dist
+
+      - name: Smoke test (it runs, and no game files are inside)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-tk >/dev/null
+          chmod +x dist/*.AppImage
+          dist/*.AppImage --appimage-extract-and-run --self-test
+          cd "$RUNNER_TEMP" && "$GITHUB_WORKSPACE"/dist/*.AppImage --appimage-extract >/dev/null
+          if find squashfs-root \( -iname '*.iso' -o -iname 'SCUS_*' -o -iname '*.pak' -o -iname '*.irx' \) | grep -q .; then
+            echo "game files found in the AppImage"; exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: dist/*
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## How to use
+
+          The AppImage is a **builder**: it contains the launcher, the build scripts and the patches, and **no game data and no recompiled game code**.
+
+          1. Install the build tools (Debian/Ubuntu): `sudo apt install build-essential cmake ninja-build git python3-tk libgl-dev libegl-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libasound2-dev libpulse-dev`
+          2. `chmod +x gow-one-recomp-*.AppImage && ./gow-one-recomp-*.AppImage`
+          3. First run: pick your own God of War (NTSC-U, SCUS-97399) ISO. The app builds the runtime on your machine (30-60 minutes, one time) and installs it in `~/.local/share/gow-one-recomp/<version>/`.
+          4. Every later run opens the launcher and starts the game from that cache.
+
+          Nothing from the game is uploaded or shipped. See `docs/LINUX_COMPILACION.md` and `docs/LINUX_LAUNCHER.md`.
+
+          ---
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/*.AppImage dist/*.sha256 \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes --verify-tag
