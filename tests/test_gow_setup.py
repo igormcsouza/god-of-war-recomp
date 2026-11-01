@@ -45,6 +45,27 @@ class SetupTest(unittest.TestCase):
         self.assertTrue(titles[0].startswith("Build 1/2") and titles[2].startswith("Build 2/2"))
         self.assertIn("--work-dir", plan[0][1])
 
+    def test_steps_run_in_a_data_folder_that_exists_on_a_fresh_machine(self) -> None:
+        seen: list[bool] = []
+
+        class Proc:
+            stdout = iter([])
+            returncode = 0
+
+            def wait(self) -> int:
+                return 0
+
+        def popen(command, **kwargs):
+            seen.append(Path(kwargs["cwd"]).is_dir())
+            return Proc()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"XDG_DATA_HOME": tmp + "/fresh"}), \
+             patch.object(setup.shutil, "which", return_value="/usr/bin/x"), \
+             patch.object(setup, "steps", return_value=[("one", ["a"])]), \
+             patch.object(setup.subprocess, "Popen", side_effect=popen):
+            self.assertEqual(setup.run_steps(Path("/x.iso"), lambda line: None), 0)
+        self.assertEqual(seen, [True])
+
     def test_failed_step_stops_the_setup(self) -> None:
         class Proc:
             stdout = iter(["line\n"])

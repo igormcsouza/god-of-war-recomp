@@ -70,10 +70,11 @@ def run_steps(iso: Path, log) -> int:
     except launcher.IsoError as exc:
         log(f"ISO problem: {exc}\n")
         return 2
+    data_dir().mkdir(parents=True, exist_ok=True)  # the steps run in it, and it does not exist on a fresh machine
     for number, (title, command) in enumerate(plan, 1):
         log(f"\n=== Step {number}/{len(plan)}: {title}\n")
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                   errors="replace", cwd=data_dir().parent)
+                                   errors="replace", cwd=data_dir())
         assert process.stdout is not None
         for line in process.stdout:
             log(line)
