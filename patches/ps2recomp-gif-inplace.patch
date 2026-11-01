@@ -1,0 +1,105 @@
+diff --git a/ps2xRuntime/include/runtime/gs/ps2_gif_arbiter.h b/ps2xRuntime/include/runtime/gs/ps2_gif_arbiter.h
+index c89cb8b..b26ab91 100644
+--- a/ps2xRuntime/include/runtime/gs/ps2_gif_arbiter.h
++++ b/ps2xRuntime/include/runtime/gs/ps2_gif_arbiter.h
+@@ -36,6 +36,9 @@ public:
+     void reset() { m_queue.clear(); m_path3Input = {}; }
+ 
+     void submit(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool path2DirectHl = false);
++    // submit + drain. With nothing queued the packet is the whole batch: it goes to the callback in place, without the
++    // queue's copy (every XGKICK takes this path).
++    void submitAndDrain(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool path2DirectHl = false);
+ 
+     void drain();
+     bool empty() const { return m_queue.empty(); }
+diff --git a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
+index 63a05c1..592a4f6 100644
+--- a/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
++++ b/ps2xRuntime/src/lib/gs/ps2_gif_arbiter.cpp
+@@ -77,6 +77,20 @@ void GifArbiter::submit(GifPathId pathId, const uint8_t *data, uint32_t sizeByte
+     m_queue.push_back(std::move(pkt));
+ }
+ 
++void GifArbiter::submitAndDrain(GifPathId pathId, const uint8_t *data, uint32_t sizeBytes, bool path2DirectHl)
++{
++    if (!m_queue.empty() || !data || sizeBytes < 16 || !m_processFn || pathId < GifPathId::Path1 || pathId > GifPathId::Path3)
++    {
++        submit(pathId, data, sizeBytes, path2DirectHl);
++        drain();
++        return;
++    }
++    if (pathId == GifPathId::Path3)
++        trackPath3Packet(data, sizeBytes); // the PATH3 tag cursor follows every packet
++    m_processFn(pathId, data, sizeBytes);
++    drain(); // packets the callback submitted meanwhile
++}
++
+ void GifArbiter::drain()
+ {
+     if (!m_processFn)
+diff --git a/ps2xRuntime/src/lib/ps2_memory.cpp b/ps2xRuntime/src/lib/ps2_memory.cpp
+index cb2f58d..e6d02a2 100644
+--- a/ps2xRuntime/src/lib/ps2_memory.cpp
++++ b/ps2xRuntime/src/lib/ps2_memory.cpp
+@@ -2242,13 +2242,13 @@ void PS2Memory::submitGifPacket(GifPathId pathId, const uint8_t *data, uint32_t
+         flushMaskedPath3Packets(false);
+     }
+ 
+-    if (m_gifArbiter)
++    // GOW-Port: with nothing queued the packet goes to the GS in place (every XGKICK used to be copied into the arbiter's queue).
++    if (m_gifArbiter && drainImmediately)
++        m_gifArbiter->submitAndDrain(pathId, data, sizeBytes, path2DirectHl);
++    else if (m_gifArbiter)
+         m_gifArbiter->submit(pathId, data, sizeBytes, path2DirectHl);
+     else if (m_gifPacketCallback)
+         m_gifPacketCallback(data, sizeBytes);
+-
+-    if (m_gifArbiter && drainImmediately)
+-        m_gifArbiter->drain();
+ }
+ 
+ void PS2Memory::processGIFPacket(uint32_t srcPhysAddr, uint32_t qwCount)
+diff --git a/ps2xTest/src/ps2_memory_tests.cpp b/ps2xTest/src/ps2_memory_tests.cpp
+index 5a31274..4ffaad2 100644
+--- a/ps2xTest/src/ps2_memory_tests.cpp
++++ b/ps2xTest/src/ps2_memory_tests.cpp
+@@ -1216,6 +1216,39 @@ void register_ps2_memory_tests()
+             t.Equals(order[2], static_cast<uint8_t>(0x33u), "PATH3 should be drained third");
+         });
+ 
++        // GOW-Port: submitAndDrain: with nothing queued a packet reaches the GS in place (no copy into the queue), and a
++        // packet that finds others queued still goes through the queue in path priority order.
++        tc.Run("GIF packets submitted with drain go to the GS in place when nothing is queued", [](TestCase &t)
++        {
++            PS2Memory mem;
++            t.IsTrue(mem.initialize(), "PS2Memory initialize should succeed");
++            std::vector<const uint8_t *> seen;
++            std::vector<uint8_t> order;
++            GifArbiter arbiter([&](const uint8_t *data, uint32_t sizeBytes)
++            {
++                if (data && sizeBytes > 0u)
++                {
++                    seen.push_back(data);
++                    order.push_back(data[0]);
++                }
++            });
++            mem.setGifArbiter(&arbiter);
++
++            const std::vector<uint8_t> p3(16u, 0x33u);
++            mem.submitGifPacket(GifPathId::Path3, p3.data(), static_cast<uint32_t>(p3.size()), true);
++            t.Equals(seen.size(), static_cast<size_t>(1u), "the packet should be delivered immediately");
++            t.IsTrue(seen[0] == p3.data(), "with nothing queued the callback should get the caller's buffer, not a copy");
++
++            // A queued PATH3 packet and then a PATH1 submit with drain: both arrive, PATH1 first.
++            const std::vector<uint8_t> q3(16u, 0x44u);
++            const std::vector<uint8_t> q1(16u, 0x11u);
++            mem.submitGifPacket(GifPathId::Path3, q3.data(), static_cast<uint32_t>(q3.size()), false);
++            mem.submitGifPacket(GifPathId::Path1, q1.data(), static_cast<uint32_t>(q1.size()), true);
++            t.Equals(order.size(), static_cast<size_t>(3u), "queued and new packets should all drain");
++            t.Equals(order[1], static_cast<uint8_t>(0x11u), "PATH1 should still go before the queued PATH3 packet");
++            t.Equals(order[2], static_cast<uint8_t>(0x44u), "the queued PATH3 packet should drain last");
++        });
++
+         tc.Run("VIF DIRECTHL stalls behind queued PATH3 IMAGE packets", [](TestCase &t)
+         {
+             PS2Memory mem;
