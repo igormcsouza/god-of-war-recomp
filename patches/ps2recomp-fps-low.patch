@@ -1,0 +1,258 @@
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index d421b2e..99095d5 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -4,6 +4,7 @@
+ static bool gowUsePcsx2Vu1(); // GOW_VU1_PCSX2=1, defined before PS2Runtime::initialize
+ #include "runtime/gs/gs_host_present.h" // GOW-Port: consumidor privado del host.
+ #include "ps2_log.h"
++#include "runtime/ps2_fps_low.h" // GOW-Port: 1% low for the FPS counter
+ #include "runtime/ps2_perf.h"
+ #include "ps2_stubs.h"
+ #include "ps2_syscalls.h"
+@@ -1568,6 +1569,36 @@ namespace
+ {
+     std::atomic<uint64_t> g_gowFpsGuestFrames{0};
+ 
++    // GOW-Port: timestamps (ns) of the game's frames for the 1% low in the FPS counter. One writer (the EE thread),
++    // read once a second by the host thread; 65536 entries cover 5 minutes even at 120 frames per second.
++    constexpr size_t kGowFrameRing = 1u << 16;
++    std::atomic<uint64_t> g_gowFrameTimes[kGowFrameRing];
++    std::atomic<uint64_t> g_gowFrameHead{0};
++
++    void gowRecordFrameTime()
++    {
++        const uint64_t now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                                       std::chrono::steady_clock::now().time_since_epoch()).count());
++        const uint64_t head = g_gowFrameHead.load(std::memory_order_relaxed);
++        g_gowFrameTimes[head & (kGowFrameRing - 1)].store(now, std::memory_order_relaxed);
++        g_gowFrameHead.store(head + 1, std::memory_order_release);
++    }
++
++    // 1% low over the last GOW_FPS_LOW_SECS seconds (default 300); gaps over 1 s (movies, loading) are skipped.
++    double gowFpsOnePercentLow()
++    {
++        static const double windowSec = [] { const char *v = std::getenv("GOW_FPS_LOW_SECS"); return v ? std::max(5.0, std::atof(v)) : 300.0; }();
++        const uint64_t head = g_gowFrameHead.load(std::memory_order_acquire);
++        const size_t count = static_cast<size_t>(std::min<uint64_t>(head, kGowFrameRing));
++        std::vector<uint64_t> times;
++        times.reserve(count);
++        for (uint64_t i = head - count; i < head; ++i)
++            times.push_back(g_gowFrameTimes[i & (kGowFrameRing - 1)].load(std::memory_order_relaxed));
++        const uint64_t now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
++                                                       std::chrono::steady_clock::now().time_since_epoch()).count());
++        return ps2FpsOnePercentLow(times, now, windowSec, 1.0);
++    }
++
+     uint32_t gowFpsFramePc()
+     {
+         static const uint32_t pc = []
+@@ -1585,7 +1616,7 @@ namespace
+         std::chrono::steady_clock::time_point windowStart = start, secondStart = start;
+         uint64_t windowGuest = 0, windowHost = 0, secondGuest = 0, secondHost = 0, hostFrames = 0;
+         uint64_t windowShown = 0, secondShown = 0;
+-        double guestFps = 0.0, hostFps = 0.0, shownFps = 0.0, secondMin = 1e9, secondShownMin = 1e9;
++        double guestFps = 0.0, hostFps = 0.0, shownFps = 0.0, secondMin = 1e9, secondShownMin = 1e9, low1 = 0.0;
+ 
+         void frame(PS2Runtime &runtime)
+         {
+@@ -1613,11 +1644,12 @@ namespace
+             const double second = std::chrono::duration<double>(now - secondStart).count();
+             if (second >= 1.0)
+             {
+-                std::fprintf(stderr, "[gow-fps] t=%.0f game=%.1f min=%.1f shown=%.1f min_shown=%.1f display=%.1f\n",
++                low1 = gowFpsOnePercentLow();
++                std::fprintf(stderr, "[gow-fps] t=%.0f game=%.1f min=%.1f shown=%.1f min_shown=%.1f display=%.1f low1=%.1f\n",
+                              std::chrono::duration<double>(now - start).count(),
+                              static_cast<double>(guest - secondGuest) / second, secondMin,
+                              static_cast<double>(shown - secondShown) / second, secondShownMin,
+-                             static_cast<double>(hostFrames - secondHost) / second);
++                             static_cast<double>(hostFrames - secondHost) / second, low1);
+                 secondShown = shown;
+                 secondShownMin = 1e9;
+                 secondStart = now;
+@@ -1627,8 +1659,15 @@ namespace
+             }
+             (void)runtime;
+             char text[128];
+-            // "game": frames the game produces; "shown": new frames that reach the window; "display": window refresh.
+-            std::snprintf(text, sizeof(text), "%.0f FPS game  %.0f shown  (display %.0f Hz)", guestFps, shownFps, hostFps);
++            // "game": frames the game produces; "1% low": slowest 1% of the last 5 minutes (movies and loading
++            // excluded); "shown": new frames that reach the window; "display": window refresh.
++            char low[24];
++            if (low1 > 0.0)
++                std::snprintf(low, sizeof(low), "%.0f", low1);
++            else
++                std::snprintf(low, sizeof(low), "--");
++            std::snprintf(text, sizeof(text), "%.0f FPS game  1%% low %s  %.0f shown  (display %.0f Hz)", guestFps, low,
++                          shownFps, hostFps);
+             const double worst = std::min(guestFps, shownFps);
+             const Color colour = worst >= 57.0 ? GREEN : worst >= 45.0 ? YELLOW : RED;
+             const int size = std::max(12, GetScreenHeight() / 60); // ~18 px at 1080p
+@@ -1702,7 +1741,15 @@ bool PS2Runtime::dispatchGuestBranch(uint8_t *rdram,
+     const uint64_t jumpSerial = g_guestJumpSerial;
+     ps2_perf::guestEntry(targetPc, rdram); // GOW-Port: también cuenta llamadas que no vuelven al dispatcher.
+     if (targetPc == gowFpsFramePc())
++    {
+         g_gowFpsGuestFrames.fetch_add(1, std::memory_order_relaxed); // GOW-Port: medidor de FPS (F2)
++        // GOW-Port: the 1% low counts gameplay only (game state 11 at 0x29E560, SCUS-97399): menus, movies and
++        // loading would otherwise fill the 5-minute window with slow or missing frames.
++        uint32_t gameState = 0;
++        std::memcpy(&gameState, rdram + 0x0029E560u, sizeof(gameState));
++        if (gameState == 11u)
++            gowRecordFrameTime();
++    }
+     // GOW-Port: PS2X_GS_WORKER_TRACE=<s>: for 2 s after <s> s of uptime, host µs of vid::Flip (0x1837B8),
+     // vid::WaitForDMAComplete (0x183878) and 0x13F730 entry/return, to see the per-frame dependency chain.
+     static const double traceFrom = [] { const char *v = std::getenv("PS2X_GS_WORKER_TRACE"); return v ? std::atof(v) : -1.0; }();
+diff --git a/ps2xTest/src/main.cpp b/ps2xTest/src/main.cpp
+index 77d559a..c3e586a 100644
+--- a/ps2xTest/src/main.cpp
++++ b/ps2xTest/src/main.cpp
+@@ -6,6 +6,7 @@ void register_code_generator_tests();
+ void register_r5900_decoder_tests();
+ void register_elf_analyzer_tests();
+ void register_pad_input_tests();
++void register_fps_low_tests();
+ void register_ps2_runtime_io_tests();
+ void register_ps2_runtime_kernel_tests();
+ void register_ps2_runtime_interrupt_tests();
+@@ -32,6 +33,7 @@ int main()
+     register_r5900_decoder_tests();
+     register_elf_analyzer_tests();
+     register_pad_input_tests();
++    register_fps_low_tests();
+     register_ps2_runtime_io_tests();
+     register_ps2_runtime_kernel_tests();
+     register_ps2_runtime_interrupt_tests();
+diff --git a/ps2xTest/CMakeLists.txt b/ps2xTest/CMakeLists.txt
+index 9cd85a2..bcc6be6 100644
+--- a/ps2xTest/CMakeLists.txt
++++ b/ps2xTest/CMakeLists.txt
+@@ -22,6 +22,7 @@ add_library(ps2_test_lib STATIC
+     src/r5900_decoder_tests.cpp
+     src/elf_analyzer_tests.cpp
+     src/pad_input_tests.cpp
++    src/fps_low_tests.cpp
+     src/ps2_runtime_io_tests.cpp
+     src/ps2_runtime_kernel_tests.cpp
+     src/ps2_runtime_interrupt_tests.cpp
+diff --git a/ps2xRuntime/include/runtime/ps2_fps_low.h b/ps2xRuntime/include/runtime/ps2_fps_low.h
+new file mode 100644
+index 0000000..842fd60
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_fps_low.h
+@@ -0,0 +1,42 @@
++#ifndef PS2_FPS_LOW_H
++#define PS2_FPS_LOW_H
++
++#include <algorithm>
++#include <cmath>
++#include <cstddef>
++#include <cstdint>
++#include <functional>
++#include <vector>
++
++// GOW-Port: "1% low" of the game's frame rate for the on-screen counter.
++// timesNs: ascending timestamps (ns) of the game's frames. Only intervals that end inside the last windowSec
++// seconds count, and an interval longer than gapSec is skipped: movies, loading and pauses stop the game's
++// frames, and they must not drag the figure down (a hitch shorter than gapSec still counts).
++// Result: the frame rate that corresponds to the mean frame time of the slowest 1% of those intervals, or 0 when
++// fewer than minIntervals intervals are available.
++inline double ps2FpsOnePercentLow(const std::vector<uint64_t> &timesNs, uint64_t nowNs, double windowSec,
++                                  double gapSec, size_t minIntervals = 30)
++{
++    const double windowNs = windowSec * 1e9, gapNs = gapSec * 1e9;
++    std::vector<double> intervals;
++    intervals.reserve(timesNs.size());
++    for (size_t i = 1; i < timesNs.size(); ++i)
++    {
++        if (timesNs[i] < timesNs[i - 1] || timesNs[i] > nowNs || static_cast<double>(nowNs - timesNs[i]) > windowNs)
++            continue;
++        const double dt = static_cast<double>(timesNs[i] - timesNs[i - 1]);
++        if (dt > gapNs || dt <= 0.0)
++            continue;
++        intervals.push_back(dt);
++    }
++    if (intervals.size() < minIntervals)
++        return 0.0;
++    const size_t worst = std::max<size_t>(1, static_cast<size_t>(std::ceil(intervals.size() * 0.01)));
++    std::nth_element(intervals.begin(), intervals.begin() + (worst - 1), intervals.end(), std::greater<double>());
++    double sum = 0.0;
++    for (size_t i = 0; i < worst; ++i)
++        sum += intervals[i];
++    return 1e9 / (sum / static_cast<double>(worst));
++}
++
++#endif
+diff --git a/ps2xTest/src/fps_low_tests.cpp b/ps2xTest/src/fps_low_tests.cpp
+new file mode 100644
+index 0000000..02f837f
+--- /dev/null
++++ b/ps2xTest/src/fps_low_tests.cpp
+@@ -0,0 +1,65 @@
++#include "MiniTest.h"
++#include "runtime/ps2_fps_low.h"
++
++#include <cstdint>
++#include <vector>
++
++namespace
++{
++    constexpr uint64_t kMs = 1000000ull;
++
++    // n frames starting at t0, one every stepNs; returns the timestamps
++    std::vector<uint64_t> frames(uint64_t t0, size_t n, uint64_t stepNs)
++    {
++        std::vector<uint64_t> out;
++        for (size_t i = 0; i < n; ++i)
++            out.push_back(t0 + i * stepNs);
++        return out;
++    }
++}
++
++void register_fps_low_tests()
++{
++    MiniTest::Case("FpsLow", [](TestCase &tc)
++                   {
++        tc.Run("steady 60 FPS reads about 60", [](TestCase &t)
++               {
++            const auto times = frames(0, 1000, 16667000ull);
++            const double low = ps2FpsOnePercentLow(times, times.back(), 300.0, 1.0);
++            t.IsTrue(low > 59.5 && low < 60.5, "steady 60");
++        });
++        tc.Run("one 100 ms hitch in 1000 frames pulls the 1% low down", [](TestCase &t)
++               {
++            auto times = frames(0, 500, 16667000ull);
++            const uint64_t after = times.back() + 100 * kMs;
++            const auto rest = frames(after, 500, 16667000ull);
++            times.insert(times.end(), rest.begin(), rest.end());
++            const double low = ps2FpsOnePercentLow(times, times.back(), 300.0, 1.0);
++            // slowest 1% of 999 intervals = 10 frames: (100 + 9 * 16.667) / 10 = 25 ms -> 40 FPS
++            t.IsTrue(low > 39.0 && low < 41.0, "about 40");
++        });
++        tc.Run("a movie (60 s without game frames) is not counted", [](TestCase &t)
++               {
++            auto times = frames(0, 600, 16667000ull);
++            const auto movie = frames(times.back() + 60000 * kMs, 600, 16667000ull);
++            times.insert(times.end(), movie.begin(), movie.end());
++            const double low = ps2FpsOnePercentLow(times, times.back(), 300.0, 1.0);
++            t.IsTrue(low > 59.5 && low < 60.5, "the 60 s gap is skipped");
++        });
++        tc.Run("intervals older than the window are ignored", [](TestCase &t)
++               {
++            auto times = frames(0, 400, 50000000ull); // 20 FPS, long ago
++            const uint64_t start = times.back() + 1000000 * kMs;
++            const auto recent = frames(start, 600, 16667000ull);
++            times.insert(times.end(), recent.begin(), recent.end());
++            const double low = ps2FpsOnePercentLow(times, times.back(), 300.0, 1.0);
++            t.IsTrue(low > 59.5 && low < 60.5, "only the recent 60 FPS counts");
++        });
++        tc.Run("too few frames gives 0", [](TestCase &t)
++               {
++            const auto times = frames(0, 10, 16667000ull);
++            t.Equals(ps2FpsOnePercentLow(times, times.back(), 300.0, 1.0), 0.0, "not enough data");
++            t.Equals(ps2FpsOnePercentLow({}, 0, 300.0, 1.0), 0.0, "empty");
++        });
++    });
++}
