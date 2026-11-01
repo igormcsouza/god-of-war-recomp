@@ -154,7 +154,7 @@ def main() -> int:
         build = checkout / "build"
         logs = "ON" if opts.traces else "OFF"
         run(["cmake", "-S", str(checkout), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_DISABLE_IPO=ON", "-DPS2X_RUNNER_O1=ON", "-DPS2X_BUILD_STUDIO=OFF",
+             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_DISABLE_IPO=ON", "-DPS2X_BUILD_STUDIO=OFF",
              "-DCMAKE_FIND_LIBRARY_SUFFIXES=.so", "-DPKG_CONFIG_USE_STATIC_LIBS=OFF", "-UFFMPEG_*",
              f"-DPS2X_ENABLE_RUNTIME_LOGS={logs}", f"-DPS2X_ENABLE_AGRESSIVE_LOGS={logs}",
              f"-DPS2X_ENABLE_IOP_RPC_TRACE={logs}", "-DPS2X_ENABLE_RUNNER_UNITY_BUILD=ON", "-DPS2X_ENABLE_RUNNER_PCH=ON",

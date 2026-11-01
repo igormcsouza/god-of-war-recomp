@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Mide los FPS de un runner con GOW_FPS=1 (lineas [gow-fps]) tras un calentamiento.
+# Measures the FPS of a runner with GOW_FPS=1 ([gow-fps] lines) after a warm-up.
 if [ $# -lt 4 ]; then
-  echo "Uso: $0 <runner> <elf> <iso> <segundos> [calentamiento=20]" >&2
+  echo "Usage: $0 <runner> <elf> <iso> <seconds> [warmup=20]" >&2
   exit 2
 fi
 runner=$1; elf=$2; iso=$3; secs=$4; warm=${5:-20}
@@ -29,9 +29,9 @@ else
   }
   END {
     for (i = 1; i <= 3; i++) {
-      if (n[i]) { printf "%-9s muestras=%d media=%.1f minimo=%.1f\n", k[i], n[i], s[i] / n[i], m[i] }
-      else { printf "%-9s muestras=0\n", k[i] }
+      if (n[i]) { printf "%-9s samples=%d avg=%.1f min=%.1f\n", k[i], n[i], s[i] / n[i], m[i] }
+      else { printf "%-9s samples=0\n", k[i] }
     }
   }'
 fi
-echo "log completo: $log"
+echo "full log: $log"
