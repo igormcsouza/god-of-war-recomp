@@ -8,10 +8,10 @@
 
 ## First run
 
-1. Install the build tools (Debian/Ubuntu):
-   `sudo apt install build-essential cmake ninja-build git python3-tk libgl-dev libegl-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libasound2-dev libpulse-dev`
+1. Build tools: the setup installs any missing ones for you (compiler, cmake, ninja, git and the GL/X11/ALSA headers) with
+   `apt`, `dnf`, `pacman` or `zypper`; your system asks for your password. On another distro it prints what to install.
 2. `chmod +x gow-one-recomp-*.AppImage && ./gow-one-recomp-*.AppImage`
-3. A setup window asks for your God of War (NTSC-U, SCUS-97399) ISO and runs, one time and for 30-60 minutes:
+3. A setup window asks for your God of War (NTSC-U, SCUS-97399) ISO and runs, one time and for roughly 30 minutes or more, depending on your CPU (the compile and two full links dominate):
    1. prepare the disc from the ISO (cached in `~/.cache/gow-one-recomp/`);
    2. recompile the game and build a first runner;
    3. capture the VU1 microcode and IOP modules in an unattended run (about 5 minutes, a game window opens by itself);

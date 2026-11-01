@@ -28,8 +28,43 @@ class SetupTest(unittest.TestCase):
              patch.object(setup.subprocess, "Popen") as popen:
             self.assertEqual(setup.run_steps(Path("/nope.iso"), out.append), 2)
         popen.assert_not_called()
-        self.assertIn("Missing tools", "".join(out))
-        self.assertIn("apt install", "".join(out))
+        self.assertIn("Missing:", "".join(out))
+        self.assertIn("Could not install", "".join(out))
+
+    def test_missing_packages_are_installed_as_root_then_setup_goes_on(self) -> None:
+        out: list[str] = []
+        commands: list[list[str]] = []
+
+        class Proc:
+            stdout = iter(["installing\n"])
+            returncode = 0
+
+            def wait(self) -> int:
+                return 0
+
+        def popen(command, **kwargs):
+            commands.append(command)
+            return Proc()
+
+        missing = iter([["cmake"], []])  # missing before the install, nothing after
+        with patch.object(setup, "missing_tools", side_effect=lambda: next(missing)), \
+             patch.object(setup, "install_command", return_value=["sudo", "apt-get", "install", "-y", "cmake"]), \
+             patch.object(setup, "steps", return_value=[]), \
+             patch.object(setup.subprocess, "Popen", side_effect=popen), \
+             tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"XDG_DATA_HOME": tmp}):
+            self.assertEqual(setup.run_steps(Path("/x.iso"), out.append), 0)
+        self.assertEqual(commands, [["sudo", "apt-get", "install", "-y", "cmake"]])
+        self.assertIn("password", "".join(out))
+
+    def test_install_command_uses_the_distro_package_manager(self) -> None:
+        with patch.object(setup.shutil, "which", side_effect=lambda n: "/x" if n in ("dnf", "pkexec") else None), \
+             patch.dict(os.environ, {"DISPLAY": ":0"}):
+            command = setup.install_command()
+        self.assertEqual(command[:3], ["pkexec", "dnf", "install"])
+        self.assertIn("alsa-lib-devel", command)
+        with patch.object(setup.shutil, "which", return_value=None):
+            self.assertIsNone(setup.install_command())
+            self.assertIn("compiler", setup.install_hint())
 
     def test_steps_build_twice_with_capture_between_and_install_last(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, \
@@ -61,6 +96,7 @@ class SetupTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"XDG_DATA_HOME": tmp + "/fresh"}), \
              patch.object(setup.shutil, "which", return_value="/usr/bin/x"), \
+             patch.object(setup, "missing_tools", return_value=[]), \
              patch.object(setup, "steps", return_value=[("one", ["a"])]), \
              patch.object(setup.subprocess, "Popen", side_effect=popen):
             self.assertEqual(setup.run_steps(Path("/x.iso"), lambda line: None), 0)
@@ -76,6 +112,7 @@ class SetupTest(unittest.TestCase):
 
         out: list[str] = []
         with patch.object(setup.shutil, "which", return_value="/usr/bin/x"), \
+             patch.object(setup, "missing_tools", return_value=[]), \
              patch.object(setup, "steps", return_value=[("one", ["a"]), ("two", ["b"])]), \
              patch.object(setup.subprocess, "Popen", return_value=Proc()) as popen:
             self.assertEqual(setup.run_steps(Path("/x.iso"), out.append), 1)

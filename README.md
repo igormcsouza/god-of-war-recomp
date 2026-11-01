@@ -211,7 +211,7 @@ scripts\2_compilar.cmd
 This fork is Linux-first. Needs GCC/Clang, CMake, Ninja, Git, Python 3 with Tk, and an OpenGL 4.x GPU. Full guide:
 [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md).
 
-**Easiest:** download the `.AppImage` from the [releases](../../releases) and run it. It builds the runtime from your own ISO the first time (30-60 min) and then opens the launcher; see [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md). From source:
+**Easiest:** download the `.AppImage` from the [releases](../../releases) and run it. It builds the runtime from your own ISO the first time (30+ min, depends on your CPU) and then opens the launcher; see [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md). From source:
 
 ```sh
 python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # build (slow first time)

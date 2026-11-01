@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The first-run setup installs the missing build packages itself (apt, dnf, pacman or zypper; the system asks for your
+  password) instead of only printing the command. It also checks the GL/X11/ALSA headers, not just the tools.
+- Setup time is described as "30+ minutes, depends on your CPU" (the earlier "30-60" was an estimate).
+
 ## 0.1.1
 
 - Fix: the first-run setup crashed on a fresh machine (its working folder did not exist yet). 0.1.0 is superseded.
