@@ -204,6 +204,16 @@ class SettingsTest(unittest.TestCase):
             path.write_text('{"scaling": "Nearest"}')  # label from the Vulkan-era launcher
             self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
 
+    def test_render_scale_env_mapping(self) -> None:
+        self.assertNotIn("PS2X_GS_HW_SCALE", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
+        for label, value in (("1080p", "2.41"), ("3x", "3"), ("4x", "4")):
+            env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, render_scale=label))
+            self.assertEqual(env["PS2X_GS_HW_SCALE"], value)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text('{"render_scale": "9x"}')
+            self.assertEqual(launcher.load_settings(path)["render_scale"], "2x (default)")
+
     def test_mute_audio_env_mapping(self) -> None:
         self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True))["GOW_AUDIO"], "0")

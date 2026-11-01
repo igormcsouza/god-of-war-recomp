@@ -46,6 +46,7 @@ The header check reads only the ISO sectors that describe the root directory and
 | Start in fullscreen | Exports `GOW_PANTALLA_COMPLETA=1` (borderless fullscreen at start) or `0` (windowed, the default). Always exported, because the runtime itself starts fullscreen. F11 toggles in game. |
 | Scaling | Sharp (default, exports nothing) / Bilinear: exports `GOW_SCALER=bilinear`. Saved as `scaling`; older labels (Nearest, Sharp bilinear) load as Sharp. |
 | Show FPS counter | `GOW_FPS=1`: on-screen counter ("60 FPS game  60 shown  (display 60 Hz)"); F2 toggles it in game. |
+| Render scale | 2x (default), 1080p, 3x, 4x: exports `PS2X_GS_HW_SCALE` (2 / 2.41 / 3 / 4; unset for the default). The OpenGL GS renders at that multiple of the PS2's 448 lines; 1080p is exactly 1080 lines. Measured on an RTX 5050 laptop, ship zones: 56.0 FPS at 2x and 1080p, 55.2 at 3x, 53.9 at 4x (GS and upload time grow with the scale). Not compared for image quality yet. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
 | Skip movies (FMV, workaround) | `GOW_SKIP_FMV=1`: skips the pre-rendered movies. Use it while movie audio and the screen after a cutscene are still being fixed. |
 | Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See `docs/CONTROLES.md`. |
