@@ -370,9 +370,11 @@ def remember_iso(iso: Path, path: Path | None = None) -> None:
 def settings_to_env(settings: dict) -> dict[str, str]:
     """Environment variables for the runner. Only options the runtime reads are mapped: the window starts
     borderless fullscreen unless GOW_PANTALLA_COMPLETA=0, so the choice is always exported. F1 shows the debug
-    panel and F11 toggles fullscreen in game. Stored-only keys (show_fps, resolution_scale, raster_threads,
+    panel and F11 toggles fullscreen in game. Stored-only keys (resolution_scale, raster_threads,
     pad_index, debug_ui, gpu) are kept in settings.json for older launchers but have no effect."""
     env: dict[str, str] = {"GOW_PANTALLA_COMPLETA": "1" if settings.get("fullscreen") else "0"}
+    if settings.get("show_fps"):
+        env["GOW_FPS"] = "1"  # F2 toggles the overlay in game
     if SCALING_ENV.get(settings.get("scaling")):
         env["GOW_SCALER"] = SCALING_ENV[settings["scaling"]]
     if settings.get("mute_audio"):
@@ -522,6 +524,7 @@ def settings_window(settings: dict) -> dict | None:
     result: dict | None = None
     iso = tkinter.StringVar(value=settings["iso"])
     full = tkinter.BooleanVar(value=settings["fullscreen"])
+    fps = tkinter.BooleanVar(value=settings["show_fps"])
     mute = tkinter.BooleanVar(value=settings["mute_audio"])
     skip = tkinter.BooleanVar(value=settings["skip_movies"])
     scaling = tkinter.StringVar(value=settings["scaling"])
@@ -534,7 +537,8 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Button(frame, text="Browse...", command=lambda: iso.set(filedialog.askopenfilename(
         filetypes=[("ISO image", "*.iso"), ("All files", "*")]) or iso.get())).grid(row=0, column=2)
     ttk.Label(frame, textvariable=error, foreground="red", wraplength=480).grid(row=1, column=0, columnspan=3, sticky="w")
-    ttk.Checkbutton(frame, text="Fullscreen (F11 toggles in game)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Start in fullscreen (unticked = windowed; F11 toggles in game)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Show FPS counter (F2 toggles in game)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Skip movies (FMV, workaround)", variable=skip).grid(row=11, column=0, columnspan=3, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
@@ -551,7 +555,7 @@ def settings_window(settings: dict) -> dict | None:
         if message:
             return
         # Stored-only keys (no effect with this runtime) are carried over unchanged.
-        result = {**settings, "iso": iso.get(), "fullscreen": full.get(),
+        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "mute_audio": mute.get(), "skip_movies": skip.get(),
                   "scaling": scaling.get(), **{f"cheat_{k}": v.get() for k, v in cheat_vars.items()}}
         root.destroy()

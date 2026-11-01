@@ -1,0 +1,28 @@
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index 14f9803..d5003c5 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -1602,7 +1602,7 @@ namespace
+             const double second = std::chrono::duration<double>(now - secondStart).count();
+             if (second >= 1.0)
+             {
+-                std::fprintf(stderr, "[gow-fps] t=%.0f juego=%.1f min=%.1f imagenes=%.1f min_imagenes=%.1f pantalla=%.1f\n",
++                std::fprintf(stderr, "[gow-fps] t=%.0f game=%.1f min=%.1f shown=%.1f min_shown=%.1f display=%.1f\n",
+                              std::chrono::duration<double>(now - start).count(),
+                              static_cast<double>(guest - secondGuest) / second, secondMin,
+                              static_cast<double>(shown - secondShown) / second, secondShownMin,
+@@ -1616,11 +1616,11 @@ namespace
+             }
+             (void)runtime;
+             char text[128];
+-            // "juego": cuadros que produce el juego; "imagenes": cuadros nuevos que llegan a la ventana.
+-            std::snprintf(text, sizeof(text), "%.0f FPS juego  %.0f imagenes  (pantalla %.0f Hz)", guestFps, shownFps, hostFps);
++            // "game": frames the game produces; "shown": new frames that reach the window; "display": window refresh.
++            std::snprintf(text, sizeof(text), "%.0f FPS game  %.0f shown  (display %.0f Hz)", guestFps, shownFps, hostFps);
+             const double worst = std::min(guestFps, shownFps);
+             const Color colour = worst >= 57.0 ? GREEN : worst >= 45.0 ? YELLOW : RED;
+-            const int size = std::max(20, GetScreenHeight() / 30); // ~36 px a 1080p
++            const int size = std::max(12, GetScreenHeight() / 60); // ~18 px at 1080p
+             const int pad = size / 2;
+             DrawRectangle(pad, pad, MeasureText(text, size) + pad, size + pad / 2, Color{0, 0, 0, 170});
+             DrawText(text, pad + pad / 2, pad + pad / 4, size, colour);

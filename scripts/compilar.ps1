@@ -104,6 +104,8 @@ $vu0Vi0Patch = Join-Path $RepoRoot 'patches\ps2recomp-vu0-vi0.patch'
 $vu1nHeadsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1n-heads.patch'
 # GOW-Port: gamepads sin mapeo SDL (p. ej. un mando GameSir) leian todo a cero en GLFW: se cargan mapeos y hay uno generico.
 $padMappingsLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings-linux.patch'
+# GOW-Port: texto del contador de FPS en ingles y mas pequeno; claves del registro [gow-fps] en ingles (game, shown, display).
+$fpsOverlayEnglishPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-overlay-english.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -182,6 +184,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCuadrosEnVueloPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ClipSinSaltosPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1MaddSaturadoPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsLinuxPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayEnglishPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

@@ -184,10 +184,12 @@ class SettingsTest(unittest.TestCase):
 
     def test_env_mapping(self) -> None:
         # The runtime starts fullscreen unless told otherwise, so the choice is always exported.
-        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS), {"GOW_PANTALLA_COMPLETA": "0"})
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, show_fps=False)),
+                         {"GOW_PANTALLA_COMPLETA": "0"})
+        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS)["GOW_FPS"], "1")
         env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, fullscreen=True, debug_ui=True,
                                             pad_index=0, raster_threads=3, resolution_scale=3, gpu="NVIDIA"))
-        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1"})  # stored-only keys export nothing
+        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1", "GOW_FPS": "1"})  # stored-only keys export nothing
 
     def test_scaling_env_mapping_roundtrip_and_old_files(self) -> None:
         self.assertNotIn("GOW_SCALER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
