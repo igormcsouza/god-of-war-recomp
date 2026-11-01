@@ -4716,6 +4716,30 @@ El próximo control activará `GOW_VU1_BUDGET_DIAG=1`, sin aumentar presupuestos
 y examinará magnitudes además de finitud. Primero comprobar PMULTH; las demás
 hipótesis requieren evidencia por separado y no se incorporan arreglos en bloque.
 
+## VF0 constante en VU0 (2026-10-14)
+
+La issue [#66](https://github.com/KIexster/god-of-war-recomp/issues/66) señaló que
+`R5900Context` dejaba `vu0_vf[0]` en cero completo. El constructor ahora inicializa
+VF0 a `(0, 0, 0, 1)`; las traducciones de VU0 ignoran escrituras al vector cero
+sin quitar otros efectos de la instrucción, y `LQC2` a VF0 no carga memoria. Se
+añadieron regresiones para el contexto y para LQC2, QMTC2, VADD, VITOF y VMFIR.
+Las rutas de `VI0` ya ignoraban escrituras de `CTC2`, operaciones VI y cargas/
+incrementos de memoria; `VMTIR` aún podía escribirlo. Un parche adicional lo
+trata como destino constante y la regresión comprueba también que los destinos
+VI distintos de cero sigan escribiendo.
+
+Ambos parches se compilaron con MSVC 19.44 y Ninja 1.12.1; `ps2x_tests` pasó
+622/622 con cero fallos conocidos. También pasan `tools/ci/parches.py`,
+`tools/ci/validar_config.py` y la aplicación limpia de los dos parches en orden.
+
+Revisión del filtro VF0 (2026-10-14): se retiró la búsqueda de la cadena generada
+`ctx->vu0_vf[0] =` y el borrado hasta el siguiente punto y coma. Los emisores de
+VU0 envían ahora las escrituras a `PS2_VU0_VF_WRITE`, que comprueba el destino y
+no evalúa el valor cuando el destino es VF0; las escrituras a otros VF siguen
+iguales y los efectos laterales, como actualizar R en VRNEXT, se conservan.
+Una regresión verifica el comportamiento de VF0/VF1. La serie VF0+VI0 aplicada
+limpiamente y compilada con Ninja pasó `ps2x_tests` 623/623, sin fallos conocidos.
+
 ## PMULTH: compilación completa y regresiones nativas (2026-10-11)
 
 La cadena 102 termina con código 0 en 959,94 s, regenerando los cuatro sitios
@@ -6444,1026 +6468,1392 @@ de función ausente antes de crear GS. Resultados/binarios privados, sin assets
 publicados. Faltan CI del HEAD final y revisión final de esta extensión antes
 de fusionar; no se presenta como corrección ya validada de encuadre del juego.
 
-## Linux: state and 1 FPS finding (2026-10-14)
+### 2026-10-14 — Referencia fusionada; opciones públicas de perfil y cierre
 
-Status as of today:
+PR81 fusionada en `ec7cd43882d8f58c1208ad5828b1e744bc674a8c` después de
+los cuatro SUCCESS del HEAD `e71ad9c32ac5634ee1062b98247488e3368944ba`,
+[run38562439264](https://github.com/KIexster/god-of-war-recomp/actions/runs/38562439264).
+Compilación aislada, contratos, GPU, negativo de caché y sonda anteriores
+cierran esa extensión de referencia; revisión local, sin aprobación externa.
 
-- Works: the launcher (`tools/linux/gow_launcher.py`) reads the personal ISO, extracts the
-  game files into the private cache and validates the ELF hash. Synthetic tests cover the ISO
-  reader and launch preparation (`tests/test_gow_launcher.py`, run in CI on Ubuntu).
-- Partial: `scripts/compilar_linux.py` prepares PS2Recomp at the pinned commit and applies the
-  patches in order. CI builds only the runtime test targets (`--runtime-only`) without the ELF.
-  The full runner build has not been verified end to end on Linux.
-- Pending: Vulkan backend (CI installs `libvulkan-dev` and `mesa-vulkan-drivers`, but no port
-  backend uses them yet) and controllers on Linux (SIO2 pad path not verified).
-- CI for this section: `python3 -m unittest discover -s tests -p test_gow_launcher.py`,
-  `python3 -m py_compile scripts/compilar_linux.py tools/linux/*.py`, in the `overrides` job.
+El lanzador `run_transition_control.py` expone ahora `--gpu-profile`,
+`--gpu-stats` y `--request-window-close`, registradas en measurement/result.
+Las dos primeras activan flags ya existentes; no añaden temporizadores al
+runtime. La tercera envía WM_CLOSE solo a una ventana visible del PID del
+hijo creado por Popen, sin activar ventanas. Si no hay ventana, falla el
+envío o el hijo no termina en15s, registra el fallback y usa el handle de
+ese mismo hijo para detenerlo. Un hijo ya cerrado conserva su código y no
+consulta ventanas. Se mantienen los valores predeterminados anteriores.
 
-Finding: the game runs at about 1 FPS on Linux. Three suspected causes, reported from the
-setup and not yet measured separately (the GS default is set in the runner, not in this repo):
+26 pruebas propias Windows y91 Python completas pasan0: incluyen selección
+del HWND propio, exclusión de ventanas ajenas, conservación del error17,
+timeout/sin ventana, saneado de flags heredadas y metadatos. Control real de
+75,323s con las tres opciones, runner109 sin recompilar: proceso/controlador0,
+WM_CLOSE0en0,303s sin fallback, tarjeta intacta, sin minimización ni firmas
+buscadas. Estado11 en35,08..70,23; no hay imágenes de esa pasada ni prueba de
+estabilidad prolongada o FPS mostrados. Falta CI del HEAD final del lanzador.
 
-1. The GS defaults to the CPU software renderer.
-2. The runner is built with `-O1` (`scripts/compilar_linux.py` sets it for `ps2EntryRunner`
-   only, to keep the link time practical), so the generated code is slower than Release.
-3. The runtime debug panel is always on, so its per-frame cost is paid by default.
+### 2026-10-14 — Timestamps GPU109: raster y denominador comprobados
 
-Next steps: measure each factor alone (GS backend, `-O2` for the runner, panel hidden) on
-the same ISO and record the FPS before and after in this section. Remove the debug panel
-from the default path once it is confirmed as a cost.
+Control privado anterior de240,172s, mismo ejecutable109, sin espejo/hash/
+readbacks, con perfil CPU y GPU y entradas de ataque: proceso/controlador0,
+cierre solicitado de ventana0en0,159s sin forzar. Tarjeta intacta, sin
+minimización registrada ni firmas buscadas; estado11 en35,09..235,62.
+39 ventanas CPU tienen estado11 observado en informes consecutivos, con
+Flip27,44..46,97/s y host10,72..60/s. No comparar su velocidad con otra
+ejecución por coincidir el guion o tick; no hay referencia visual alineada.
 
-### Linux FPS baseline attempt (M1, 2026-10-14)
+El perfil GPU genera2.613 ventanas:2.612 de cuatro intentos y una al cierre.
+Hay ocho avisos de muestras omitidas. En2.083 ventanas de cuatro sin esos
+avisos, sin línea de tiempos intercalada y con último estado observado11,
+raster registra12,93..103,88ms, mediana19,56; present0,02..0,24ms, mediana0,02.
+CLUT tiene mediana0,03ms. Son tiempos de los ámbitos instrumentados por
+timestamps, sin cubrir toda la GPU ni representar utilización o tiempo de CPU.
 
-| Config | FPS | Notes |
+Se comprobó el denominador en fuente: `profFrame/endFrame` se llama después
+del DispatchCompute de Present y **antes** de PublishShared. No cuenta Flip,
+VSync, adquisiciones o EndDrawing; las ventanas pueden contener trabajo
+acumulado entre intentos. El cierre puede recoger queries pendientes con
+menos intentos. Las ventanas GPU y CPU carecen de una frontera temporal común
+registrada: raster destaca entre los ámbitos medidos, pero no se atribuye
+todavía a él toda la espera de EndDrawing ni se derivan FPS físicos.
+Los resultados apoyan continuar con el desglose de loteGL/swap/limitador/
+eventos y con contadores de secuencias enviadas/reutilizadas. No se modifican
+fences, sincronización, bob, paridad o raster para ocultar la diferencia.
+
+### 2026-10-14 — Candidato110: detalle inclusivo de EndDrawing y envíos reales
+
+Parche nuevo `ps2recomp-gs-host-timing.patch`, al final de la cadena110.
+Con `GOW_PERF_DIAG=1`, raylib llama callbacks alrededor del primer loteGL,
+swap, `WaitTime` condicional y eventos. CMake comprueba la huella del source
+raylib5.5 y compila un `rcore.c` instrumentado en su directorio binario;
+no escribe en el source de FetchContent. La copia privada110 y la fuente
+compartida106..109 conservan su SHA original. Las llamadas, condiciones y
+orden de EndDrawing permanecen; no se usa control manual de frames.
+
+`[gow-perf:host]` comparte t/ventana con `[gow-perf]`. Informa end/batch/swap/
+limiter/events/other_ms y llamadas. **HostWait mantiene su significado
+inclusivo**; las cuatro fases son exclusivas entre sí y están incluidas en
+EndDrawing/HostWait, no se suman otra vez como tiempo global ni CPU%.
+`other_ms` conserva lo no atribuido. Sin diagnóstico el callback es nulo;
+se retira al cerrar el consumidor. `GOW_PERF_DIAG=frames` no activa fases.
+
+Cuenta el View devuelto tras EndDrawing: shared_texture/blank/fallback y RAM
+son categorías disjuntas; ram_blank es subconjunto de RAM. shared_changed/
+reused cuentan primera/cambiada o misma secuencia en Acquire efectivo,
+también si es blank. Cambio de modo/reset separa epochs. Una ausencia de
+Acquire no usa metadata antigua como prueba de reutilización. **Cambiar
+secuencia no acredita RGB distinto ni scanout**, y no se añade hash/readback.
+
+Compilación nueva de suite0/127,219s; normal626/626 y GPU671/671 tanto OFF
+como ON, códigos0. Primer normal625/626 se lanzó desde el directorio binario:
+la prueba de mappings VU0 no encontraba su header relativo. Se corrigió sólo
+el directorio del lanzador; el intento fallido se conserva y no se añaden
+fallos conocidos. Cadena110 reaplicada desde pin, diez archivos del tema iguales.
+
+Control aislado5/5 positivo; raylib109 sin callbacks falla sólo el caso de
+hooks reales,4/5/código1. Consumidor real4/4 positivo; omitir únicamente el
+registro del View falla las tres escalas,1/4/código3. Imágenes, fences y
+referencias CPU/DX11 se conservan. Revisión local, sin aprobación externa.
+**Full110, menú115, control funcional y medición del juego siguen pendientes**;
+todavía no hay resultado de tiempos110 ni mejora de rendimiento declarada.
+
+### 2026-10-14 — Full110 y control funcional del diagnóstico
+
+`scripts/2_compilar.cmd` terminó0 en1.079,539s:110parches, VU1 compilada,
+copia privada501micros y13programas0..12 compilados y enlazados. Fuente
+`7d3461c2d42694bbc12dceb437e6a1812c55269a`; ejecutable66.307.584bytes,
+SHA256`533c9cd7e841b7343c34e6cc3ff86ae5615a35969efcd5cec8a4bef6705852cc`.
+Manifiesto privado `transition110_host_timing_vu1c_full/build.json`.
+Bibliotecas106..109 y source raylib compartido intactos después del full;
+la copia instrumentada de rcore es idéntica entre configuraciones sucesivas.
+
+Menú obligatorio115:115,348s/control0/tarjeta copiada intacta, nueve capturas
+512×448 revisadas. Dificultad4, introducción5..6 y barco8;0y7 negras y1..3
+fondo sin opciones. Son lecturas GowPadTest de VRAM actual/CRTC latched,
+no la textura adquirida: no se declara regresión de título por esas capturas.
+Sin firmas buscadas de fallo ni informes del nuevo perfil con diagnóstico OFF.
+La detención por límite del script no acredita cierre normal del juego.
+
+Otro control combinado dura240,186s: FINISH asíncrono configurado, VU1 y
+frente GS en hilos propios confirmados en registro, presentación compartida,
+entradas Start/X y cuadrado. Estado11 en informes35,05..235,65; no estado14.
+Proceso/controlador0; WM_CLOSE de su propia ventana termina0en0,168s,
+sin fallback. Tarjeta intacta, sin minimización registrada ni firmas buscadas.
+No hay línea que contabilice cada FINISH; se distingue configuración de
+esa opción de la confirmación explícita de los hilos.
+
+Los16adquiridos3999..4031 son RGBA distintos512×448, SMODE2=0x21fed1,
+correlacionados exactamente con su registro. Contacto y primera/última
+completas revisados: HUD, Kratos, enemigos y variación de poses; no se
+afirman arcos de ataque ni completar una sección. Las4.096 adquisiciones
+registradas no muestran regresiones, repeticiones inconsistentes, retornos
+A-B-A ni cambios de tamaño. Distancia de ticks0..9, sin traducirla a latencia.
+El logger antiguo omite reusos; el nuevo contador sí los registra.
+Esta pasada con hashes/capturas no se usa como benchmark ni referencia
+visual de otra partida por coincidir sus ticks.
+
+### 2026-10-14 — Espera de swap, limitador y reutilización medidos sin capturas
+
+Control separado con el mismo runner110 identificado, ambos hilos,
+FINISH asíncrono configurado, sin espejo, hashes, capturas, diagnóstico de
+adquisiciones ni perfil GPU. Dura600,150s, proceso/controlador0. WM_CLOSE
+solicitado sólo al hijo11444: salida0en0,141s sin forzar. Tarjeta intacta,
+sin minimización registrada ni firmas buscadas de fallo. El primer plano
+cambia; no fue constante. Estado11 en informes35,07..596,32, sin14 observado.
+No son600s íntegros de partida ni prueba de estabilidad prolongada/final del juego.
+
+119parejas de informes CPU/detalle con t/ventana iguales, cero errores del
+contrato. Cada EndDrawing/envío tiene una llamada de batch/swap/eventos;
+WaitTime sólo cuenta si se ejecuta. Las fases más residual suman end_ms
+dentro del redondeo de printf; ese total sigue incluido en HostWait.
+
+111ventanas tienen estado11 observado en informes consecutivos, sin probar
+estado continuo entre muestras. Host8,51..60/s y Flip18,93..47,60/s.
+En21ventanas con host<20, situadas en45,16..100,73 y341,01..381,75,
+swap registra4.553,40..5.047,23ms, mediana4.917,07; limitador mediana109,31ms.
+En87ventanas con host≥50, swap12,21..1.938,29ms, mediana154,53;
+limitador3.045,12..4.967,29ms, mediana4.819,00. Las ventanas son de unos5s.
+El perfil localiza la espera dentro de swap en el grupo lento y del limitador
+en el rápido; no demuestra por sí solo una fence, trabajo GPU o política del
+driver como causa. Batch mide el primer lote dentro de EndDrawing, no todo
+el dibujo ni los lotes que el overlay pueda haber enviado antes.
+
+En las111ventanas:27.519envíos de textura,19.432cambios de secuencia y8.087
+reutilizaciones, sin blank/fallback/RAM en ese subconjunto. No representan
+27.519RGB distintos ni scanouts físicos. HostWait mediano4.980,18ms conserva
+su alcance anterior; las fases no se vuelven a sumar a él ni a los ámbitos
+de otros hilos como CPU%. No hay referencia visual alineada en esta pasada.
+
+El CI del HEAD fuente7d3461c terminó con cuatroSUCCESS,
+[run38603697064](https://github.com/KIexster/god-of-war-recomp/actions/runs/38603697064).
+Revisión de fuente/evidencia local, sin aprobación externa. Se conservan
+CPU/DX11/SW, fences y el renderer; **no se declara mejora de FPS**.
+Falta CI del HEAD documental final antes de sacar PR83 de borrador/fusionar.
+Sigue pendiente identificar el prefijo común de comandos adquirido/espejo,
+neblina restante, líneas/pose, encuadre y estabilidad prolongada.
+
+### 2026-10-14 — PR83 fusionada y frontera del módulo de referencia
+
+PR83 fusionada mediante merge en `96b164f143dc62917779d42fbdac32c4a2bfa11c`.
+El HEAD final `d0afe0b6062bc5fb240a5efc4038846b572eb6ba` terminó los cuatro
+trabajos con SUCCESS,
+[run38609264065](https://github.com/KIexster/god-of-war-recomp/actions/runs/38609264065).
+La validación anterior de110 queda cerrada dentro de su alcance; neblina,
+encuadre, causa de la espera de swap y estabilidad prolongada siguen pendientes.
+
+La auditoría de fuente detecta dos límites para comparar adquirido/espejo:
+la petición CRTC se construye bajo stateMutex pero Present se encola después
+de soltarlo, y el observador recibe el span GIF completo antes de que termine
+su procesamiento en el frontend. La secuencia de publicación no acredita un
+prefijo original común. El banco CRTC también tiene lectores host y escrituras
+MMIO/syscalls/DispEnv sin exclusión común visible. No se demuestra aquí un
+solapamiento nativo concreto ni que ese riesgo cause la neblina; atomizar cada
+campo tampoco acreditaría una transacción multirregistro. No se cambian locks,
+fences, sincronización, ABI C++ de observadores ni el renderer del juego.
+
+Como paso acotado, el módulo aislado añade `gow_gs_read_stream_info`, export
+optativo de ABI1 con struct64, sin cambiar los contratos anteriores. Cuenta
+llamadas aceptadas y bytes GIF aceptados por el transporte; conserva ambos cursores del último
+VSync, su campo y secuencia; reset separa epochs aunque se repita la secuencia.
+Las consultas/rechazos no avanzan cursores. La alineación se refiere sólo al
+transporte de16bytes: un tag puede seguir pendiente. GetCurrent disponible no
+prueba composición nueva, y entrada posterior no se atribuye al último VSync.
+No son fingerprints ni certificado de alineación con la imagen del host.
+
+Compilación aislada y contratos sin dispositivo:0. Control GPU con dos ciclos:0,
+2.048 píxeles RGBA exactos por ciclo. Comprueba prefijos antes/después de VSync,
+fragmentos a través de VSync, tag con payload pendiente pero QWORD alineado,
+submit vacío, consultas repetidas, rechazos/hilo propietario y reset pendiente.
+Omitir sólo registro de bytes de VSync produce tres fallos de frontera, código1;
+no avanzar epoch produce sólo el fallo de separación por reset, código1.
+Positivo intacto0;16/16 snapshots RGBA iguales al módulo anterior. DLL previa,
+Core original, runtime y runner110 preservados. No se requiere recompilar el
+juego: no hay parche/runtime/override modificado. Falta revisión/CI final de
+esta extensión antes de fusionarla. El siguiente paso es correlacionar estos
+cursores con eventos completos de la FIFO del host y la imagen compuesta,
+sin equiparar capturas sólo por tick o drenar la ruta compartida.
+
+### 2026-10-14 — Frontera de referencia fusionada y sonda con procedencia
+
+PR84 fusionada en `9aa3423fb1a3e23670bbb78344bd7626ce2180c8`, revisión local
+sin aprobación externa y cuatroSUCCESS del HEAD `0d34424765ac95b278ca16aeab48bf25ae6c4614`,
+[run38612566788](https://github.com/KIexster/god-of-war-recomp/actions/runs/38612566788).
+La sonda de snapshots añade ahora `--stream-info`: guarda los cursores antes
+del patrón, tras submit, tras VSync y tras las capturas. Sólo resuelve el export
+si se pide; los errores se propagan y el handle creado se cierra por finally.
+
+96 pruebas Python completas:0, incluidos layout64, contadores/handles mayores
+de32bits, ABI ctypes, DLL sin export y error de consulta. Controles GPU reales:
+DLL nueva con opción0/0,809s; antigua sin opción0/0,818s; antigua con opción1/
+0,085s, error explícito antes de crear GS. Los16snapshots son RGBA iguales en
+ambas DLL; cursores0→1→2,192bytes aceptados, sin avance por las capturas. Sin
+cambios de runtime/parches/overrides ni recompilación del juego. Falta CI final
+antes de fusionar la opción de sonda.
+
+Un control privado adicional enlazado al frontend y GSThreadedBackend reales
+reproduce la intercalación con barreras explícitas, sin sleeps ni ejecutar el
+juego. El host termina su snapshot, otro hilo entra al observador con un span
+de80bytes y se detiene antes del parser. Present se encola y ejecuta con cero
+Submit; al liberar el parser, se procesa un Submit. Repite con compact1 y0,
+códigos0/0,069s y0/0,079s. El observador y backend final de ese control son de
+prueba: acredita el orden posible de la implementación, no su frecuencia en
+la partida, divergencia visual ni causa de neblina. La futura regresión debe
+marcar ese Present como evento abierto/prefijo distinto; contar spans recibidos
+no basta. No se mueve Present bajo stateMutex ni se drena la ruta compartida.
+
+### 2026-10-14 — ResetGraph: corrupción ALPHA reproducida y candidato111
+
+La PR85 de procedencia de snapshots quedó fusionada en
+`4709806ad0594a507f9e311368f420442d55c03c`, después de revisión local y
+cuatroSUCCESS del HEAD `ae43949304f8d2dd72b3496fdb85f4c2f14e87e9`,
+[run38613982328](https://github.com/KIexster/god-of-war-recomp/actions/runs/38613982328).
+
+Una sonda privada del stub real110, con RAM del runtime y sin ejecutar el
+juego, llama `sceGsResetGraph(mode0,interlace1,omode2,ffmode1)`: devuelve0 y
+emite una DMA; PMODE sigue0 y SMODE2 conserva el centinela0x12345678. A la vez,
+ALPHA_1 cambia de0x8000000064 a3. La causa en fuente es el paquete A+D que
+pretende configurar CRTC usando0x41/0x42:0x42 corresponde a ALPHA_1. No se
+atribuye todavía a este fallo la neblina observada en la partida.
+
+El candidato separado111 `ps2recomp-gs-reset-crtc.patch` cambia sólo esa ruta
+mode0 a una actualización del banco privilegiado de PMODE, SMODE2, ambos
+DISPFB/DISPLAY y BGCOLOR bajo el mutex del frontend, compartido con su snapshot. Mantiene los valores calculados, incluido CRTMDbit2 de
+PMODE. No inyecta comandos GIF ni toca ALPHA; no inventa SMODE1/SYNCV ni decide
+el modo efectivo a partir de registros vacíos. La selección completa de modo
+sigue pendiente: no se modifica bob/paridad para igualar el oráculo.
+
+Regresión nueva en ps2xTest: cuatro combinaciones INT/FFMD, registros CRTC,
+conservación ALPHA_1/2 y ausencia de DMA de dibujo. Contra la biblioteca110
+falla0/1, código1, con cuatro comprobaciones por combinación; contra111 pasa
+1/1, código0. La primera variante MMIO pasa627/627 normal y672/672 GPU OFF/ON,
+códigos0, pero se conserva como histórica: antes de full se ajustó esa ruta
+para mantener el bloqueo de snapshot y se vuelven a validar sus fuentes finales.
+Compilación fresca inicial de suite0/121,297s. Al revisar el esperado de
+PMODE se corrigió0x8001 a0x8005 por CRTMDbit2 y se recompiló antes de ejecutar
+la regresión. **Suites completas, full13/501, menú, control funcional y CI final
+siguen pendientes**: no existe runner111 validado ni mejora visual declarada.
+El runtime110, tarjetas, CPU/DX11/SW y diagnósticos anteriores se conservan.
+
+Las fuentes finales bajo stateMutex pasan627/627 normal0/11,858s y672/672
+GPU tanto OFF0/38,039s como ON0/37,706s. SHA de suite final
+`b82957d494261cb28a6902c0ca1acd019f6cd3089f8c3371253bd96566e2ff67`.
+La cadena111 se reaplica desde pin y sus cuatro archivos coinciden con el
+candidato. Configuración/handlers0 y25scriptsPS1sin errores. El full del juego
+se inicia después de congelar el commit fuente; estas pruebas aún no lo sustituyen.
+
+### 2026-10-14/15 — Runner111 completo y validación acotada de ResetGraph
+
+La compilación completa `scripts/2_compilar.cmd` de la fuente
+`8c5cefe2dfb297187970da037463731fd54d33de` terminó con código 0 en 1.067,821 s:
+111 parches, VU1 compilada, 13 unidades programa0..12 enlazadas y 501 micromemorias
+privadas. El manifiesto final está en
+`E:/gowgpuprof/transition111_reset_graph_vu1c_full/build.json` y sustituye las
+notas históricas de actividad. EXE SHA-256
+`63c3bae7f275e8638a83618f2f8864f4230436f65f2153ff54c3414fb42b62e6`,
+66.307.584 bytes; biblioteca
+`b94efacbfa991f246a47443c31d69a7dd4413abd065b34c61153636c489e015b`.
+Ambas identidades se verificaron después de terminar. Se conservaron los
+runtimes previos, CPU/DX11/SW, tarjetas de origen y micromemorias.
+
+Las fuentes finales bajo `stateMutex` pasan 627/627 pruebas normales y 672/672
+con GPU, tanto con `GOW_PERF_DIAG` desactivado como activado, todos con código 0.
+El nuevo caso incluye cuatro combinaciones INT/FFMD. La regresión contra110
+falla 0/1, código 1; el caso pasa en las fuentes finales dentro de 627/627.
+La variante MMIO previa también pasó 1/1 aislada, sin sustituir la suite final
+bajo mutex. Cadena111 desde pin, configuración, handlers y sintaxis PowerShell
+correctos. CI de fuente8c: cuatro SUCCESS,
+[run38616693562](https://github.com/KIexster/god-of-war-recomp/actions/runs/38616693562).
+
+Menú obligatorio `scripts/probar_menu.ps1 -Segundos 115`: código del script 0,
+115,375 s y nueve capturas de 512×448. Revisión del contacto y captura completa:
+rostro/fuego, dificultad Hero, escena con Kratos y barco con personaje. Las
+muestras 0 y 7 son negras en inicio/transición; el registro llega a estado11
+sin errores del patrón revisado. Tarjeta privada y origen conservan SHA-256
+`47ebe237a3987f843fc19b0f801ce1edc1690768ef6b18e4b03a12ca6b298358`.
+El script detiene al límite: su código 0 no acredita salida normal. Estas
+capturas son GowPadTest (VRAM actual/CRTC latched), no textura adquirida.
+
+Control combinado privado `visual_reset111_a`: 240,170 s, código 0, VU1 y frente
+GS en hilos, FINISH asíncrono y presentación compartida activados. Estado11
+muestreado entre 35,06 y 236,73 s, lecturas reales del guion de mando y tarjeta
+intacta. Sin minimización registrada; el primer plano varió. Las 16 capturas
+adquiridas de 512×448 son RGBA distintas y correlacionan con el registro del
+host: ticks 3999..4030 y SMODE2=0x21fed1. Se revisaron el contacto completo y
+el último cuadro: HUD, Kratos, enemigos, cambios de pose y efecto de ataque
+en el barco. No hay referencia DX11 alineada en esta pasada.
+
+El inspector de 4.096 registros con cupo no encuentra regresión de secuencia
+ni repetición inconsistente; no certifica iteraciones no registradas ni
+ausencia global de reutilización. Sin errores del patrón revisado. WM_CLOSE
+al HWND del PID hijo cierra con código 0 en 0,163 s, sin terminación forzada.
+El límite de 240 s sigue siendo motivo del controlador, no final del juego.
+La pasada contiene hash, readback y perfil: no es un benchmark.
+Artefactos privados en `transition111_reset_graph_vu1c_full/runs/`:
+`menu115_reset111` y `visual_reset111_a`, con resultados, registros y capturas.
+
+Alcance contrastado con el ELF comercial: el ResetGraph original también
+ordena CSR.RESET/FLUSH y tiene rutas de modo que el stub todavía aproxima.
+Esta PR sólo corrige la programación CRTC de mode0 que emitía una escritura
+ALPHA_1 indebida por GIF. Conservar ALPHA en su test caracteriza esa operación
+acotada, no el estado del hardware después de RESET. No valida ResetGraph
+completo, todas las escrituras CRTC/MMIO ni el ABI comercial de GParam.
+No se modifica bob/paridad/SMODE1/SYNCV para forzar una referencia visual.
+
+Siguen pendientes la frontera de comandos entre adquirido y espejo original,
+la neblina restante, el encuadre PS2 y la estabilidad prolongada. Estos
+controles no miden cuadros físicos ni FPS únicos, ni prueban final de nivel.
+No se compararon otras ejecuciones por igualdad de tick.
+
+Revisión local de código, regresión, alcance original y evidencia funcional
+completada, sin aprobación externa. La fusión exige CI del HEAD documental
+final; no hubo cambios de fuente tras el full.
+
+## Atasco intermitente tras la carga del menú: relectura y diagnóstico `GOW_STALL_DIAG` (2026-10-14)
+
+**Relectura del intento bloqueado del runner 105** (registros privados
+`profile_fog105_review_20261013` y su repetición `_repeat_`, misma
+configuración salvo la ruta de la tarjeta; comparación línea a línea sin las
+cachés de shaders). Hechos observados:
+
+- No fue un atasco de arranque: ambos registros son idénticos hasta t≈20 s.
+  Los ocho IRX iniciales se cargaron, el 989snd respondió a 113 órdenes y el
+  juego estuvo en estado 3 a ~47 entradas de `vid::Flip` por segundo.
+- La divergencia aparece tras la pulsación X del guion en t=20 s. En la
+  ejecución correcta llega `[gow-fmv] skipped Semo01` en t≈22 s, luego estado 4
+  (`levelReady=1`) y estado 11 en t≈35 s. En la bloqueada no aparece esa línea,
+  el juego deja de leer el mando y de emitir `[gow-pad2:state]`, y
+  `guest_flip_hz`, `vu_ms` y `gs_ms` caen a cero desde la ventana t=25..30 s.
+- Durante los ~90 s restantes, cada ventana de 5 s reparte el hilo EE en
+  `ee_ms≈3360` e `iop_ms≈1640` (suma ≈5000 ms), con `guest_wait_ms=0`. El
+  host siguió refrescando a 60 Hz.
+
+Inferencia: el EE no está bloqueado en una espera del kernel (no hay tiempo de
+`GuestWait`), sino ejecutando código del juego mientras el IOP avanza por
+porciones; es compatible con un sondeo que espera algo que no llega antes de
+la llamada a la carga del vídeo (0x188CA0). Hipótesis aún sin comprobar: una
+petición asíncrona al IOP (carga o flujo) que no completa. La pareja no
+demuestra relación con `ResetGraph`, el perfil o el guion.
+
+**Diagnóstico nuevo** (`patches/ps2recomp-stall-diag.patch` y
+`src/gow_overrides.cpp`), activado con `GOW_STALL_DIAG=1`, etiqueta
+`[gow-stall]`, tiempos de `steady_clock` comunes a todos los hilos:
+
+- `hito`: primera vez de `ee_run`, `sif_init_rpc`, cada `sif_bind_rpc` (por
+  SID), primera `sif_call_rpc`, primer `sif_dma`, cada `irx`/`irx_buffer`
+  (id y resultado de arranque), primeros datos VIF1, `primer_flip`,
+  `fmv_saltado` y cada estado nuevo del juego observado en `vid::Flip`
+  (`estado_juego`) o por el vigía (`estado_juego_vigia`). Máximo 512 hitos.
+- `latido` cada 5 s desde un hilo vigía propio: incrementos de flips, VBlank,
+  alarmas, llamadas y binds RPC, DMA SIF, porciones IOP, bloques VIF1,
+  señales/esperas/sondeos de semáforos y wakeups del EE, la PC/RA del último
+  despacho EE y las palabras de estado del juego.
+- `volcado` cuando no hay flips durante 3 s tras el primero (a los 3, 10, 30
+  s y luego cada 60 s, máximo 8): hilos EE con estado, motivo e id de espera;
+  semáforos y flags con esperas; histograma de PC/RA de despacho muestreado
+  durante 200 ms; las 12 últimas operaciones SIF RPC con su tiempo; y hilos,
+  semáforos y flags del IOP. El IOP se describe en el hilo EE, en la siguiente
+  porción IOP, a petición del vigía: no se leen estructuras del IOP desde otro
+  hilo.
+
+Límites: la PC es la del último despacho (entrada de función o cabecera de
+bucle), no la instrucción exacta; un bucle interno sin despachos aparece como
+su función. El vigía no cambia esperas, plazos ni el orden del planificador;
+sin la variable, los contadores no se tocan (regresión en `ps2xTest`).
+
+Controles con el juego (compilación completa local de 114 parches, VU1
+compilada con 501 micromemorias, exe SHA-256 `3e375c2d…f301`, 66.339.328 B),
+misma configuración que el intento bloqueado (hilo VU1, frontend GS, FINISH
+asíncrono, presentación directa, `GOW_SKIP_FMV=1`, mismo guion, tarjeta
+intacta copiada por intento) más `GOW_STALL_DIAG=1`:
+
+- Primer intento descartado como comparación: caché de shaders vacía; el
+  backend GPU compiló durante la partida (`gs_ms≈ee_ms≈6 s` por ventana de 5
+  s, `host_hz<1`). El vigía volcó a los 3 s sin flips y luego registró la
+  reanudación; la petición al IOP expiró porque el hilo EE estaba dentro del
+  GS. Sirve como prueba de que el volcado se dispara y se recupera.
+- Once intentos con la caché caliente (uno de 120 s y diez de 60 s), todos
+  correctos: estado 4 en 22,03..22,16 s, `fmv_saltado` en 23,77..23,93 s y
+  estado 11 en 35,36..35,68 s; ~47 entradas a `vid::Flip`/s en estado 3, igual
+  que el registro original. Cierre por `WM_CLOSE`, código 0, tarjeta intacta.
+- **No se reprodujo el atasco** (0 de 11). No hay comparación correcta/bloqueada
+  con el diagnóstico; la causa sigue sin identificar.
+
+Próximo paso: dejar `GOW_STALL_DIAG=1` en los controles largos habituales.
+Si el atasco reaparece, el volcado dirá qué hilo EE corre o espera, la PC de
+despacho, la última RPC y el estado de los hilos del IOP.
+
+## SPU2: perfil `GOW_SPU2_PERF` y coste medido en el barco (2026-10-15)
+
+`patches/ps2recomp-spu2-perf.patch` (solo `spu2.cpp` y su prueba):
+
+- `GOW_SPU2_PERF=1`: una línea `[gow-spu2-perf]` cada 5 s con el tiempo
+  transcurrido de `advanceTo` (muestras), las voces activas por muestra, los
+  bloques ADPCM, DMA (ms y KB), el drenado del hilo de audio (ms, espera de
+  mutex, cuadros pedidos, entregados y faltantes) y los descartes.
+- `GOW_SPU2_PERF=2`: añade los ciclos TSC por sección (envolvente,
+  decodificación, tono/interpolación/mezcla, salida y espera de su mutex),
+  calibrados con el tiempo de `advanceTo` de la misma ventana. Tiene su propio
+  sobrecoste por voz: sirve para repartir, no para medir el total.
+- Regresión `multi-voice mix keeps its reference output hash`: 12 voces en dos
+  núcleos con tonos, ADSR, bucles y KON/KOFF a mitad. El hash FNV-1a
+  `0xa97415b49fd7d37c` coincide con `spu2.cpp` sin instrumentar. Fija la
+  salida observable para futuras optimizaciones.
+
+Medición (exe local de 115 parches, SHA-256 `1b8d2112…07a5`, VU1 compilada,
+misma configuración y guion que los controles de atasco, 150 s por ronda, 20 s
+de pausa, máquina sin compilaciones ni otros juegos; rondas 0/1/0/1/2/2).
+Ventanas de 5 s con t=50..145 s, todas en estado 11 (barco con ataques del
+guion); medianas [mín..máx], 19-20 ventanas por ronda:
+
+| Ronda | `step_ms` | % de la ventana | µs/muestra | muestras/s | voces activas |
+|---|---|---|---|---|---|
+| 2 (nivel 1) | 146,7 [77,0..176,9] | 2,93 [1,54..3,54] | 0,83 | 34.696 | 37,4 |
+| 4 (nivel 1) | 150,6 [77,7..174,6] | 3,01 [1,55..3,49] | 0,87 | 34.698 | 38,9 |
+| 5 (nivel 2) | 166,3 [108,2..187,4] | 3,33 | 1,21 | 26.528 | 39,5 |
+| 6 (nivel 2) | 169,5 [103,1..185,0] | 3,39 | 1,30 | 26.189 | 42,0 |
+
+- Hecho: con el nivel 1, el SPU2 ocupa ≈3 % del tiempo transcurrido del hilo EE
+  (que también ejecuta el IOP). DMA ≈0,37 ms y drenado ≈0,17 ms por ventana.
+  No hay descartes por latencia ni por búfer.
+- Hecho (nivel 2, rondas 5 y 6): del tiempo de voces, la envolvente ≈39 %, el
+  tono/interpolación/mezcla ≈54 % y la decodificación ADPCM ≈7 %. La salida
+  (mezcla maestra y cola) 4,1-4,3 ms por ventana, con 2,3 ms de espera de mutex.
+- Hecho: solo se producen ~34.700 muestras/s de 48.000 (nivel 1). El reloj del
+  SPU2 sigue a los ciclos del IOP, que siguen al EE, y este va por debajo del
+  tiempo real. El hilo de audio pide 48 kHz y recibe de menos: ~66.500 cuadros
+  faltantes por ventana (~28 %), que `ps2_runtime.cpp` rellena con silencio.
+  Inferencia: los cortes de audio en el barco vienen de la velocidad global de
+  la emulación, no del coste del SPU2.
+- Los flips medianos varían mucho entre rondas sin relación con el nivel
+  (nivel 0: 37,4 y 28,7; nivel 1: 41,0 y 40,1; nivel 2: 29,8 y 27,7). Con esta
+  dispersión no se puede cuantificar el sobrecoste del nivel 1. `guest_flip_hz`
+  no son FPS físicos.
+- La estimación antigua del 5 % queda sustituida por estas mediciones. El SPU2
+  no es un cuello de botella: optimizar la envolvente ahorraría como mucho ~1 %
+  del hilo. No se ha hecho ninguna optimización.
+
+Pendiente: decidir cómo tratar el déficit de muestras (estiramiento temporal o
+ritmo de audio) cuando la emulación no llega a tiempo real; es una decisión de
+salida de audio, no de coste del SPU2.
+
+## Perfil por muestreo `GOW_SAMPLER`: reparto del hilo EE en el barco (2026-10-15)
+
+`patches/ps2recomp-sampler.patch` (solo Windows x64). `GOW_SAMPLER=inicio:fin` en segundos, o `1` para
+toda la ejecución. Un hilo propio suspende los hilos EE, VU1 y frontend GS unas 1000 veces por segundo,
+copia su pila (RIP más `RtlVirtualUnwind`) en un búfer preasignado, sin reservar memoria mientras el hilo
+está suspendido, y lo reanuda. Al cerrar simboliza con DbgHelp (`ps2EntryRunner.pdb` junto al exe) e
+imprime `[gow-sampler]` con las 40 funciones con más muestras propias e inclusivas por hilo. Son muestras
+de tiempo de reloj del hilo, incluidas las esperas, no uso exclusivo de CPU.
+
+Primera medición: `main` `ed181a8` más el muestreador, exe `20e87cea…`, VU1 compilada, guion y
+configuración de los controles anteriores, `GOW_PERF_DIAG=frames` (sin relojes por subsistema),
+muestreo de 50 a 145 s en estado 11. Resultado: 51.059 muestras por hilo, intervalo real 1,86 ms,
+ninguna fallida. Hilo EE, porcentaje de muestras:
+
+| Inclusivo | % | Lectura |
 |---|---|---|
-| (a) default | not measured | no `ps2EntryRunner` binary exists on this machine |
-| (b) `PS2X_GS_GPU=1` | not measured | same |
-| (c) `PS2X_GS_GPU=1 PS2X_GS_THREAD=1` | not measured | same |
-| (d) `+PS2X_GS_GPU_STATS=1 PS2X_GS_GPU_PROF=1` | not measured | same |
+| `GS::notifyExternalVSync` → `RtlSleepConditionVariableSRW` | 28,5 | el EE espera al GS en cada VBlank |
+| `PS2Runtime::advanceIopEeCycles` | 31,9 | emulación del IOP; `runCycles` 27,1, `serviceSpu2` 9,7 |
+| `PS2Memory::advanceEeTimers` | 9,4 | propio: recorre los 4 temporizadores en cada punto de control |
+| `ps2_stall::enabled` + `ps2_perf::enabled` | 2,9 | propio: guarda de estáticas locales sin inlinear |
+| Código del juego (`sub_…`) y resto | ~27 | p. ej. `sub_00162F18` 6,9 incl., `sub_0017A1D0` 6,6 |
 
-- Launcher check: `tools/linux/gow_launcher.py --iso "<God of War (USA).iso>" --prepare-only` succeeded in 0.2 s;
-  the ELF and IRX files were extracted to the XDG cache (`~/.cache/gow-one-recomp/SCUS-97399/<id>/`). No launcher bug found.
-- Blocker: `find / -name 'ps2EntryRunner*'` finds nothing; `PS2Recomp/build` holds only the configured runtime targets and
-  `build-linux/generado` has the generated sources but no linked runner. cmake/X11 dev packages are missing, so the
-  runner cannot be built here. Also, per `docs/RENDERIZADO.md`, on Linux the OpenGL context is a stub that falls back
-  to the CPU renderer, so (b)/(c) would measure the CPU fallback anyway.
-- Next: install the dev packages, build with `scripts/compilar_linux.py`, then rerun configs (a)-(d) and `perf record -g`.
+- Hecho: más del 40 % del hilo EE se va en avanzar el IOP y los temporizadores desde cada punto de
+  control (`checkpointDue`, 43 % inclusivo), y casi todo es comprobar que no hay nada que hacer.
+  `executeInstruction` del IOP solo suma un 2,4 % propio.
+- Hecho: el 28,5 % del hilo EE está bloqueado esperando al GS dentro de `notifyExternalVSync` (área de
+  GS/presentación). Se documenta para quien lleva esa área; aquí no se toca.
+- `ps2_stall::enabled` (1,6 %) lo introdujo el diagnóstico de atascos (#87): se corrige en el parche
+  siguiente, junto con el camino rápido del IOP y los temporizadores.
+## Punto de control del EE más barato: IOP ocioso exacto y temporizadores perezosos (2026-10-15)
 
-### Linux FPS baseline, first runner build (2026-10-14)
+`patches/ps2recomp-checkpoint-fast.patch`, a partir del reparto medido con `GOW_SAMPLER` (sección anterior):
 
-Built with `scripts/compilar_linux.py --elf <extracted SCUS_973.99>` (3m23s, 32 jobs; `src/gow_overrides.cpp`
-compiles; only a `fs::u8path` deprecation warning). `ps2x_tests` from `PS2Recomp/` as cwd: 625 pass, 0 fail,
-including the three `PadSelect` tests. (Run from another cwd, "VU0 macro mappings cover all S1/S2 enums" fails
-only because it cannot find `instructions.h`; CI runs it from the checkout root.)
-Run via `tools/linux/gow_launcher.py --runner PS2Recomp/build/ps2xRuntime/ps2EntryRunner`, 35 s, Intel RPL-P iGPU,
-Mesa 25.2, X11. FPS = `vid::Flip` calls per second from `GOW_PERF_FRAME_PC=0x001837B8 GOW_DELTA_DIAG=1`
-(steady state after the first ~3 s of boot; the intro starts at about 60 FPS for 1 s, then drops).
+- **IOP ocioso:** `IopEmulator::runEeCycles` solo suma ciclos mientras el IOP no tenga hilos listos y el
+  objetivo quede por debajo del primer evento posible: despertar de un hilo, fin de DMA, callback,
+  evento de temporizador del IOP o siguiente muestra del SPU2. Es exactamente lo que haría `runCycles` en
+  ese tramo. El límite se invalida con cualquier entrada externa (RPC, SIF, carga de módulos, escrituras
+  de memoria) y con un cambio de versión del núcleo IOP.
+- **Temporizadores del EE perezosos:** `advanceEeTimers` acumula ciclos hasta la próxima interrupción
+  posible (`cyclesUntilNextEeTimerInterrupt`) y los aplica antes de cualquier lectura o escritura de sus
+  registros. Aplicarlos de una vez o a trozos da la misma cuenta y el mismo resto del reloj.
+- `ps2_stall::enabled` y `ps2_perf::enabled/countFrames` leen globales `inline const` en vez de
+  estáticas locales con guarda (2,9 % del hilo EE en el muestreo).
+- Regresiones: un IOP ocioso avanzado en 200.000 pasos irregulares conserva ciclos y muestras tras cada
+  paso; temporizadores perezosos frente a aplicación inmediata en 300.000 pasos (mismas interrupciones,
+  cuentas y plazo). Ambas fallan con una mutación del límite (comprobado).
 
-| Config | FPS (vid::Flip/s) | Notes |
+Medición en el barco (exe A `20e87cea…` = `main` más el muestreador; exe B `9e61941e…` = A más este
+parche; 3 rondas de 150 s por lado alternas A/B, ventanas de 5 s con t=50..145, `GOW_PERF_DIAG=frames`,
+`GOW_SPU2_PERF=1`, `GOW_DELTA_DIAG=1`):
+
+| Métrica (mediana [mín..máx]) | A | B |
 |---|---|---|
-| (a) default | ~2.4 (3 frames / 1.2-1.3 s) | CPU GS |
-| (b) `PS2X_GS_GPU=1` | ~2.7 (3 frames / 1.1 s) | log: "GPU GS backend is only implemented for Windows"; same CPU path, difference is noise |
+| velocidad de juego (`[gow-delta]`, 1,00 = tiempo real) | 0,91 [0,60..1,76] | 1,00 [0,84..1,10] |
+| muestras de SPU2 por segundo | 44.365 [34.295..83.716] | 49.436 [48.295..50.331] |
+| entradas a `vid::Flip` por segundo | 30,1 [16,3..101,6] | 30,3 [17,5..60,2] |
 
-Hotspots: `perf record` is unavailable (`perf_event_paranoid=4`, changing it needs sudo; gdb cannot attach either,
-`ptrace_scope=1`). Substitute: gdb sampling of all threads, 30 samples launched under gdb. Of the samples
-on running (non-waiting) threads, about 15 of 27 are in the CPU GS rasteriser (`GSCpuBackend::WritePixel`,
-`SampleTexture`, `DrawTriangle`, `GSMem::ReadTexture`), about 6 in `VU1Interpreter` (FMAC helpers) and 1 in ImGui;
-the other threads sit in futex/ppoll/nanosleep. Next: a Linux GPU GS backend (OpenGL/Vulkan) is the largest lever; `-O2`
-and the debug panel were not measured separately.
+- Hecho: con el parche el juego mantiene la velocidad real y el SPU2 produce las muestras de tiempo
+  real. El déficit de ~28 % de silencio medido antes desaparece. Las muestras quedan ~3 % por encima de
+  48 kHz; se vigila.
+- Hecho: los flips medianos no cambian (~30, dos VBlank por cuadro). La mejora es de regularidad y
+  velocidad, no de FPS. `guest_flip_hz` no son FPS físicos. `host_hz` fue bimodal (17 en dos rondas B,
+  60 en una) y no se atribuye.
+- Muestreo de B (`sampler_cpfast`): el hilo EE espera el 57 % del tiempo (antes 28 %); `checkpointDue`
+  pasa de 43 a 21,7 % inclusivo, el IOP de 31,9 a 14,1 %, la espera en `notifyExternalVSync` de 28,5 a
+  10,1 %, y `advanceEeTimers` queda en 5,9 % propio. El bucle `0x17A2A0` lee T0 en cada vuelta y fuerza
+  la aplicación; el siguiente paso sería un reloj nativo para los temporizadores sin eventos.
+- Anomalía (área de presentación): en una ronda A el hilo del host dejó de iterar hacia t≈5..10 s
+  (solo una línea `[gow-perf]`, la ventana no atendió `WM_CLOSE` y hubo que terminarla), mientras el
+  juego seguía en estado 11. Sus FPS no se usan; su audio y velocidad sí.
 
-### Linux CPU-side speedups (M2, 2026-10-14)
+## Portes de Waffle565: NAX del SPU2 y accesos rápidos del EE (2026-10-15)
 
-New patch `patches/ps2recomp-linux-perf.patch` (registered last in `scripts/compilar.ps1`, because it is generated
-against the full series; it touches `gs_cpu_backend.cpp`, `main.cpp`, `ps2_runtime.cpp`). Changes:
+[Waffle565/God-Of-War-Native-Port](https://github.com/Waffle565/God-Of-War-Native-Port) partió de la pila de
+parches de este repositorio el 2026-10-09. Se portan, con su atribución en los parches y en los commits:
 
-- ImGui debug panel is opt-in on Linux: `GOW_DEBUG_UI=1` (Windows unchanged).
-- Row-parallel CPU rasterizer: `PS2X_GS_RASTER_THREADS=N` (default on Linux: `hw_threads/4`, max 4; `1` = serial;
-  other platforms default to serial). Rows are split by `(y >> 3) % N` so no two workers share a VRAM word; workers
-  use private texture page caches and inherit the caller's MXCSR. Primitives under 8192 px, or whose texture pages
-  overlap the frame/Z pages (feedback), stay serial. Test: `ps2_gs_cpu_parallel_tests.cpp` (VRAM identical to the
-  serial path). `ps2x_tests`: 627 pass, 0 fail.
-- Window title shows live FPS (`... | 59.9 FPS`, guest `vid::Flip` per second, updated once per second).
-- `GOW_SCREENSHOT_AT=<s>[,<s>...]` saves `gow_screenshot_<s>.png` to `GOW_SCREENSHOT_DIR` (default `logs/`, relative to
-  the runner's working directory) from the main loop. Verified: the intro menu is rendered correctly.
+- `ps2recomp-spu2-nax.patch` (runtime@65e1d79): el registro NAX se lee dentro del bloque que suena, como
+  `NextA` en PCSX2. Nuestro NAX apuntaba al bloque siguiente; en el último bloque de una mitad del anillo
+  de streaming quedaba fuera de las dos mitades y 989snd (989NOMID.IRX 0x13258) abortaba el flujo (error
+  0x35): la música se reiniciaba cada pocos segundos. Regresión: NAX dentro del bloque en un anillo de dos
+  bloques; falla con el código anterior (comprobado). El hash de referencia del SPU2 no cambia.
+- `ps2recomp-ee-fast-access.patch` (runtime@96f61ab y la parte de macros de runtime@e96ee58): las macros
+  `READ*`/`WRITE*` acceden al scratchpad directamente cuando el acceso está alineado, y `SET_GPR_*` escriben
+  los 64 bits bajos con un solo almacenamiento. Regresiones para el scratchpad (y su alias `0xF0000000`) y
+  para la semántica de GPR (extensión de signo, 64 bits altos intactos, `$zero`).
 
-Measured (intro, steady state after 3 s, 30 s runs, Intel RPL-P, 16 threads; FPS = `vid::Flip`/s):
+Validación: `ps2x_tests` 640/640 con los dos parches y la VU1 nativa encima. Compilación completa local
+(exe `ad179aa4…`): el barco llega al estado 11 y cierra con `WM_CLOSE`, código 0, con la VU1 nativa
+desactivada. No se ha medido de oído el arreglo de la música; el efecto descrito es el del proyecto de
+origen.
 
-| Config | FPS |
-|---|---|
-| before (panel on, serial CPU GS) | 2.3 |
-| `-` panel off, `PS2X_GS_RASTER_THREADS=1` | 3.0 |
-| panel off, 4 raster threads | 3.6 |
-| panel off, 8 raster threads | 3.7 |
-| panel off, 4 raster threads + `PS2X_GS_THREAD=1` | 4.3 |
+## VU1 nativa de Waffle565, opcional con `GOW_VU1_NATIVE=1` (2026-10-15)
 
-Findings: the runtime was already built `-O3 -DNDEBUG` Release with no sanitizers (only `ps2EntryRunner`, i.e. the
-generated EE code, is `-O1`); it did not show up in the gdb samples (about 55 of 71 busy samples are in the CPU GS,
-mostly `DrawTriangle`/`DrawSprite` -> `SampleTexture`/`WritePixel`, the rest VU1 interpreter), so `-O2` for the runner was not
-tried. The gain is small (about 1.9x total, still ~4 FPS): the per-pixel exact rasterizer and the VU1 interpreter
-dominate, and the intro draws many full-screen layers. `PS2X_GS_THREAD=1` is worth enabling together with the raster
-threads. A real fix still needs a GPU backend. Profiling tip: `perf`/attach are blocked here; launching under gdb with
-`handle SIGUSR2 stop print nopass` (not `noprint`, which implies nostop) and a `pkill -USR2` loop gives usable samples.
+`patches/ps2recomp-vu1-native.patch` reúne, con `cherry-pick` sobre la serie actual, los commits de su
+rama `runtime` 61052ee, 5cea74e, af18417, 0055349, 994a514, 6358428 (solo la parte VU1), 71fb632, ef2692f
+y 1d9d563, más dos ajustes de compilación (`<vector>` y `m_verifySilent`, de runtime@8af9676).
+`tools/vu1/vu1n_gen.py` (de su `main`) genera, a partir de las micromemorias
+capturadas, bloques en C++ con semántica inmediata y latencia de flags entre bloques. El motor exacto
+sigue de respaldo para cualquier bloque que falte y como oráculo: `GOW_VU1N_VERIFY=<n>` compara n
+ejecuciones (estado, memoria de datos y paquetes GIF; enteros exactos, floats con tolerancia relativa
+2e-4). `GOW_VU1N_RECORD/REPLAY` graba y repite para comparar versiones del generador. Aquí queda
+**desactivada por defecto**; en el proyecto de origen está activa.
 
-### Vulkan GS backend, phase A (2026-10-14)
+- Generación con las 501 micromemorias de este repositorio: 1302 bloques distintos, 1302 generados, 0
+  sin soporte.
+- Verificación con el juego (barco, 120 s, `GOW_VU1N_VERIFY=3000`): **2000 ejecuciones comparadas, 0
+  discrepancias** frente al motor exacto. Estado 11 alcanzado y cierre con `WM_CLOSE`, código 0.
+- Rendimiento: mismo exe (`ad179aa4…`) alternando `GOW_VU1_NATIVE=0/1`, 3+3 rondas de 150 s,
+  `GOW_PERF_DIAG=1`. `vu_ms` por ventana de 5 s: 4066 y 3630 (exacta) frente a 1474, 1477 y 1647 (nativa),
+  un −60 %. La velocidad de juego no mejora (0,76 y 0,66 frente a 0,58, 0,57 y 0,73), y con
+  `GOW_PERF_DIAG=1` ningún lado llega a 1,00. Este modo de perfil tiene un coste propio apreciable; con
+  `frames`, la rama `checkpoint-fast` da 1,00.
+- Por qué no mejora (muestreo `sampler_vu1n`, nativa activa, `GOW_PERF_DIAG=frames`): EE, VU1 y frontend
+  GS esperan el 52, 66 y 87 % del tiempo. El 52 % del EE está entero dentro de `GS::notifyExternalVSync`,
+  esperando `GS::m_stateMutex` (`std::recursive_mutex`) para llamar al observador de VSync; en la base
+  medida antes eran el 28,5 %. Inferencia: otro hilo, probablemente el de presentación/GPU, retiene ese
+  mutex durante mucho tiempo, y cuanto antes llega el EE al VBlank, más espera. Es área de
+  GS/presentación: se deja documentado para quien la lleva. Hasta resolverlo, acelerar EE, IOP o VU1 no
+  se traduce en velocidad de juego.
+- El atasco intermitente volvió a aparecer en una ronda con la VU1 exacta (`vu1ab_1A`): estado 4 a ~22
+  s, sin flips desde t≈36..40 s, justo antes del paso a estado 11; EE ≈3800 ms e IOP ≈1200 ms por
+  ventana, sin VU ni GS. Es la misma firma que en el runner 105, pero en otra transición de carga. Esa
+  ronda tenía `GOW_STALL_DIAG=0`; se lanza una serie con el diagnóstico para capturarlo.
 
-New patch `patches/ps2recomp-gs-vulkan.patch` (registered last). Design and phases are in [`docs/VULKAN.md`](VULKAN.md).
-`GSVulkanBackend` wraps `GSCpuBackend`. Untextured sprites and triangles (flat/Gouraud; CT32/24/16/16S; FBMSK/FBA; no
-blend, tests, fog or Z write) run as Vulkan compute dispatches on a GPU copy of VRAM. Everything else, including
-`Present`, runs on the CPU after the GPU run is copied back into host VRAM. Selection: `PS2X_GS_BACKEND=vulkan|cpu`. The Linux
-runner defaults to Vulkan and falls back to CPU with a `[gow-gs]` log line. `PS2X_VK_DEVICE=<n>` forces a device.
+## Integración de #91 y #97 (2026-10-15)
 
-Verified: from a fresh checkout at the pinned commit, all patches apply in order and `ps2x_tests` passes 628/628 (new test
-"GS Vulkan backend": identical VRAM bytes against the CPU on Intel RPL-P/Mesa, NVIDIA RTX 5050 and llvmpipe). With a temporary
-finish-per-primitive change, the whole suite also passes under `PS2X_GS_BACKEND=vulkan`. The runner builds. A 34 s run with
-`PS2X_GS_BACKEND=vulkan` selects the Intel iGPU and shows the main menu correctly (`GOW_SCREENSHOT_AT=28`). FPS is unchanged
-(title: 4.0/4.0/3.0 at 15/22/29 s for both Vulkan and CPU), as expected: the intro is almost all textured primitives, which still
-run on the CPU. Next: phase B (textures/CLUT on the GPU), then phase C (blend/tests/Z, batching, dirty-page copies).
+- #91 (menos comprobaciones de espera en bloques VU1): fusionada. Con las 501 micromemorias del juego solo 1
+  de 1294 bloques cumple las condiciones del camino rápido; el efecto en el juego es despreciable. Ejecución
+  de 60 s en el barco: estado 11, cierre con `WM_CLOSE`.
+- #97 (subidas P4 por filas): conflicto de orden en `compilar.ps1` resuelto (el parche va al final). La serie
+  de 123 parches aplica limpia. Compilación completa local (exe `0cddf7cf…`) y comparación visual con un exe
+  sin #97 (`02e81c90…`): 10 capturas en los mismos instantes (4..110 s) del título, la elección de
+  dificultad, el primer plano de Kratos y el combate en el barco, con texto del menú, HUD y contador de
+  golpes correctos. No se ven diferencias de texturas; el combate difiere por la variación normal entre
+  ejecuciones. No se midió rendimiento.
 
-### Vulkan GS backend, phase B (2026-10-14)
+## El VBlank del EE ya no espera al mutex del GS (2026-10-15)
 
-`patches/ps2recomp-gs-vulkan.patch` regenerated in place (still last). Design: [`docs/VULKAN.md`](VULKAN.md). The GPU now
-draws textured sprites and triangles (every texture PSM, CLUT CT32/24/16/16S with CSM1/CSM2/CSA, TEXA, the four wrap modes,
-TCC/TFX, nearest/bilinear, FST and STQ with an exact 1/Q), alpha test (all AFAIL modes), blending (PABE, COLCLAMP) and Z
-test/write (interpolated Z in fixed point). Per-primitive state moved from push constants to a record buffer; the CLUT
-is a GPU buffer copied when a run opens; `TextureFlush` and non-loading `LoadClut` no longer end a run. New
-`PS2X_GS_VULKAN_STATS=1` (see VULKAN.md) logs GPU/CPU draws per second with fallback reasons and run-ending causes.
+Con `GOW_SAMPLER` registrando también el hilo del host y el trabajador GPU
+(`ps2recomp-sampler-threads.patch`), y la VU1 nativa activa (`sampler_gs_n`):
 
-Verified: `ps2x_tests` 629/629 (run from `PS2Recomp/`; the new "Textured Vulkan VRAM equals CPU VRAM" plus the extended
-untextured scene are byte-identical on Intel RPL-P, NVIDIA RTX 5050 and llvmpipe; a deliberate 1-bit change to the
-bilinear weights makes the textured test fail). Menu screenshots (`GOW_SCREENSHOT_AT=8,15,28,38`) look right: fire, logo,
-Kratos, "New Game".
+- El trabajador GPU está ocupado el 87 % del tiempo; el 73 % es `GSGpuBackend::Impl::prepareTarget`, y
+  dentro de él, ~62 % es la espera de las barreras del anillo de subidas (`GSGpuUpload::Ring::put`,
+  `WaitOnAddress` en el controlador). El host pasa el 91 % en `SwapBuffers`. Inferencia: la GPU está
+  saturada con este renderizador.
+- El frontend GS espera hueco en esa cola (`GSThreadedBackend::PublishLocked`, 65 %) **dentro de
+  `processGIFPacket`, con `GS::m_stateMutex` tomado**. El EE espera ese mutex en
+  `GS::notifyExternalVSync` (58 %) al procesar cada VBlank, así que los VBlank llegan tarde y la
+  velocidad del juego cae (0,58).
 
-Stats and FPS, title menu/intro on Intel RPL-P, 42 s runs (title FPS = `vid::Flip`/s):
+`ps2recomp-gs-vsync-unlocked.patch`: `notifyExternalVSync` solo toma el mutex si hay observador externo
+(el espejo PCSX2 opcional); sin él no lee ni escribe estado del GS. Regresión: un backend que bloquea
+`Submit` con el mutex tomado; la notificación debe volver. Falla sin el cambio (comprobado).
 
-| Step | GPU draws/s | CPU draws/s, main reason | FPS |
+Medición (exe A `a075fcc7…` sin el cambio, exe B `02e81c90…` con él; ambos con `GOW_VU1_NATIVE=1`, 3+3
+rondas alternas de 150 s en el barco, ventanas de t=50..145 s, `GOW_PERF_DIAG=frames`):
+
+| mediana [mín..máx] | A | B |
+|---|---|---|
+| velocidad de juego | 0,63 [0,36..0,96] | 1,00 [0,33..3,33] (rondas: 1,00 / 0,99 / 1,00) |
+| muestras de SPU2 por segundo | 29.272 | 49.160 |
+| entradas a `vid::Flip` por segundo | 33,2 | 31,8 |
+
+Cuando la GPU no da abasto, el juego ya no se ralentiza: conserva la velocidad real y el audio, y pierde
+cuadros. Una ronda B tuvo una ráfaga de recuperación (máximo 3,33) que pudo coincidir con una compilación
+de pruebas lanzada en paralelo. La saturación de la GPU sigue: es el siguiente objetivo (renderizador).
+
+## Migración a la base de Waffle565 (2026-10-15)
+
+Decisión del usuario: adoptar como base el runtime de **Waffle565/God-Of-War-Native-Port**
+para ejecutar el juego como su port. Detalle de los parches en [`ARQUITECTURA.md`](ARQUITECTURA.md#base-del-runtime-waffle565).
+
+**Hecho (verificado):**
+- Suite `ps2x_tests` 439/439 en Windows (MSVC) y en Linux (GCC, WSL Ubuntu 24.04), con 89 casos retirados de piezas
+  sustituidas por diseño (lista en `patches/ps2recomp-waffle-tests.patch`).
+- Dos defectos del runtime de Waffle corregidos en parches propios: no enlazaba con GCC (`inline` en funciones de
+  PCSX2 llamadas desde otra unidad) y la VU1 nativa perdía su `NativeState` con cada `VU1Interpreter`
+  (`gow_vu1_fmac_test` pasaba de 7,6 GB; ahora 47 MB).
+- Compilación completa en Windows y ejecución con el disco extraído (`tools/iso_extract.py --layout`), valores de
+  `play.cmd` (`PS2X_GS_WORKER=1`, `GOW_GS_FINISH_ASINCRONO=1`) y guion de partida nueva (`logs/tools/correr_w.py`,
+  privado): menú de dificultad, barco, combate, HUD y sangre correctos en las capturas (1024×894, resolución
+  interna 2x). La ventana responde a WM_CLOSE.
+- IOP nativo: una ejecución con `PS2X_IOP_DUMP_MODULES` vuelca los 8 IRX; con `GOW_IOP_MODULOS` y recompilación
+  los 8 corren como código nativo. Inicio de la partida (`[gow-pad2:test] gameplay start`): 33,6 s con el
+  intérprete, 21,1 s con el IOP nativo y `GOW_FAST_BOOT=1` (Waffle documenta ~20 s).
+- VU1: `GOW_VU1_STATS=1` da 0 pasos interpretados (todo bloque nativo), ~2,7 s de VU1 por ventana de 5 s.
+
+**Medición (escena del barco con combate, 150 s, ventanas finales, `guest_flip_hz` = llamadas a `vid::Flip`, no FPS
+físicos; velocidad del juego con `GOW_DELTA_DIAG`):**
+
+| Ejecutable | Rondas | `guest_flip_hz` mediana (mín–máx por ronda) | velocidad |
 |---|---|---|---|
-| CPU backend (`PS2X_GS_BACKEND=cpu`) | 0 | all | 3.0-4.0 |
-| phase A | ~100 | ~55k, `blend` | 4.0 |
-| + textures | ~120 | ~55k, `blend` | 4.0 |
-| + blend, `TextureFlush` keeps runs | ~500 | ~50k, `alpha-test` | 3.0 |
-| + alpha test, flat Z | ~1.3k | ~44k, `z-varying` | 3.0 |
-| + interpolated Z | ~9.8k | ~21k, `tex-feedback` | 2.0 |
+| PR #101 (`bin\gsn`, base anterior, GS y VU1 nativos, `GOW_PERF_DIAG=frames`) | 3 | 59,98 / 60,00 / 60,00 (59,79–60,20) | 1,00 |
+| Base Waffle (`bin\waffle2`, IOP nativo, `GOW_PERF_DIAG=frames`) | 2 | 44,17 / 48,53 (42,75–60,16) | 1,00 |
+| Base Waffle (`GOW_PERF_DIAG=1`, más caro) | 3 | 47,54 / 44,34 / 44,80 | 1,00 |
 
-Finding: correctness is there, but FPS gets worse as more draws move to the GPU. The cost is one dispatch plus a full
-barrier per primitive (~10k/s) and 60-90 GPU runs per second (two 4 MiB copies each, ended mostly by `LoadClut` and
-`BeginTransfer`), on top of ~21k/s `tex-feedback` draws that stay on the CPU. Until that is fixed the CPU backend is
-faster on this machine (`PS2X_GS_BACKEND=cpu`). Next (phase C): batch primitives per dispatch (tile binning like `kRaster`)
-instead of one barrier each; run CLUT loads and host-to-local transfers on the GPU so runs are not split; check whether the
-`tex-feedback` draws really overlap (exact texel rectangle instead of the page estimate); dirty-page copies.
+Hecho: en esta escena la base de Waffle da menos flips por segundo que la PR #101, sin perder velocidad de juego.
+Desglose de la base de Waffle (`GOW_PERF_DIAG=1`, ventana de 5 s): EE 2,6 s, espera de VBlank del EE 2,1 s, VU1
+2,8 s (hilo del trabajador), GS 1,9 s (hilo stage); el EE apenas espera al trabajador (`PS2X_GS_WORKER_DIAG=1`:
+~15 ms por ventana en `mmio 0x12001000`). Inferencia: por cuadro, EE (~12 ms) + VU1 (~13 ms) supera los 16,7 ms
+y parte de los cuadros pierde el VBlank. Hipótesis: faltan las mejoras del EE posteriores a la bifurcación de
+Waffle (checkpoint-fast #94, VBlank sin mutex #100), que no aplican tal cual sobre su runtime.
+Observación aparte: el ejecutable de la PR #101 con `GOW_PERF_DIAG=1` se quedó colgado a los ~60 s
+(`runs\abw_perfA`), otra aparición del atasco intermitente de la base anterior.
 
-### Vulkan GS backend, phase C (2026-10-14)
+**Próximos pasos:** portar checkpoint-fast y el VBlank sin bloqueo a la base de Waffle y medir A/B; tabla `[mmio]`
+del reproductor de vídeo (13 entradas de Waffle, privadas); diagnósticos `GOW_SAMPLER`, `GOW_STALL_DIAG`,
+`GOW_SPU2_PERF`.
 
-`patches/ps2recomp-gs-vulkan.patch` regenerated (still last; it now also touches `ps2_memory.cpp` to allocate GS VRAM
-4096-aligned). Details in [`docs/VULKAN.md`](VULKAN.md) ("Phase C"): zero-copy import of host VRAM, primitive batching (one
-dispatch over the union rectangle, per-pixel ordering inside the thread, page-set hazards between batches), exact page-level
-`tex-feedback`, new `z-alias`, and asynchronous partial submissions. In the test the Z buffer moved from page 200 to 480
-because it overlapped the frame (a real hazard the new check handles on the CPU).
+### Rutas rápidas del UNPACK de VIF1 sobre la base de Waffle565 (2026-10-16)
 
-Verified: `ps2x_tests` 629/629 (both the copy path and a page-aligned, imported VRAM are byte-identical to the CPU;
-a batch bug showed up in the old scene and was fixed with the frame/Z page check). Title screenshots (`GOW_SCREENSHOT_AT=12,30`)
-show fire, logo, Kratos, "New Game". Intel RPL-P, title FPS (window title, 4 s samples over 40 s):
+- Muestreo (`muestrear`, 30 s, barco con la cámara quieta, `bin\waffle2`): en el hilo trabajador (VIF1 + VU1)
+  `PS2Memory::processVIF1Data` era el 18,5 % de las muestras, más que la VU1 nativa (`runNative` 11,3 %). El
+  runtime de Waffle descomprime cada vector por la ruta genérica.
+- `patches/ps2recomp-vif1-unpack-rapido.patch` porta las rutas rápidas de la base anterior (un bucle por formato
+  sin máscara y la ruta SSE con máscara o STMOD 1-3). Diferencia con la versión anterior: STMOD 3 también guarda el
+  dato en ROW, como la ruta genérica de Waffle (y PCSX2), así que sin máscara solo STMOD 0 va por el bucle simple.
+- Prueba `VIF1 UNPACK fast paths match the generic path`: compara las dos rutas (interruptor
+  `ps2_vif1::setUnpackFastPaths`, solo para pruebas) en memoria de VU1 y ROW para todos los formatos, máscara,
+  STMOD 0-3, cinco ciclos CL/WL y extensión de signo. Falla si se quita el caso STMOD 3 (comprobado).
+- A/B alterno, 3 rondas de 130 s, misma escena, `GOW_PERF_DIAG=frames` (`guest_flip_hz` de las 12 últimas
+  ventanas, no FPS físicos):
 
-| Step | GPU draws/s | CPU draws/s | GPU wait | FPS |
-|---|---|---|---|---|
-| CPU backend | 0 | ~55k | - | 3.0-4.0 (avg ~3.8) |
-| phase B | ~9.8k | ~21k `tex-feedback` | 2 copies x ~90 runs/s | 2.0-3.0 |
-| + zero-copy + exact feedback + batches (256) | ~43k | ~0.2k | ~500 ms/s | 2.0-3.0 |
-| + larger batches | ~56k | ~0.3k | ~410 ms/s | 3.0-4.0 |
-| + async partial submission | ~61k | ~0.3k | ~340 ms/s | 4.0-5.0 (avg ~4.2) |
-
-Result: the GPU draws practically everything now (CPU draws 55k/s -> 0.3k/s), and Vulkan matches or slightly beats the CPU
-backend (~4.2 vs ~3.8 FPS over 40 s in the intro/menu). It is not a large win: the GPU is busy ~35% of each second and
-the run still ends 100-160 times per second at `LoadClut`/`BeginTransfer` (the CPU waits for the GPU there), so GPU and
-EE time overlap only partly. Default: Vulkan stays the Linux default (`>=` CPU); `PS2X_GS_BACKEND=cpu` selects the CPU.
-Next: per-primitive CLUT snapshots and page-set checks so `LoadClut`/uploads/CPU draws that don't touch pending GPU pages don't
-wait, then fog, lines/points, destination alpha test and a GPU compositor for `Present`.
-
-
-### Whole-frame profile (Linux, Vulkan GS, 2026-10-14)
-
-Question: the Vulkan backend draws ~61k primitives/s on the GPU with ~0.3k CPU fallbacks, yet the intro/menu stays at
-~4 FPS. What limits it? Method (no `perf`): per-thread CPU time from `/proc/PID/task/*/stat` over 20 s, and 91 gdb
-samples (runner launched under gdb, `handle SIGUSR2 stop print nopass`, `pkill -USR2` every 0.7 s, `thread apply all bt 10`)
-on the title/intro, Intel RPL-P, `PS2X_GS_VULKAN_STATS=1 GOW_DELTA_DIAG=1`. gdb stops perturb timing a little; the
-percentages agree with the in-runtime counters (`finish_ms`, `cpudraw_ms`).
-
-**Threads (default Vulkan run).** One thread is the bottleneck: `GameThread` (the EE thread) is at 65% of a core. The
-other threads are idle: render/main thread 6% (it sleeps in `EndDrawing`, i.e. `SetTargetFPS(60)`, in 79 of 91 samples),
-the three remaining `GameThread`s (IOP/CD/disk workers: `gdrv0`, `disk$0`, `traceq0`, `sh0`) wait on condition variables
-with 0% CPU, audio (miniaudio/pulse) is in `ppoll`. The other ~35% of the EE thread's second is not CPU: it is blocked in
-`drmSyncobjWait` (GPU fence), matching `finish_ms` = 320-330 ms/s. There are no sleeps on the EE thread.
-
-**Ranking of the EE thread's wall time** (90 samples; `finish_ms`/`cpudraw_ms` from the stats line):
-
-| # | Cost | Share | Evidence |
-|---|---|---|---|
-| 1 | VU1 interpreter, run synchronously inside `PS2Memory::processVIF1Data` (`stepInterpreted`, `execUpper`, `normalizeFmacResult`, `applyFmacDest*`, `advanceOneCycle`, `xgkickCopy`) | ~41% (37/90) | ~100 ms per guest frame |
-| 2 | CPU waiting for the GPU (`vkWaitForFences` -> `drmSyncobjWait`; runs ended by `LoadClut` ~90/s, `BeginTransfer` ~28/s, `tex-feedback` ~30-40/s) | ~33% (30/90) | `finish_ms` 320-330 per second |
-| 3 | Remaining CPU raster fallbacks (`GSCpuBackend::DrawSprite` -> `SampleTexture`/`WritePixel`): only ~300 prims/s (`tex-feedback` ~250, `z-alias` ~50), but they are large sprites | ~21% (19/90) | `cpudraw_ms` 150-165 per second |
-| 4 | Vulkan `Submit` mutex / record, GIF packet parsing | ~4% | `record_ms` 1 |
-| 5 | Recompiled EE code (all `ps2_*`/generated functions) | ~0% (0/90) | no sample on an EE function |
-| 6 | VU0, DMA/VIF other than VU1, IOP/CD emulation | ~0% | no samples; IOP/CD threads idle |
-| 7 | Present: CPU compositor `PresentFromLocalMemory` + raylib upload + `EndDrawing` | ~6% of one core, on the render thread | not on the EE critical path; the EE thread only waits on the backend mutex occasionally (8 of 91 samples are the render thread on `latchHostPresentationFrame` lock) |
-
-**Is the EE throttled?** No. The guest vblank is driven by EE cycles (`EeScheduler` virtual time with host pacing that
-only sleeps when the EE is ahead), and the EE thread is ~98% busy or in a GPU wait. `SetTargetFPS(60)` only paces the
-render thread. **Game time is not real-time-locked:** `GOW_DELTA_DIAG` shows the guest delta is a constant 0.0167 s per
-frame, so the game runs in slow motion: speed (game seconds / wall seconds) is ~0.07 at ~4 FPS, i.e. about 15x slower than
-real time; animations are not skipping, frames are just slow to produce. The intro draws ~15k primitives per guest frame
-(62k/s / 4 FPS) and the VU1 programs that generate them dominate.
-
-**Comparison** (30-45 s steady state, frames = `vid::Flip`/s, 20 s thread CPU sample):
-
-| Config | FPS | Speed | EE thread CPU | Notes |
-|---|---|---|---|---|
-| Vulkan (default) | 4.05 | 0.070 | 65-66% | rest is GPU wait |
-| `PS2X_GS_BACKEND=cpu` | 3.65 | 0.061 | 96% + 3 raster workers at 11% | EE thread saturated by GS work |
-| Vulkan + `GOW_DEBUG_UI=1` | 3.99 | 0.068 | 65% | the panel is not a measurable cost here |
-| Vulkan + `PS2X_GS_THREAD=1` | 5.13 | 0.088 | 58% + GS thread 27% | GPU waits move to the GS thread and overlap VU1 |
-
-**Three most promising optimizations**
-
-1. **Take VU1 and GS submission off the critical path / speed up the interpreter** (largest item, ~41%). First, make
-   `PS2X_GS_THREAD=1` the Linux default (measured +27%, trivial, low risk; check the `Finish`-after-write cases). Then cut
-   per-instruction cost in `VU1Interpreter` (`normalizeFmacResult` and `applyFmacDest*` per lane, per-cycle
-   `advanceOneCycle`/pipeline bookkeeping; pre-decoded and specialised op handlers) or run VU1 on its own thread with the
-   VIF1 packet. Expected: 1.2-1.5x. Difficulty: low for the default, medium-high for the interpreter (must stay bit-exact).
-2. **Stop the CPU from waiting on the GPU** (~33%). Version the CLUT per primitive (snapshot ring) so `LoadClut` never ends a
-   run, and let `BeginTransfer`/uploads proceed when their pages do not overlap pending GPU pages (page-set check, already
-   needed for batching). Combined with the GS thread this turns 330 ms/s of blocking into overlap. Expected: up to ~1.3x
-   (to ~5.5-6 FPS alone). Difficulty: medium.
-3. **Draw the last fallbacks on the GPU** (`tex-feedback`, `z-alias`; ~21%): copy the source texture rectangle to a temporary
-   buffer before the draw (feedback), and give `z-alias` the CPU's row order inside the dispatch. Expected: up to ~1.25x.
-   Difficulty: medium. Together with 1 and 2 the ceiling is about 8-10 FPS; real-time speed needs ~15x, so the VU1 work
-   (a faster interpreter or a VU1 recompiler/JIT) is the long-term lever.
-
-Not measured: GPU-side time (no timestamp queries; `finish_ms` includes queue latency), per-VU1-program cost, and the
-inner EE rate. Reproduce: `PS2X_GS_VULKAN_STATS=1 GOW_PERF_FRAME_PC=0x001837B8 GOW_DELTA_DIAG=1` with the launcher and
-`--no-gui`; per-thread CPU from `/proc/PID/task/*/stat` (fields 14+15).
-
-### Linux: compiled VU1 and default GS thread (2026-10-14)
-
-**Why the VU1 interpreter ran.** The compiled VU1 path exists (`ps2recomp-vu1-compiled.patch` +
-`ps2recomp-vu1-runner.patch` + `tools/vu1/generar_vu1.cpp`) but is opt-in: CMake only generates and links
-`vu1_generado/programa*.cpp` when `PS2X_VU1_MICROCODE_DIR` points to a local folder of `*.bin` microprogram dumps.
-`scripts/compilar.ps1` forwards `GOW_VU1_MICROCODIGO` to it; `scripts/compilar_linux.py` did not, so the Linux runner had
-only the interpreter. The dumps are game data: capture them locally with `GOW_VU1_CAPTURA=<folder>` while playing (the
-runtime writes one `vu1_<hash>.bin` per distinct microprogram) and never commit them or the generated C++.
-
-**Change.** `compilar_linux.py` now reads `GOW_VU1_MICROCODIGO=<folder>` and passes the two CMake variables (error if the
-folder has no `*.bin`). Workflow: run once with `GOW_VU1_CAPTURA=~/vu1_micro`, then
-`GOW_VU1_MICROCODIGO=~/vu1_micro python3 scripts/compilar_linux.py`. `GOW_VU1_SIN_COMPILAR=1` forces the interpreter at
-run time. New `patches/ps2recomp-linux-vu1.patch` (last in `compilar.ps1`) makes `PS2X_GS_THREAD` default to 1 on Linux
-(`PS2X_GS_THREAD=0` opts out); it is a one-line change in `main()` with no unit test possible (the env default is read in
-`MakeDefault`, already covered).
-
-**Verification** (144 dumps captured in a 100 s run to the title screen; intro+title, Vulkan, GS thread on):
-gdb breakpoint counts over 60 s: compiled build `compiledProgramFor` 123,601 runs and 0 `stepInterpreted` calls (every
-program was compiled, no fallback); with `GOW_VU1_SIN_COMPILAR=1` 1,259,370 `stepInterpreted` calls. Title screenshots
-at 100 s look identical to the interpreter's (flames, logo, "New Game"). Suite: 629/629.
-
-| Config (`GOW_DELTA_DIAG`, ~108 s average) | FPS |
-|---|---|
-| Before: interpreter, GS thread off (earlier profile) | 4.05 |
-| Interpreter + GS thread on | 5.78 |
-| Compiled VU1 + GS thread on | 6.08 |
-
-Compiled VU1 is only ~5% faster than the interpreter here, so the 41% sample share of the interpreter was not removed:
-the compiled code still runs on the EE thread inside VIF1 processing. Next: `PS2X_VU1_HILO=1` (VU1 on its own thread,
-`ps2recomp-vu1-thread.patch`) and capturing more dumps from the intro/gameplay (an uncaptured program would fall back to the
-interpreter per pair).
-
-### Linux: threading/pacing matrix and new defaults (2026-10-14)
-
-Method: intro -> title, Vulkan GS, compiled VU1 (144 local dumps), `GOW_DELTA_DIAG=1 GOW_PERF_FRAME_PC=0x001837B8`, 40 s
-per run, FPS = `vid::Flip` count over the second half of the run (18 windows), per-thread CPU from `/proc/PID/task`.
-The default for every row is Vulkan + `PS2X_GS_THREAD=1` + compiled VU1. "Speed" is game seconds per wall second.
-
-| Config | FPS | Speed | Notes |
-|---|---|---|---|
-| default | 5.63 | 0.09 | GS thread 38%, EE 26% of a core |
-| `PS2X_GS_THREAD=0` | 5.41 | 0.09 | one thread at 53% |
-| `PS2X_VU1_HILO=1` | 5.97 | 0.31 | VU1 worker ~15% |
-| `HILO=1` + `PS2X_GS_FRENTE=1` | 5.88 | 0.39 | |
-| `GOW_GS_FINISH_ASINCRONO=1` | 6.30 | 0.11 | |
-| `HILO` + `FINISH_ASINCRONO` | 6.38 | 0.27 | |
-| `HILO` + `FRENTE` + `FINISH_ASINCRONO` | 6.66 / 6.58 / 6.59 (140 s) | 0.37-0.40 | best, repeatable |
-| same, `PS2X_GS_BACKEND=cpu` | 5.71 | 0.28 | GS thread 94% |
-| same, `PS2X_GS_QUEUE_CHUNKS=256` / `8` | 6.49 / 6.56 | 0.37 | queue depth irrelevant |
-| `PS2X_GS_RASTER_THREADS=1/4/8` | 5.52 / 5.61 / 5.44 | 0.09 | no effect (CPU fallback is ~1% of the work) |
-| `GOW_XGKICK_IMMEDIATE=1`, `PS2X_GS_COMPACT_QUEUE=0`, `PS2X_GS_QUEUE_CHUNKS=64`, `GOW_FAST_BOOT=1` | 5.62 / 5.51 / 5.53 / 5.45 | 0.09 | no effect |
-
-The README's 12 -> 25 fps (Windows, Athens docks) is not reproduced here: the same three knobs give +17% FPS on Linux in
-the intro, with a larger gain in game speed (the guest then runs ~15 Hz game ticks, delta 0.067 s, instead of 60 Hz ticks at
-4x lower rate). Speed values are only comparable between rows that share the same thread layout.
-
-**Where the EE thread blocks** (best config, 62 + 30 gdb samples of every thread). The EE thread (`EeScheduler::run`) is
-~90% in a `pthread_mutex_lock` inside `GS::notifyExternalVSync` (the `GS::m_stateMutex` recursive mutex). The holder is the GIF
-producer (`gsFrontLoop` -> `GS::processGIFPacket`/`vertexKick`), which in turn waits in `GSThreadedBackend::PublishLocked`
-(queue backpressure, 56/62 samples) for the GS thread; the GS thread is in `drmSyncobjWait` (GPU fence, 41/62) or running
-CPU fallbacks (`DrawSprite` -> `SampleTexture`, ~25%). The VU1 worker waits on its condvar (46/62) and compiled-VU1 code
-shows up in only ~7 samples. So the chain EE -> `m_stateMutex` -> GIF thread -> GS queue -> GPU fence is the limiter; a
-deeper queue does not help, i.e. the GS thread's throughput (GPU waits + fallbacks) is the actual cap.
-
-**Defaults chosen.** New `patches/ps2recomp-linux-defaults.patch` (last in `compilar.ps1`): on Linux `main()` calls
-`ps2x::ApplyLinuxThreadingDefaults()` (`runtime/linux_defaults.h`), which `setenv(..., overwrite=0)`s `PS2X_VU1_HILO=1`,
-`PS2X_GS_FRENTE=1`, `GOW_GS_FINISH_ASINCRONO=1`. Opt out per knob (`PS2X_VU1_HILO=0` etc.; FINISH needs a value other than 1).
-Test: `LinuxDefaults` in `ps2xTest/src/linux_defaults_tests.cpp` (suite 630/630). Verification: 140 s run with the defaults
-reaches the title at 30 s with a screenshot matching the baseline's title (flames, logo, "New Game"); later frames are
-a transition (black at 48 s, title again at 56-72 s; black at 70 and 120 s in the 140 s run were not inspected further,
-the game was past the title in that run). No hang in 140 s, but the README warns of occasional hangs with these knobs,
-so soak-test before relying on it. From a clean pinned-commit tree all 114 patches in `compilar.ps1` order apply.
-
-**Next steps.** (1) Hold `m_stateMutex` for less time or make `notifyExternalVSync` lock-free/queued so the EE never waits
-on the GIF thread. (2) Per-primitive CLUT versions and non-overlapping uploads to cut GPU fence waits (GS thread is the cap).
-(3) Draw `tex-feedback`/`z-alias` on the GPU. (4) Soak test (30+ min, gameplay) for the async-FINISH hang before keeping the
-default on Windows too.
-
-## GPU time measured, magenta frame, soak (2026-10-14, Linux, Intel RPL-P)
-
-- **Device**: the runner picks the Intel iGPU (RPL-P, Mesa 25.2); NVIDIA RTX 5050 and llvmpipe also exist.
-- **GPU time in the title menu** (~6.6 FPS): the GPU is busy about 550-600 ms of every second (~55-60%), ~800 dispatches/s,
-  ~88 primitives per dispatch, avg 0.78 ms per dispatch, ~100k GPU prims/s. EE waits in run ends (`finish_ms` ~550-680) match
-  the GPU busy time, so the pipeline is largely **GPU-bound on shading**, not latency-bound. Run-end waits: LoadClut
-  ~140 ends = ~350 ms/s, BeginTransfer ~40 = ~80 ms/s, Flush/Present/tex-feedback 30-80 ms/s each; they are the points
-  where the CPU needs the GPU's result, not extra cost.
-- **Union rectangles are not wasteful**: union/covered area is 0.7x (union is smaller than the sum of the primitives' own
-  rectangles because they overlap); 70% of dispatches are <=2x, none >32x. The threads walk ~1.7-2 G primitive-iterations/s.
-- **Tile culling** (workgroup bitmask) cut avg dispatch time 0.78 -> ~0.70 ms (~10%): the walk was not the bottleneck. Remaining
-  cost is per-pixel shading (~90 Mpx/s of covered area while busy). Next candidates: CLUT versions per primitive so LoadClut
-  does not end runs, then cheaper pixel work (swizzled storage-buffer read-modify-write, 64-bit edge math).
-- **Magenta frame ("0.0 FPS", pure #FF00FF)** is the `blankFallback` placeholder of `gs_host_present.cpp` (PMODE off). It
-  appeared because my reset of `PS2Recomp/` to the pinned commit with `git stash -u` dropped two local, tracked-file edits that
-  the Linux build relies on (`ps2xRuntime/src/runner/register_functions.cpp`, the recompiler output, and
-  `ps2xRuntime/cmake/ReleaseMode.cmake`): the EE jumped to 0x100008 (`missing-target`) and never enabled the display. Restoring them
-  fixed it. It is not caused by the committed code or by the timestamp/shader changes.
-- **Black screenshots**: single isolated black frames (about 1 in 25-100 screenshots, at 7-21 s and rarely later) happen with
-  both the CPU and the Vulkan backend, so they are not a Vulkan bug (likely a presented frame between scene changes; not
-  traced further). The 5-minute soak ran without a hang: ~100k GPU prims/s until 300 s; title menu rendered correctly
-  (screenshots viewed), but 5 of 11 sparse shots (150-300 s) were black, which later runs (26/26 non-black every 5 s) did not
-  reproduce. Open: confirm whether a late-menu fade/attract mode explains it.
-
-### Vulkan device selection and Linux build reproducibility (2026-10-14)
-
-**Device selection** (`patches/ps2recomp-gs-vulkan.patch`): the default is now discrete, then integrated, virtual,
-CPU (it was integrated first). The device list and the choice are logged; `PS2X_VK_DEVICE=<index|name substring>`
-forces one and an unmatched value falls back with a warning. New test "Unmatched PS2X_VK_DEVICE falls back to the
-default device" (it checks the fallback keeps the backend ready; it cannot read the chosen device name). Launcher:
-`gpu` setting (`Auto` default) maps to `PS2X_VK_DEVICE`, listed through `vulkaninfo --summary`. NVIDIA vs Intel
-numbers (16.9 vs 7.1 FPS, ~102 vs ~262 GPU ms/s) and the zero-copy / presentation checks are in `docs/VULKAN.md`.
-
-**Build reproducibility:** `scripts/compilar_linux.py` used to edit the PS2Recomp checkout outside the patches.
-Inventory: (1) `ps2xRuntime/cmake/ReleaseMode.cmake`, commenting out the IPO `set_property`; (2) appending
-`target_include_directories(ps2EntryRunner ... src/runner)` to `ps2xRuntime/CMakeLists.txt`; (3) appending a
-`-O1` compile option for `ps2EntryRunner`; (4) rewriting `build/build.ninja` so FFmpeg links `.so` instead of `.a`.
-The same lines (2) and (3) had leaked into `ps2recomp-gs-vulkan.patch`; they were removed from there. (1)-(3) now
-live in the new `patches/ps2recomp-linux-build.patch` (last in the order in `scripts/compilar.ps1`), behind the
-options `PS2X_DISABLE_IPO` and `PS2X_RUNNER_O1` (both OFF by default, so Windows is unchanged; the script passes
-ON; the include line is unconditional and carries the `GOW-Port include` marker the Windows script looks for).
-(4) stays in the script: it depends on which FFmpeg pkg-config finds on that machine. `register_functions.cpp`
-is not edited: `ps2_recomp` generates it into `build-linux/generado/` and the script copies it (with every other
-generated file) into `ps2xRuntime/src/runner/`; that is machine output and is never committed.
-Verified: a fresh clone of the pinned commit in a separate temp dir applies all 115 patches in order; the real
-checkout was brought to the same state, rebuilt incrementally (cmake with the new options + `ps2EntryRunner`, 6
-steps), the game starts and renders on NVIDIA and Intel (`GOW_SCREENSHOT_AT=30` shows the Options menu), and
-`ps2x_tests` reports 631 passed, 0 failed. A from-scratch rebuild in the separate clone was not done. A full
-`compilar_linux.py` run was not repeated (it regenerates the runner); only the cmake/ninja steps it performs.
-
-
-## Whole-frame profile on NVIDIA RTX 5050 (Linux, 2026-10-14)
-
-Question: with the RTX 5050 (now the default device; log line `Vulkan device: NVIDIA GeForce RTX 5050 Laptop GPU (index 1,
-discrete)`, so no `PS2X_VK_DEVICE` was needed) the intro/title runs at ~17 FPS and the GPU is mostly idle. What limits it?
-Config: defaults (Vulkan GS, GS thread, compiled VU1, `PS2X_VU1_HILO=1`, `PS2X_GS_FRENTE=1`, `GOW_GS_FINISH_ASINCRONO=1`),
-`PS2X_GS_VULKAN_STATS=1 GOW_DELTA_DIAG=1 GOW_PERF_FRAME_PC=0x001837B8`, launcher `--no-gui`. Counters are averages of the
-per-second stats lines of the steady intro/title scene (25 s, no debugger); per-thread CPU is `/proc/PID/task/*/stat`
-over 30 s (t = 50-80 s); stacks are 100 gdb samples of every thread (`thread apply all bt`, SIGUSR2 every 0.4 s, run
-started under gdb, window t = 24-65 s so it stays inside the same 250k-prims/s scene; a first gdb run that drifted into
-the next scene was discarded). gdb stops slow the process down, so use the samples for *where* threads are, and the
-non-gdb counters for *how much*. Not used: `GOW_SCREENSHOT_AT` (it can close the window; not needed here).
-
-**Result in one line: the GS worker thread is the limiter. It is CPU-saturated by software fallbacks plus fence waits;
-the GIF thread blocks on its full queue while holding `GS::m_stateMutex`, and the EE then blocks on that mutex.**
-
-**Throughput.** 17.2 FPS (`vid::Flip`/s), guest speed 0.77 game-s/wall-s (0.66-0.93; last delta 0.05-0.067 s, i.e. ~15-20
-Hz game ticks). So guest speed is no longer "far below 1" (it was 0.07-0.4 before the threading defaults and the discrete
-GPU), but the frame rate is still 3.5x under 60. GPU: ~250k prims/s, ~1,950 dispatches/s, avg 0.116 ms, **gpu_busy
-~230 ms/s** (the "~100 ms/s" in `docs/VULKAN.md` came from a lighter window; either way the GPU is 10-23% busy).
-
-**Per-thread CPU (30 s, % of one core).**
-
-| Thread | CPU | State in gdb samples |
+| Ronda | A `waffle2` (sin cambio) mediana (mín–máx) | B `waffle3` (con el parche) mediana (mín–máx) |
 |---|---|---|
-| GS worker (`GSThread`, `GSThreadedBackend::WorkerLoop`) | **63.9%** | never idle in the clean window: ~55% of samples in CPU fallbacks, ~24% in fence waits, ~5% record/submit, ~5% CPU compositor |
-| EE (`EeScheduler::run`) | 32.7% | **81/100 samples blocked** in `lll_mutex_lock` <- `GS::notifyExternalVSync` <- `EeScheduler::processEvent` |
-| VU1 worker (`vu1WorkerLoop`) | 24.9% | 65% waiting on its condvar, 35% in compiled `vu1c_gen::*` |
-| GIF front (`gsFrontLoop`) | 3.3% | 78/100 samples in `GSThreadedBackend::PublishLocked` <- `Enqueue` <- `GS::vertexKick` (queue full) |
-| Render/main thread | 2.1% | blocked in `GSThreadedBackend::Drain` (`Sync`/`Flush`/`Present` from `latchHostPresentationFrame`), ~85% of samples |
-| 3 raster-pool workers | 1.6% each | idle (the sprite fallbacks do not use them) |
-| IOP/CD/disk, audio, Vulkan driver helper threads | <0.5% | idle / `ppoll` |
-
-**What exactly each thing waits on.**
-- GS worker: does `GSCpuBackend::DrawSprite` -> `SampleTexture`/`ReadTexture`/`WritePixel` on its own thread, and
-  `vkWaitForFences` in `GSVulkanBackend::Finish` (`LoadClut` ~15 samples, `Present` 5, `BeginTransfer` 2).
-- GIF thread: waits in `PublishLocked` on `m_doneCv` for `m_pending.size() < m_queueChunkLimit` (the GS worker is behind),
-  **inside `GS::processGIFPacket`/`vertexKick`, which hold `m_stateMutex`**.
-- EE: needs `m_stateMutex` for `notifyExternalVSync` (taken at every guest vblank, `GS::notifyExternalVSync` locks the
-  recursive mutex for a trivial observer call). Joint state per sample: EE blocked + GIF queue-full + GS busy in ~75%
-  of samples; in only 4% is the GS worker idle. (An earlier, contaminated run in a different scene showed the opposite
-  phase: 38% of samples EE running with everything else idle; the EE-bound phase exists but the steady intro is GS-bound.)
-- Render thread: waits for the GS queue to drain on every new vblank tick (`Drain`); it does not hold `m_stateMutex`, and
-  it is not on the EE critical path.
-
-**Costs, per second of wall time (no debugger).**
-
-| Cost | Amount | Notes |
-|---|---|---|
-| CPU fallbacks (GS thread) | **~611-629 ms/s** | `tex-feedback` ~1,020-1,080 prims/s, `z-alias` ~255-270 prims/s, `line/point` ~16/s; ~1,300 prims/s, ~0.47 ms each (large sprites) |
-| Fence waits, total (`finish_ms`) | **~267-281 ms/s** | `LoadClut` 385-398 ends/s = 160-184 ms; `BeginTransfer` 92-96/s = 22-25 ms; `Present` 15/s = 24 ms; `Sync` 29/s = 18-20 ms; `Flush` 10/s = 14-17 ms; `tex-feedback` ends 144-151/s = 17 ms |
-| `record_ms` (Vulkan record/submit) | 3-6 ms/s | negligible |
-| GPU busy | ~230 ms/s | overlapped with the CPU; only matters through the fences |
-| VU1 worker | ~250 ms/s CPU | on its own thread, not limiting now |
-| EE | ~327 ms/s CPU (+ blocked) | within the running part: guest code, IOP/SPU2 emulation (`runCycles`, `Spu2::*`), `advanceEeTimers`, `syncVu1Worker` |
-| GIF thread / render thread | ~33 / ~21 ms/s | negligible |
-| CPU compositor (`PresentFromLocalMemory`, on the GS worker) | ~30-60 ms/s | 3-6% of GS samples |
-
-GS worker budget: 611-629 (fallbacks) + 267-281 (fences) + record/composite ~50 = ~930-960 ms/s: saturated, which
-matches 63.9% CPU plus the blocked fence time.
-
-**Frame pacing / present.** Nothing caps at 17. `SetTargetFPS(60)` (`ps2_runtime.cpp:815`) is the only pacing call; there
-is no `FLAG_VSYNC` and no swap-interval setting, so presenting could allow 60. The guest vblank is cycle-driven by
-`EeScheduler`. The render thread is mostly blocked in the GS drain, not in `EndDrawing`. FPS is limited upstream.
-
-**Amdahl-style estimates** (current 17.2 FPS; the GS worker is the serial bottleneck at ~930 ms/s; the next stage is the
-EE/VU1 pair at 327 + 249 ms/s of CPU, serial 576 ms/s if EE and VU1 never overlap, 327 ms/s if they do; these are
-upper bounds from throughput, not measurements):
-
-| If removed | New GS load | Achievable FPS |
-|---|---|---|
-| CPU fallbacks (-620 ms/s) | ~310 ms/s | **~30 (EE+VU1 serial) to ~45-50 (overlapped)** |
-| Fallbacks cut 4x by spreading rows over the idle raster workers | ~480 ms/s | ~30 |
-| All fence waits (-270 ms/s) | ~660 ms/s | ~26 |
-| `LoadClut` fences only (-170 ms/s) | ~760 ms/s | ~22 |
-| `BeginTransfer`+`Present`+`Sync`+`Flush`+feedback ends (-95 ms/s) | ~835 ms/s | ~19 |
-| Fallbacks and fences both | ~50 ms/s | EE/VU1-bound: ~30-50 |
-| EE<->GIF mutex coupling fixed alone | unchanged | ~17-19 (GS is still saturated; the EE just stalls later) |
-| VU1 worker / GIF / render thread / present path | unchanged | no change now |
-
-**Top 3 optimizations.**
-1. **Draw the fallbacks off the critical path** (-620 ms/s on the GS worker, ~17 -> ~30+ FPS). Cheapest first step, low-medium:
-   `DrawSprite` for `tex-feedback`/`z-alias` sprites is single-threaded while three raster workers sit idle; split the
-   sprite by rows across the pool (the output is independent per row when there is no feedback overlap). Proper fix,
-   medium-high: copy the source rectangle to a scratch buffer and draw on the GPU (`tex-feedback`), and give `z-alias`
-   the CPU row order inside the dispatch.
-2. **Remove the `LoadClut` (and `BeginTransfer`) fence waits** (-170 to -200 ms/s, ~+25%). Medium: per-primitive CLUT
-   version/snapshot ring so `LoadClut` does not end the run; transfers proceed when their pages do not overlap pending GPU
-   pages. 385-398 run ends/s are the dominant fence cost.
-3. **Decouple the EE from the GIF thread's lock** (low-medium). Make `notifyExternalVSync` not take `m_stateMutex` (its own
-   small mutex or a queued event), and do not hold `m_stateMutex` across the `PublishLocked` wait (publish after
-   releasing, or reserve space first). On its own it gains little because the GS worker stays saturated, but once 1 and 2
-   are done the EE/VU1 pair (EE 327 ms/s incl. IOP/SPU2 emulation, VU1 250 ms/s) becomes the ceiling (~30-50 FPS) and
-   this stall (81% of EE samples now) would otherwise cap it.
-
-Raw data kept only in the scratchpad (stats lines, gdb samples); nothing from the game was copied. Processes were killed
-after the runs. No change to `patches/` or `src/`.
-
-## Flat-polygon garbage / "0.0 FPS" after the intro movie (2026-10-14, Linux, NVIDIA RTX 5050) - bisect, root cause open
-
-**Video** (`2026-10-14 22-23-16.mkv`, 1080p60): FMV Kratos-on-cliff plays at 12-16 FPS until 26.0 s; at 26.0-26.5 s
-one frame is a half-height strip image with shifted tiles (title 3.0 FPS), and from 27.5 s the window is a flat salmon
-polygon + dark triangle at 0.0 FPS (later: magenta, blue, green, white, noise).
-
-**Reproduced** with the default config: `GOW_PAD_TEST=1` (Start at 5 s, X at 12/20/28... s) via
-`gow_launcher.py --no-gui`; menu -> difficulty -> intro movie. Timeline of that run (s after launch): flames FMV 31-34,
-Kratos on cliff 34-37, strip frame ~40, flat polygons from 43, then magenta/noise until the end (100 s).
-`[gow-pad2:test] movie=3 -> 10` and the sound stream stop (`cmd=0x3e`) show up just before the strip frame, i.e. the
-transition is the **end of the intro movie (MPEG/IPU path)**, not the title or a scene load.
-
-**What the process is doing:** not hung. EE `GameThread` ~87% CPU, the GS receives thousands of garbage line/point
-prims per frame (`PS2X_GS_VULKAN_STATS=1`: `line/point=6058` per run), no vid flips. gdb (run under gdb, interrupt at
-~105 s): the EE stack is in `sub_00188B80` (movie player) -> `sub_0026D330`/`sub_0026CDB8`; VU1 worker and GS front
-thread idle on their condvars (no lost wake-up, no mutex deadlock). No jump to a bad address was logged.
-
-| Variant (env only, Vulkan unless noted) | Garbage after the movie? |
-|---|---|
-| defaults (VU1 HILO, front thread, async FINISH, GS thread, import, compiled VU1) | yes |
-| `PS2X_GS_BACKEND=cpu` | yes (74 s) |
-| `PS2X_VU1_HILO=0` | yes |
-| `PS2X_GS_FRENTE=0` | yes |
-| `GOW_GS_FINISH_ASINCRONO=0` | yes |
-| `PS2X_GS_THREAD=0` | yes |
-| `PS2X_VK_NO_IMPORT=1` | yes |
-| `GOW_VU1_SIN_COMPILAR=1` (interpreter) | yes |
-| all of the above off at once, Vulkan | **no garbage, but the movie is slow and had not ended by 110 s (inconclusive)** |
-| `GOW_SKIP_FMV=1` | **no**: cliff scene is then in-engine, ship level and HUD reached, 26/26 screenshots fine |
-
-Conclusion: not caused by the Vulkan backend, zero-copy import, compiled VU1 or any of the Linux threading defaults
-(each one off alone does not fix it, and the CPU backend shows it too). It is tied to the movie-end path: the movie
-decode/presentation (`PS2Recomp/ps2xRuntime/src/lib/Kernel/Stubs/MPEG.cpp`, `patches/ps2recomp-mpeg-*.patch`) works for the
-start of the clip but breaks near its end; earlier runs only validated the first seconds of the intro movie, and all
-long runs used `GOW_SKIP_FMV=1`. No `[MPEG:CdStreamEof]` or decoder errors are logged. I did not change `patches/`.
-The "all off" row cannot separate a thread race from frame-rate dependence (the movie plays slower there).
-
-Next: (1) rerun "all off" for 200+ s to see whether the movie ends cleanly at low speed (if yes: a race/underrun that
-depends on EE speed vs the IOP CD stream); (2) log `[MPEG]` state (`ended`, `producerEof`, decoded frame count) at the
-transition and compare with the CPU backend; (3) check what the game does with the last decoded picture (strip frame =
-partially copied picture; flat polygons = sprites sampling garbage), via `GOW_RENDER_DIAG`.
-
-## Gamepad did nothing on Linux: unmapped pad (2026-10-14)
-
-Cause: GLFW has no built-in SDL mapping for the GameSir dongle (USB `3537:103e`, "Generic X-Box pad", xpad,
-`/dev/input/js0` + `event24`, ACL for the user present, GLFW sees 6 axes / 15 buttons / 1 hat, `isGamepad=0`).
-raylib's `IsGamepadButtonDown` / `GetGamepadAxisMovement` then return zeros, so autodetect picked the pad and the
-keyboard fallback was disabled. Fix: `patches/ps2recomp-pad-mappings.patch` (registered last in `compilar.ps1`) loads
-gamecontrollerdb mappings and falls back to a generic Xbox-like one; `GOW_PAD_DIAG=1` logs raw state (see
-`docs/CONTROLES.md`). Verified: patches apply on a fresh pinned copy, `ps2x_tests` 633 pass, standalone GLFW program
-reads the pad name and axes once mapped. Not verified: button presses in the game (needs the user to press buttons
-with `GOW_PAD_DIAG=1`; if the GameSir is in DInput/Switch mode the layout differs, switch it to XInput).
-
-### Gameplay profile and CLUT/transfer fences (2026-10-14, NVIDIA RTX 5050)
-
-Gameplay reached with `GOW_SKIP_FMV=1 GOW_PAD_TEST=1` (default pad script): the ship level with Kratos and the HUD is on
-screen by t=50-75 s (checked in PNGs from `GOW_SCREENSHOT_AT`). Before: **~7.5 FPS** (`vid::Flip`/s from `gow-delta`
-`frames`/`wall`). Per-thread CPU: GS worker 59%, EE 39%, VU1 worker 38%, render 3%. Costs per second: GPU ~550k prims/s
-(rain particles), `gpu_busy` ~425 ms; CPU fallbacks ~1,500-1,900 prims/s (`tex-feedback` ~1,300-1,600, `z-alias` ~110-130,
-`dest-alpha-test` ~110-140) = `cpudraw_ms` ~375-430; fences `finish_ms` ~390-435, of which `LoadClut` 660-680 ends/s =
-~300 ms; 1,000 runs/s.
-
-Changes (`patches/ps2recomp-gs-vulkan.patch`, `gs_vulkan_backend.cpp` and the shader):
-- **CLUT snapshots.** The CLUT buffer holds 64 versions; an indexed primitive records the current version in `tmode`
-  bits 25-31 and the shader reads that slot. `LoadClut` (CSM1) ends the run only if the run writes the CLUT's pages.
-- **Non-conflicting transfers.** With the zero-copy import, `BeginTransfer`/`UploadImage` proceed without a fence when
-  their pages are neither read nor written by the open run (`runReads`/`runWrites`; src checked against writes, dst
-  against both). The copy path always fences (its end-of-run copy would overwrite the upload).
-- **`tex-feedback` uses the sprite's UV box** (+1 texel if bilinear; only CLAMP or in-range UVs) instead of the declared
-  texture size for the page test.
-
-After: runs 900-1,000/s -> 250-300/s, `LoadClut` and `BeginTransfer` run ends gone; gameplay **~9-10 FPS**; intro/title
-**~24 FPS** (was ~17). `ps2x_tests` 633/633 (the CLUT-between-GPU-draws cases now exercise the versions path).
-Gaps: no new test for non-conflicting transfers (only exercised in the game); the UV box rarely helped, because the
-remaining `tex-feedback` is real: 32-px strips of the frame sampling itself (same pixels, or bilinear neighbours), and
-CT24 reads of the Z buffer (`tbp` = `zbp`, different `tbw`).
-
-Left, in order: (1) `tex-feedback` (~430 ms/s CPU plus a GPU drain each time): the Z-copy case is order-safe as a snapshot,
-and in-place same-pixel strips are race-free when the UV-to-pixel map is the identity; both need an exact test or a
-scratch-copy dispatch; at minimum split fallback rows across the idle raster workers. (2) `z-alias` (~190 run ends/s in
-the intro). (3) EE vs the GIF mutex (not touched). GPU alone is ~425 ms/s in gameplay, so fallbacks must go before more
-GPU-side work pays off.
-
-## Intro movie garbage is not an end-of-stream problem (2026-10-15, Linux, NVIDIA RTX 5050) - root cause still open
-
-Added `GOW_MPEG_DIAG=1` (`patches/ps2recomp-mpeg-diag.patch`, registered last in `compilar.ps1`): logs `[gow-mpeg]`
-lines for `sceMpegIsEnd` and `sceMpegGetPicture` (flags, queue depth, frame size, return address), capped at 4000 lines.
-Default `GOW_PAD_TEST=1` and a custom script (`GOW_PAD_GUION='5:start,12:x,20:x,28:x'`) were run for 45-100 s with
-`GOW_SCREENSHOT_AT`; all PNGs were looked at.
-
-Findings (they correct the previous section, which assumed an end-of-movie failure):
-- **The movie never ends in these runs.** 856 `sceMpegGetPicture` calls by 100 s (about 10 fps), `streamEnded=0`,
-  `seqEnd=0`, `failed=0`, `cdEof=0`, decoded queue steady at 6-7 frames, size always 640x480, one image address
-  (`0x148fbc0`), `sceMpegIsEnd` is never called, no `[sceCdStStart]`/`[sceCdStRead]` lines (the game streams the PSS
-  through the IOP, not `sceCdSt*`). So EOF/flush handling is not involved.
-- **The failure starts 5-10 frames after the first picture** (clean cliff scene at served<=3, strip frame at
-  served~10, flat salmon/magenta polygons from ~served 90, noise later).
-- **Not input, not audio:** no X press after the movie start (script above) gives the same result; `GOW_AUDIO=0` too.
-  The `sound cmd=0x3e` seen right after frame 2 is the stream start, not an end.
-- **The visible cliff picture is not our decoded buffer.** With a temporary hack that skipped
-  `writeDecodedFrameToGuest`, and then filled the 640x480x4 buffer with 0x40, the screen still showed the same cliff
-  picture and the same strip/garbage progression. So the picture and the corruption come from another path
-  (in-engine cutscene or game-side drawing); `GOW_SKIP_FMV=1` avoids the corruption by removing the movie's concurrent
-  work (IOP stream, MPEG callbacks, GetPicture waits), not because of what we decode.
-- `sub_00188B80` is a 16 KB-chunk stream reader state machine (state word at `0x30DE38`, ring base `+0x14`), polled in
-  a loop; the 87% EE CPU there is that poll plus the IOP sound RPC `cmd=0x40` (alternating `0x77640` / `0x1079640`).
-  The guest passes `a2=0` to `sceMpegGetPicture` (computed with a three-operand `mult` + `mflo`; worth checking the
-  `mult rd=$zero` form in the recompiler); the stub ignores it.
-
-Next steps (not done): (1) trace writes into guest RAM during the movie (IOP->EE SIF DMA targets of the PSS stream and
-sound-stream reads vs the ring at `[0x30DE10+0x14]`), looking for a write outside the ring; (2) diff the GIF packets
-of clean and strip frames (`PS2X_GS_DIAG`, CPU backend); (3) check the recompiled `mult $zero,rs,rt`.
-Verified: all patches apply in order on a fresh pinned clone and the result equals the working tree. `ps2x_tests` were
-not rerun (diagnostic-only change; the runner builds). Game processes were killed after the runs.
-
-## Intro movie garbage: PATH1 flood located, cause still open (2026-10-15, Linux, NVIDIA RTX 5050)
-
-Added `GOW_GIF_TRACE=1|2` (`patches/ps2recomp-gif-trace-diag.patch`, registered last in `compilar.ps1`): from the first
-decoded picture served, `[gow-gif]` prints one summary per served picture (packets/quadwords per GIF path, masked
-packets, packets whose tag walk does not end at the packet size). `=2` also prints every packet (path, source address,
-size, first tag), limited by `GOW_GIF_TRACE_MAX` (default 300000) and `GOW_GIF_TRACE_SERVED=<n>`.
-Run: script `5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, Vulkan backend, 45-55 s. Screens: clean Kratos frame at 30 s, flat
-salmon/purple polygons with image strips at 40 s.
-
-Findings:
-- Interval of picture 1 (first clean frame): 2646 PATH1 packets / 248k qw, 186 PATH2, 0 PATH3 (normal engine frame).
-- Interval of picture 2: **296,200 PATH1 packets (26.9M qw)**, 11k PATH2, 3 PATH3 (one tag-walk mismatch = a split
-  IMAGE chunk, expected). So the EE (or a VU1 program loop) kicks about 110 frames of geometry while the game is
-  between GetPicture 1 and 2; afterwards GetPicture advances (served 3..60) with almost no GIF traffic.
-  The flood is made of ordinary-looking mesh batches (`0x302e4003...`, `0x402e4004...`) plus 114k empty 1-qw EOP kicks;
-  it is NOT PATH3: masked PATH3 count is 0 throughout and no PATH3 packet is seen during the flood.
-- Eliminated: PATH3 mask/EOP/IMT/DIRECTHL handling (no masked or interleaved PATH3 traffic at all in the failing
-  interval), data past EOP (no PATH1/2 packet mismatches), and the decoded picture buffer as source (earlier finding).
-- Likely: the game's render loop runs without waiting (vsync/stream/IPU sync returns immediately or a poll never
-  progresses), replaying the same display lists with stale or overwritten VU1 data, so the failure is in EE-side
-  scheduling/waits around `sceMpegGetPicture` (the stub continues after `waitExternal`/`waitVSync` instead of
-  returning, then is re-entered by the resume callback and pops a second frame), not in GIF arbitration.
-
-Next steps (not done, budget): (1) log VSync/`sceMpegGetPicture` entries and EE PC per tick during interval 2 to see
-which loop spins (the 87% EE CPU poll `sub_00188B80`); (2) make `sceMpegGetPicture` return right after the wait is
-registered and test; (3) log VIF1 DMA chain tag addresses for the flood to see whether the lists are stale.
-No behaviour change shipped; `ps2x_tests` and a fresh-clone patch application were NOT rerun this session.
-
-## Intro movie garbage: the "PATH1 flood" is a normal in-engine scene, wait hypothesis eliminated (2026-10-15, Linux, NVIDIA RTX 5050)
-
-Added to `GOW_MPEG_DIAG=1` (`patches/ps2recomp-mpeg-syscall-diag.patch`, registered last in `compilar.ps1`): once per
-second after the first served picture, `[gow-mpeg] syscalls vsync=<tick> served=<n>: <id>:<count>@<last ra>` (EE syscall
-histogram, ids in hex). Run: script `5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, 50 s, screenshots at 30 s and 40 s (looked at).
-
-Findings:
-- `waitVSync`/`waitExternal`/`invokeCurrent` are `[[noreturn]]` in the scheduler, so `sceMpegGetPicture` does NOT continue
-  after registering a wait: the "double consumption / re-entrancy" suspicion is eliminated by code reading.
-- Phase 1 (vsync ~1638-2118, about 8 s real time): `served=2` the whole time. The EE runs the game's own frame loop
-  (~27 fps: syscalls 0x10/0x11 EnableIntc/DisableIntc 27/s at ra 0x294798/0x294730, FlushCache 0x64 ~100/s at 0x13f760).
-  The screen is a clean in-engine Kratos-on-cliff scene (screenshot at 30 s). So the "296k PATH1 packets / 110 frames"
-  of the previous section is simply ~216 ordinary frames of this scene (~1370 packets each), not a runaway loop:
-  the movie is waiting about 8 s for the IOP stream to deliver the first data (pre-roll), which is slow but not wrong.
-- Phase 2 (vsync ~2118+): pictures are served at 19 per 38 vsyncs = one per 2 vsyncs = 29.97 fps, i.e. the pacing is
-  correct. The EE then only issues FlushCache (0x64, ~110/s, ra 0x26bbb0) and syscall 0x4D (~15/s, ra 0x188648); no
-  3D frames and almost no GIF traffic, and the screen is flat salmon/purple polygons (screenshot at 40 s).
-- Consequence: the garbage is what stays on the GS (or what the display reads) once the game stops drawing the engine
-  scene; the movie frames we decode (column strips of 16 px, as `writeDecodedFrameToGuest` writes them) are apparently
-  never uploaded to the GS by the game in phase 2. The earlier "0x40-filled buffer shows the same picture" test only
-  covered phase 1, so it does not prove the display ignores the buffer in phase 2.
-
-Next steps (not done, budget): (1) in phase 2 log DMA ch2/ch1/ch2-tag activity and writes to GS DISPFB/DISPLAY/PMODE
-registers (is the display switched to a framebuffer nobody fills?); (2) identify what the game does at ra 0x26bbb0 /
-0x188648 (disassemble: does it kick PATH3 through a path our GIF model counts as 0 packets, e.g. DMA ch2 chain with
-`MSKPATH3`?); (3) try filling the decoded buffer with a solid colour and screenshot in phase 2 specifically; (4) look
-at why phase 1 takes ~8 s (IOP PSS stream speed).
-Verified: all 119 patches apply in order on a fresh pinned tree (git archive of the pinned commit) and equal the working
-tree (except the generated `register_functions.cpp`); this also verifies the previous GOW_GIF_TRACE patch. `ps2x_tests`
-633 pass. No behaviour change shipped.
-
-## Vulkan: same-pixel feedback, Z read-only, DATE on the GPU (2026-10-15, Linux, NVIDIA RTX 5050)
-
-See `docs/VULKAN.md` ("Feedback, DATE and tight texture boxes on the GPU") for the rules. Before/after (same build,
-`GOW_VK_NO_FBOPT=1` = before; ship level `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, 12 s average in the rainy fight; intro without skip):
-
-| | before | after |
-|---|---|---|
-| CPU fallback prims/s (gameplay) | ~1,800-2,200 | ~400-520 |
-| `cpudraw_ms`/s | ~330-370 | ~160-200 |
-| gameplay FPS | 14.8 | 22.7 |
-| intro/title FPS | 26.2 | 32.3 |
-| `dest-alpha-test` fallbacks | 160/s | 0 |
-
-Remaining fallbacks: `z-alias` (~200/s gameplay, ~500/s intro; Z32 and CT32 swizzle differently, so it needs the CPU row order),
-a few non-provable `tex-feedback` strips, lines/points. `ps2x_tests` 634 pass, patch chain verified on a fresh pinned tree.
-
-## Vulkan z-alias on the GPU (2026-10-15, English)
-
-See docs/VULKAN.md "Frame/Z alias on the GPU": `z-alias` fallbacks ~300/s -> 0 in the gameplay fight (CPU fallbacks ~630 -> ~220/s,
-`cpudraw_ms` ~255 -> ~150), byte-identical in the Vulkan-vs-CPU test; window FPS unchanged (~13 on this heavy scene,
-GPU-bound, `finish_ms` ~540 ms/s). Top costs now: GPU dispatch time, `tex-feedback` CPU fallbacks, `record-ring`/`Flush()` run ends.
-gdb sampling and the intro re-profile were not obtained. A/B switch: `GOW_VK_NO_ZALIAS=1`.
-
-### Vulkan GS: replay benchmark and shader optimizations (2026-10-15)
-
-Added `tools/render/bench_vk.cpp` + `scripts/compilar_bench_vk.sh` (GS capture replay through the Vulkan backend, GPU ms from
-timestamps, byte compare with the CPU replay) and `ps2recomp-gs-vulkan-perf.patch` (shader: early Z test before texturing,
-triangle-edge tile culling; `GSVulkanBackend::GpuTotals`). `GOW_GS_REPLAY_TRACE` limit 64 -> 768 MiB. Usage and profile: docs/VULKAN.md.
-
-| Measure | Before | After |
-|---|---|---|
-| Replay GPU ms (121 presents, 1.93M prims) | 1662 | 1319 (-21%) |
-| GPU ms per presented frame | 13.7 | 10.9 |
-| Replay VRAM vs CPU backend | identical | identical |
-| Game FPS (3 runs, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`) | ~13 (earlier, heavier moment) | 17.9 / 21.8 / 15.0 |
-| `ps2x_tests` | 634 pass | 634 pass |
-The kernel is latency-bound by the serial per-pixel primitive walk. Screenshots (`GOW_SCREENSHOT_AT`) were not re-inspected this
-round; exactness rests on the CPU byte compare. 121 patches apply on a fresh pinned tree.
-
-### Vulkan: per-tile primitive lists: tried, no gain (2026-10-15)
-
-Replay benchmark (RTX 5050, 121 presents, baseline 1319-1328 ms, VRAM byte-identical to the CPU replay). The kernel already builds a
-per-8x8-tile ordered hit list (shared bitmask), so the structural step was to make that list explicit and stage data. All variants below
-were reverted; the patch is unchanged.
-
-| Variant | GPU ms | VRAM vs CPU |
-|---|---|---|
-| baseline (tile bitmask + edge cull) | 1319-1328 | identical |
-| prefix-summed ordered list + hit prims' edge data staged in shared memory (chunks of 32) | 1372 | identical |
-| + edge value at tile origin, int32 slopes (one int64 add per edge) | 1365 | not checked (--no-cpu) |
-| + destination (fb) read issued together with the Z read | 1427 | not checked |
-| workgroup 8x4 (32 threads) | 1457 | identical |
-| workgroup 16x8 (128 threads) | 1466 | not checked |
-| packed FMT table in `locate()` (1 dynamic lookup instead of 5) | 1318 | **73,844 bytes differ** (mask derivation wrong for some PSM), reverted |
-
-Conclusion: the serial walk is not dominated by rejecting primitives (edge tests, loads) nor by table lookups. Replay stats: ~600 Mpx are
-actually shaded in ~1.3 s over only ~17k threads per dispatch (about half of the GPU's thread capacity), average 113 prims per batch.
-The time is the latency chain of a covered pixel (Z read, texture + CLUT, fb read, blend, write) repeated per overlapping primitive in the
-slowest tile of each dispatch (fixed per-dispatch overhead is only ~7 us). CPU binning would only replace the ~7% cull phase, so it was not built.
-Ideas that could still help: software-pipeline the texture fetch of primitive n+1 (textures are read-only inside a batch) with the fb/Z
-chain of primitive n (loses the Z-before-texture early-out, so measure); lanes mapped to (primitive, pixel) pairs for thin triangles; running
-independent small dispatches concurrently (no barrier between disjoint rects).
-
-## Pipeline stall profile (`PS2X_PIPE_STATS=1`, 2026-10-15)
-
-New opt-in counters (`patches/ps2recomp-pipeline.patch`, header `runtime/ps2_pipe_stats.h`): one `[pipe]` line per second, `name=ms/count`
-per stage. Gameplay (rainy fight, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050, defaults), steady state, per wall second:
-
-| Stage | ms/s | Meaning |
-|---|---|---|
-| `gs_busy` / `gs_idle` | 870-995 / 20-125 | GS worker executing chunks vs waiting for data: **saturated (92-98% busy)** |
-| of which Vulkan fence waits (`finish_ms`) | 345-460 | GS worker waits for the GPU (Present ends 48-59 runs/s, ~6-8 ms each) |
-| of which CPU fallback draws (`cpudraw_ms`) | 160-260 | `tex-feedback` sprites on the CPU |
-| GPU busy (`gpu_busy_ms`) | ~530-600 | GPU is ~55% busy: it idles while the worker does CPU work |
-| `publish_wait` | 550-700 | GIF front thread blocked, GS queue full (`qhigh`=8 chunks, the limit) |
-| `drain_wait` | 560-800 | render thread waiting for the GS (150-170 drains/s) |
-| `guest_wait` | 580-620 | EE idle waiting for its next guest deadline (vblank pacing): the EE is not the limit |
-| `ee_sync_vu1` / `ee_sync_front` | ~0 / ~0 | EE waits for the VU1 worker / GS front: negligible |
-| `ee_vsync_lock` (before fix) | 168 (60 calls/s) | EE blocked in `GS::notifyExternalVSync` on `m_stateMutex` |
-| `vu1_busy`, `front_busy` | 740-870, 580-850 | busy, but each on its own thread |
-| `fronthigh` | 20-50 | front queue depth (unbounded, never the limiter) |
-
-**Conclusion.** The dominant stall is the serial GS worker: ~95% busy, of which ~45% is waiting on the GPU fence and ~20% CPU
-fallbacks, with the GPU only ~55% busy. Everything upstream (GIF front, VU1, EE) waits on it; the EE is idle 60% of the time.
-The headless replay (56 FPS) does not show it because it never calls `Present` per vsync nor interleaves CPU fallbacks.
-
-**Changes shipped.**
-1. `GS::notifyExternalVSync` returns without touching `m_stateMutex` when no external observer is linked (atomic flag; Linux never links one).
-   `ee_vsync_lock` 168 -> 0 ms/s. `PS2X_VSYNC_LOCK=1` restores the old lock for A/B. Test: "VSync sin observador ...".
-2. Counters only (no behaviour change).
-
-**Tried and reverted.** Making `GSVulkanBackend::Flush()` / `Sync(Finish|Presentation)` not wait for the fence (the CPU backend
-versions are no-ops): `ps2x_tests` crashed in the Vulkan suite ("corrupted double-linked list"; passes with the wait), so some VRAM
-reader relies on those waits. It also did not help: the fence time just moved to `Present` (finish_ms 345-460 either way), because
-the GPU is on the critical path at every present. Raising `kMaxPrims` 16384 -> 65536: no measurable change, reverted.
-
-**FPS (3 runs x 40 s, window t=55-95 s, window-title FPS, scene varies with the pad script; avg of 13 samples):**
-
-| | run 1 | run 2 | run 3 | mean |
-|---|---|---|---|---|
-| before (`PS2X_VSYNC_LOCK=1`) | 17.4 | 18.1 | 15.0 | 16.8 |
-| after (vsync lock removed; first two runs also had the reverted Flush/Sync + 64k-prim experiments) | 15.0 | 15.5 | 17.0 | 15.8 |
-| final build (one run) | 14.7 | | | |
-
-No gain within noise (~15-18 FPS both ways): removing the EE mutex wait does not help while the GS worker is saturated, as
-predicted in "Whole-frame profile on NVIDIA". Screenshot at t=62 s checked: ship deck, Kratos fighting soldiers, HUD, rain, correct.
-(The t=80 s shot was black, a fade in the pad script.) `ps2x_tests`: 634 pass + 1 fail `CodeGenerator :: VU0 macro mappings cover all
-S1/S2 enums` (CodeGenerator, not touched by this patch; not investigated).
-
-**Next steps (not done).** (1) Present without ending the GPU run: copy the display rect to a side image/buffer on the GPU and let
-the render thread read that, so the GS worker records the next batches while the GPU finishes (removes ~300-400 ms/s of fence wait,
-the GPU becomes the limit at ~55 -> ~90% busy). (2) A real ring for the prim/CLUT buffers (`record-ring`, `clut-ring` currently wait
-for all). (3) Move `tex-feedback` fallbacks to the GPU (~160-260 ms/s). (4) Find which reader needs the `Flush`/`Sync` fence before retrying that change.
-
-## GPU run-end census and async-Present plan (2026-10-15, measurement only, no code change)
-
-`PS2X_GS_VULKAN_STATS=1 PS2X_PIPE_STATS=1`, gameplay (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050), steady state t=60-95 s, per second
-(17.1 FPS window-title average over 13 samples):
-
-| Run ended by | runs/s | fence wait ms/s | Notes |
-|---|---|---|---|
-| `Flush()` | 43-47 | 125-148 | frontend `GS::latchHostPresentationFrame` (non-shared path) and the `GS_REG_FINISH` handler both call `Flush()` |
-| `Sync(reason)` | 59-63 | 119-137 | `Sync(Presentation)` in the latch, `Sync(Finish)` on GS FINISH writes |
-| `Present(request)` | 39-46 | 59-74 | CPU compositor snapshots VRAM, so the run must be finished |
-| `record-ring` (16384 prims) | 9-14 | 52-92 | |
-| `BeginTransfer(command)` | 10-13 | 34-49 | |
-| `line/point` fallback | 14-15 | 15-18 | |
-| `tex-feedback` fallback | 0 (CPU draws 224-240/s, `cpudraw_ms` 151-163) | 0 | these draws do not end the run (the run is ended by the other causes); they cost CPU time only |
-| total | 181-193 | 436-487 | |
-
-Findings: (1) `tex-feedback` does not end GPU runs; it is a ~155 ms/s CPU cost only. (2) About 60% of the fence wait (260 ms/s) comes from
-`Flush()` + `Sync()`, which the CPU backend implements as no-ops: per presented frame the latch ends the run up to three times
-(Flush, Sync(Presentation), Present), each one a full submit + fence wait + pipeline drain. (3) The previous no-wait attempt changed the
-backend methods (crashed the Vulkan suite). A safer route: leave `GSVulkanBackend::Flush/Sync` exact and let the frontend skip
-`Flush()/Sync(Presentation|Finish)` when the backend reports lazy host sync (new virtual, default false; every host-visible access still goes
-through `GOW_VK_CPU`/`BeginTransfer`, which finish the run), then make `Present` itself cheap.
-
-Design for the Present part (NOT implemented, token budget): `GSThreadedBackend::Present` -> two phases. Phase 1 on the GS worker: record
-a GPU copy of the VRAM buffer (4 MiB, `importedVram`) into one of 2-3 host-visible staging buffers inside the open command stream,
-`submitPartial()`, then an empty `vkQueueSubmit` with a per-slot fence (the run stays open). Phase 2 on the render thread: wait only on the
-slot fence, then run `GSCpuBackend::PresentFromLocalMemory` on the staging copy (the CPU backend already snapshots VRAM the same way). The
-worker keeps recording the next frame while the GPU finishes. Per-slot fences avoid the `Finish` fence reset race.
-
-**t=80 s black screenshot:** the CPU backend (`PS2X_GS_BACKEND=cpu`, ~3 FPS, so a different game time) is black at t=80 s too, so it is
-not a Vulkan bug; most likely the pad script's fade/transition. t=62 s Vulkan shot is the normal rain fight.
-
-
-### Lazy host sync + two-phase Present (2026-10-15, `patches/ps2recomp-gs-lazy-sync.patch`, registered after the pipeline patch)
-
-Implemented the plan above in the frontend, with the Vulkan `Flush/Sync/Present` methods left exact. `GSRasterBackend::LazyHostSync()` (Vulkan: true,
-`PS2X_VK_LAZY_SYNC=0` disables) lets the frontend skip `Flush()` and `Sync(Presentation|Finish)` (the latter inside `GSThreadedBackend::Sync`); every
-host access (transfer, CLUT load, CPU fallback, ReadVram, ConsumeLocalToHost) still ends the GPU run. `Present` is two-phase: the worker records a GPU copy of
-VRAM into one of 3 staging slots (`BeginPresent`, empty submit with a per-slot fence), the render thread waits on that fence and composes with
-`GSCpuBackend::PresentFromLocalMemory` (`PendingPresent::Resolve`). `PS2X_VK_SYNC_PRESENT=1` keeps the old synchronous Present. New test: "Vulkan two-phase
-Present equals CPU Present and host reads see lazy GPU work" (staged frame equals CPU frame at BeginPresent time although the GPU keeps drawing; ReadVram after an unflushed run).
-`ps2x_tests`: 637 pass, 0 failed.
-
-Gameplay (`GOW_SKIP_FMV=1 GOW_PAD_TEST=1`, RTX 5050, 3 runs x 40 s, window-title FPS):
-
-| | run 1 | run 2 | run 3 | mean |
-|---|---|---|---|---|
-| before (`PS2X_VK_LAZY_SYNC=0`) | 14.5 | 14.5 | 14.8 | 14.6 |
-| after | 16.8 | 15.2 | 15.0 | 15.7 |
-
-`PS2X_PIPE_STATS=1` / `PS2X_GS_VULKAN_STATS=1` (steady state, per second): GPU runs 181-187 -> 63-79; `Flush()` 142 ms (46 runs) -> 0, `Sync()` 98-131 ms (58) -> 20-31 ms (Sync(reason) 20/s
-is a different reason than Finish/Presentation), `Present` 64-70 ms (41) -> 4-16 ms (2-4 runs; 3600 two-phase presents per 40 s), BeginTransfer 31-63 ms (10-14) -> 0.
-GS worker: gs_idle 14-27 -> 146-261 ms/s, gs_busy 970-988 -> 732-856 ms/s, drain_wait 719-766 -> 233-291 ms/s. Remaining wait: `record-ring` 20-36 runs/s, 235-345 ms/s
-(was 9-12, 58-77): with fewer early run ends the 16384-prim ring fills and the worker waits for the whole run, so the GPU is now the critical path.
-Gameplay screenshots at t=62/75/90 s (after) checked by eye: rain fight, Kratos, soldiers, HUD, correct, not stale or torn. Not done (budget): title-screen shot and the replay bench
-(the replay wrapper does not forward `LazyHostSync`, so it exercises the old path and is unaffected).
-
-Next: a real ring for the prim buffer (two halves, per-half fence) so `record-ring` stops waiting for the whole run.
-
-### Why the headless replay looks 3.5x faster than the live game (2026-10-15, measurement only)
-
-Mostly a unit error. The window-title FPS counts guest display flips (`g_gowGuestFlips`), while the replay counts backend `Present` calls. Live gameplay does
-~40 `Present`s per second (`async_present` counter) for ~15 flips/s (~2.7 presents per flip). The 121-present capture is therefore ~3 s of game time, and the
-replay speed is 121 / 2.1 s = ~57 presents/s against ~40 live: a 1.4x gap, not 3.5x (in flips: ~21 vs ~15 FPS-equivalent). GPU cost per present matches:
-replay 10.9 ms, live 613-644 ms/s of `gpu_busy` over ~40 presents = ~15-16 ms (live scene is heavier and drifts over time). The remaining 1.4x is live-only work: CPU fallbacks
-(`tex-feedback` ~320-345/s, `cpudraw_ms` 213-254) serialised in the GS worker, `record-ring` waits (240-325 ms/s) and EE/VU1/front-end threads competing for CPU.
-
-Hypotheses tested (RTX 5050 laptop + Intel RPL-P iGPU, Wayland session with XWayland `DISPLAY=:2`):
-
-| Hypothesis | Result |
-|---|---|
-| (a) GPU clocks/P-state | Replay: SM 2340-2595 MHz, P2 (13 of 16 samples). Live: P2 in all 89 samples, mean SM 2200 MHz, util 70%. No low-clock state; nothing to fix (an idle-gap P5 only appears between bench passes). |
-| (b) Display path | The raylib GL window renders on the Intel iGPU (`glxinfo -B`: Intel); Vulkan compute runs on NVIDIA. `__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia __VK_LAYER_NV_optimus=NVIDIA_only`: 14.9 / 15.2 FPS vs default 15.5 / 15.0 (noise). The present path copies the staged VRAM frame through host memory, so there is no cross-GPU or GL<->Vulkan engine contention to remove. |
-| (c) Run structure | Live: ~8000 dispatches/s, avg 0.07-0.10 ms, ~70 GPU runs/s; replay: 17157 dispatches per 121 presents (~142/present, live ~200/present). Same shader cost per dispatch; live only adds waits and fallbacks. |
-
-FPS table (40 s windows at t>55 s, `GOW_SKIP_FMV=1 GOW_PAD_TEST=1`): default 15.5 / 15.0; NVIDIA PRIME offload env 14.9 / 15.2. `PS2X_VK_DEVICE=Intel` not run (the iGPU is slower
-and not the question). No software fix was found, so no code, launcher default or patch changed. Needing sudo (untested): `nvidia-smi -lgc` to pin clocks (not needed, clocks are already high).
-Real levers stay the same: per-present GPU time (~11-16 ms) and the `record-ring`/CPU-fallback waits in the serial GS worker.
-
-## Vulkan kernel: register-resident frame/Z words (2026-10-15)
-Replay GPU 1328 -> 1188 ms (-10.6%), byte-identical to the CPU replay; `ps2x_tests` 636 pass. Memoising `locate()` gave nothing.
-Details and limits (16-bit targets still go to memory; occupancy/merge-batches not tried): docs/VULKAN.md.
-
-## Vulkan GS: dead-prim skip + stateless tile HiZ (2026-10-15)
-Replay GPU 1209 -> 1181 ms (-2.3%), VRAM identical to the CPU replay, 636 tests pass; dead-prim skip no effect on this capture. Details
-in docs/VULKAN.md. Not measured: real-game FPS, screenshots (HiZ is byte-identical in the replay, so low risk).
-
-## Intro movie garbage: root cause found and fixed - deferred MPEG stream callbacks (2026-10-15, Linux, NVIDIA RTX 5050)
-
-**How the game shows a movie frame** (disassembly of the generated code): `sub_00189020` (movie loop) -> `sub_001899E0` ->
-`sub_0018A170` calls `sceMpegGetPicture(mp, ctx[0x94+i*4], ctx[0x58]*ctx[0x5C])` (RGB32, the `a2` "w*h" is the buffer size),
-then `func_26EE80` patches BITBLTBUF in the upload packet `ctx[0xA8+i*0x20]` and `func_26CDB8` pushes the packet on a
-2-entry queue (`0x30A440`). A vblank handler (`0x26D048`, mode 1; `0x26CF20`, mode 3) every 2 vsyncs sets DISPFB2 and kicks
-DMA ch2 in chain mode (`func_26EDE0`) with that packet, then a second packet at `0x30A340`. Movie context = `[0x304F20]`.
-
-**Root cause.** At movie init (`sub_00189BD0`) the game demuxes the first 16 KB of the PSS (`sceMpegDemuxPss` ->
-`sceMpegDemuxPssRing` stub); its M2V stream callback `0x18A788` copies the video ES into the game's own ring
-(`ctx[0xE8..0xF8]`), and the code right after reads the sequence header from that ring to set width/height
-(`ctx[0x58]`, `ctx[0x5C]`), which size the picture buffer and the upload packet. Our stub queued the stream callbacks
-(`queueInvocation`) instead of running them inside the call as libmpeg does, so the ring was still empty: width = height = 0,
-the picture buffer was allocated with 0 bytes (`img=0x148fbc0`, packet at `0x148fc00`), and `a2 = 0` (the "a2=0" seen
-earlier). Every `sceMpegGetPicture` then wrote 1.2 MB of pixels over the DMA packet and the heap after it; the vblank
-handler kicked DMA ch2 on pixel data as DMA/GIF tags (logged first tag `0x80433835...`), giving the strips, flat
-polygons and noise. This also explains why skipping `writeDecodedFrameToGuest` did not help (the packet stayed a
-zero-macroblock upload) and why GIF traffic looked "missing".
-
-**Fix** (`patches/ps2recomp-mpeg-sync-callbacks.patch`, registered last in `compilar.ps1`): when called from a guest
-thread, `sceMpegDemuxPss[Ring]` runs the stream callbacks synchronously with `invokeCurrentSequence` and the caller
-resumes with the consumed byte count; host-side calls (no current guest thread) keep the old queued path. New test
-"sceMpegDemuxPssRing runs stream callbacks before its guest caller continues" (fails without the change).
-
-**Evidence.** Temporary overrides (removed) logged the context: before, `w=0 h=0 img=148fbc0 pkt=148fc00`; after,
-`w=640 h=480 img=15e13c0 pkt=170d400` (= img + 1.2 MB), first DMA tag `0x10000003` (CNT), `a2=307200`. Screenshots (script
-`5:start,12:x,20:x,28:x`, `GOW_AUDIO=0`, 110 s) at 36-100 s show the whole intro movie (cliff, feet, the fall, the sea) and
-then the "Three Weeks Earlier / The Aegean Sea" title card: the movie ends and the game continues. `ps2x_tests` 639 pass;
-124 patches apply in order on a fresh pinned tree and equal the working tree.
-
-**Left (not done):** (1) one transition shot (~1 s, t=35 s in two runs) shows the last in-engine frame at half height in
-shifted strips: the display already uses the movie DISPFB/size before the first picture is uploaded (likely the ~8 s
-pre-roll); not checked against PCSX2. (2) The stub keeps callbacks across `sceMpegCreate`, and GoW creates the same
-handle twice and registers its callbacks again, so every video/audio packet is delivered twice (seen as duplicate
-`0x18A788` calls). libmpeg resets its callback table on create; an existing test asserts the current behaviour, so
-this was left as a separate change (check movie audio). (3) Retire `GOW_MPEG_DIAG`/`GOW_GIF_TRACE` once no longer needed.
-
-## Menu/movie audio: streamed music restarts its first fragment (2026-10-15, Linux, NVIDIA RTX 5050) - diagnosis, no fix yet
-
-User report: clips play only their first seconds and that fragment loops. Temporary `GOW_SPU2_DIAG=1` logging (KON/KOFF,
-voice LSA/SSA writes, NAX/ENDX reads, SPU2 DMA source/target, `sceCdRead`, `sceSifGetOtherData`, SIF) - uncommitted WIP in
-`PS2Recomp/` (spu2.cpp, iop_memory.cpp, iop_emulator.cpp, iop_cdvd.cpp, iop_rpc.cpp, iop_subsystem.cpp), menu runs of 12-45 s.
-
-- **The SPU2 side is correct.** The music stream is core 1 voices 0/1, a double buffer per channel (L 0x2820/0x7820,
-  R 0x3020/0x8020, 0x800 halfwords = 0.163 s at pitch 0x0EB3). 989snd polls NAX (no SPU2 IRQ: ATTR bit 6 never set,
-  so missed-IRQ theories are out), moves LSA to the other half and refills the half just played via DMA ch4 from IOP
-  `0x7BAF0`/`0x85AF0`. While data arrives, this alternates perfectly every 0.163 s (seconds of correct playback).
-  ADMA is never used (`admas=0`).
-- **The failure is upstream, in the CD stream.** smpd reads the music with `sceCdRead` 16 sectors at a time (LSN `0xBB79E`
-  onwards into `0xB32C8`/`0xBB2C8`). When the music file's first part ends (`a1=9` short read) the stream continues at the
-  loop LSN `0xBB867`. From then on the pattern is, every ~0.36 s: `KOFF` 0x3 -> `sceCdRead(0xBB867, 0x20)` +
-  `sceCdRead(0xBB887, 0x10)` -> preload both halves -> `KON` -> two halves played -> no further read -> `KOFF`. The next
-  read (`0xBB897`, seen once before into `0xAB2C8`) never happens again, so 989snd ends the stream and the loop restarts
-  it: that is the repeating fragment. The onset time varies between runs (1.3-4.5 s after the stream start).
-- Concurrently smpd loads another file (`0xBCEBB`...`0xBD27B`, ~1.9 MB) at full speed: our `sceCdRead` completes
-  synchronously and instantly (`sceCdSync` returns done immediately, single `completionCallback` slot), so the streamer
-  and the loader may race on smpd's request queue / CD callback. Leading hypothesis (not verified): a lost or
-  overwritten CD completion (`completionCallback` is one `std::optional`, `sceCdCallback` is set once) or the instant
-  completion leaves smpd's music request "in flight" forever after the loader's burst.
-- Next step: log `takeCompletionCallback` delivery vs. `sceCdRead` issue order (does every read get its callback?), and
-  the smpd request state; compare with a model where `sceCdRead` completes after a sector-time delay (PCSX2 timing).
-
-The post-intro freeze was not investigated in this round (budget).
-
-## Menu/movie audio: CD read latency (2026-10-15, Linux) - partial fix, loop restart still broken
-
-Follow-up of the diagnosis above (`patches/ps2recomp-cdvd-read-latency.patch`, registered last).
-
-- **The lost-callback hypothesis is refuted.** Logging every `sceCdRead` and every delivered completion callback (temporary
-  `GOW_CD_DIAG`, removed) shows 1:1 delivery, always 128 cycles after the call, `pending=0` each time. All reads, music and
-  loader alike, come from the same smpd thread (T18), so they cannot race on the callback slot either. The single
-  `completionCallback` slot is not a problem in practice (`takeCompletionCallback` is drained right after each import).
-- **Real cause of the first death: reads were instant.** The loader (`0xBCEBB`..`0xBD27B`, 1.9 MB) is bound by the EE
-  hand-off (~17-24 ms per 32 KB chunk, T19), and smpd's single reader thread cannot serve the music request in between
-  (only one music chunk, `0xBB897`, slipped in); the music stream had 1.3 s of data and ended (KOFF) when it was consumed.
-  With a DVD-like read time the loader and the stream interleave at the right pace.
-- **Fix:** `IopCdvd` returns `CompletionCallback::delayCycles` (sectors x 2048 / 8 MB/s in IOP cycles; `GOW_CD_MBPS=<n>`
-  overrides, `0` = old instant behaviour); `iop_emulator.cpp` puts the reading thread to sleep for that time and delays the
-  callback by it. Test: `ps2xTest` "IOP sceCdRead completion is delayed by the DVD transfer time" (fails with `GOW_CD_MBPS=0`).
-- **Verified (menu, `GOW_SKIP_FMV=1`, `GOW_SPU2_DIAG=1`, GOW_AUDIO=0, 40 s):** music chunk reads now arrive every 0.65 s
-  (`0xBB8A7`, `0xBB8B7`, ... `0xBB947`) and the stream plays 6.5-8.4 s (the whole 240-sector clip, `0xBB867`..`0xBB957`)
-  instead of 1.3 s. Not verified by ear (audio muted for the diagnosis).
-- **Still broken:** after the clip's EOF the loop restart (`0xBB867` n=32 + `0xBB887`) plays only the two preloaded halves
-  (0.325 s) and 989snd issues KOFF, again and again, with no EE sound command in between (only 113 `[gow-snd]` commands per
-  run), so the restart state inside 989snd/smpd is what differs from the first start (the third read `0xBB897` is never
-  requested). Next: compare the smpd/989snd thread and semaphore traffic of the first start (KON 3.19 s) with the first
-  restart; the old `GOW_SPU2_DIAG` logging is still uncommitted WIP in `PS2Recomp/`.
-
-## Menu/movie audio: the "repeating fragment" was NAX = end of buffer (2026-10-15, Linux) - fixed
-
-Root cause of the music that stops after a few seconds and restarts every ~0.36 s (the loop restart was a symptom, not a
-restart-state difference). Found by watching 989snd's stream tick (temporary `IOP` import trace and PC watch, removed):
-
-- **Not threads/semaphores/events/alarms.** The first start and the restart run the same smpd/989snd code; the third read
-  `0xBB897` was missing because 989snd had already stopped the stream. `SetAlarm`/`CancelAlarm` (thbase 35-38) are no-ops
-  in the HLE, but 989snd/smpd never call them (only two hard timers, the 4.17 ms sound tick). Side finding, not fixed:
-  `GetSystemTimeLow` (thbase 43, 862 calls from smpd's reader thread) is unimplemented and returns a stale `v0`; smpd only
-  uses it for its read-time statistics.
-- **The cause.** The sound tick (T13, every ~4.17 ms) reads each stream voice's NAX and requires it to lie in the
-  stream buffer (`[base, base + size)`, per channel: buffer A `0x2820-0x3020` / B `0x7820-0x8020` in halfword units).
-  Outside that window for >= 9 ticks (or immediately when NAX is just past the window) it calls its stop-stream routine
-  (KOFF, `989nomid.irx` 0x38884). Our SPU2 resolved the loop jump lazily: after decoding the block with the loop-end flag
-  `nax` stayed at `block + 8` (= the end of the buffer) until the *next* block was decoded, i.e. NAX read exactly `0x8020`
-  for one block time (~0.66 ms at pitch 0x0EB3). A tick landing in that 0.66 ms window killed the stream. The half
-  period (162.6 ms) is almost exactly 39 ticks, so the tick phase is locked to the KON and a start is either always or
-  never hit: that is why the onset moved between runs (1.3-4.5 s) and why restarts always died at the 2nd boundary
-  (0.325 s). The earlier "the clip is 240 sectors and ends at `0xBB957`" was wrong: the stream is ~2.9 MB (58.6 s).
-- **Fix** (`patches/ps2recomp-spu2-loop-latch.patch`, registered last): the loop target is latched when the block with
-  the loop-end flag is decoded (`nax = lsa` right away, ENDX / key-off still at the end of the block), so NAX never
-  shows the address after the buffer. A first attempt that only reported LSA in the NAX register read made it worse:
-  989snd then saw the next half early, rewrote LSAX, and the deferred jump used the new LSA. Test: `ps2xTest`
-  "NAX never shows the end of a looping buffer: LSA is latched when the end block is read" (fails without the change);
-  the existing "loop end flags stop or repeat the voice" test now expects `nax == 0x3000` for a one-block loop (a block
-  that has the loop-end flag points at its LSA from the moment it is read).
-- **Verified** (menu, `GOW_SKIP_FMV=1`, `GOW_SPU2_DIAG=1`, `GOW_AUDIO=0`, 230 s): KON at 3.195 s and then no KOFF; the
-  CD stream reads one 16-sector chunk every 0.65 s (`0xBB897`... up to LSN 769429) and the track plays 58.6 s, restarts
-  with a new KON at 61.809 / 120.425 / 179.041 s (three full loops, same period). Before the fix every run died after
-  0.65-7.5 s. Not verified by ear (audio muted for the diagnosis). `ps2x_tests` 642 pass; 138 patches apply in order on
-  a fresh pinned tree.
-
-## Movie audio and the post-movie stall: ADMA, the IsEnd flag and duplicated audio packets (2026-10-15, Linux) - fixed and verified
-
-Symptom: the intro FMV played silent (noise floor), then "Three Weeks Earlier" (the end of the video itself), then black forever
-(`0.0 FPS`, movie state `[0x29C838]=11`, EE looping on the sound RPC `cmd=0x40`). Three independent causes, all fixed:
-
-1. **ADMA was missing** (`patches/ps2recomp-spu2-adma.patch`). The movie audio is ADMA on SPU2 core 1: the PSS audio callback
-   (`0x18A8F8`) fills an EE ring, a feeder (`0x188380` -> `0x188688`) SIF-copies it to an IOP double buffer (`0x77640`/`0x79640`,
-   0x2000 each) and asks 989snd for the playback position with RPC `cmd=0x40` (the IOP DMA address); libsd programs `ADMAS=2`
-   and re-kicks DMA7 per half. The SPU2 ignored ADMA, so the DMA completed at once (~290,000 re-kicks per run) and nothing played.
-   Now with `ADMAS` set the DMA data is queued (blocks of 0x400 bytes = 256 L + 256 R samples), consumed at 48 kHz through a
-   two-half input buffer at `0x2000 + core*0x400`, mixed into the core's dry output with BVOL (a plain s16, `0x7FFF` = 1.0;
-   the voice/MVOL 15-bit format made the game's `0x7FFE` ~0), the DMA IRQ fires when the last block enters the buffer and
-   `MADR` advances with the copied blocks. Underrun: the core falls silent and restarts at the next block. Not modelled: MMIX
-   input bits (the game sets `0x0FCF`, input on), volume sweeps, wet path.
-2. **`sceMpegIsEnd` is game code, not a stub** (`patches/ps2recomp-mpeg-end-audio.patch`): `0x26FF70` returns `*(*(mpeg+0x40))`,
-   which libmpeg sets to 1 at the end of the stream. Our `sceMpegGetPicture` never did, so the movie loop (state 11,
-   `0x189450` -> `0x189B00`, `[0x140]==2` path) never left. `sceMpegGetPicture` now sets that word when it has no frame and no
-   wait is possible (end of sequence / EOF / failure). This is the post-movie freeze. `GOW_MOVIE_DIAG=1` (with `GOW_PAD_TEST=1`)
-   prints `[gow-movie]` every 5 s (movie state, ctx fields, EE audio ring, IOP ring counters) - that is how it was found
-   (`[0x140]=2`, `sceMpegIsEnd` never logged).
-3. **Audio packets were delivered 2-6 times** (same patch): the stub sent each private-stream-1 packet to the callbacks of
-   both PCM and ADPCM, and GoW registers the same function for types 2/3/4 and registers again after re-creating the handle
-   (libmpeg resets the table). The PCM packets have an odd payload (4073 bytes), so the duplicates shifted the byte stream and
-   half of the ADMA blocks were noise. Now one callback per distinct `(function, data)`, ADPCM only when no PCM callback matched.
-   The PSS audio itself is 48 kHz stereo PCM ("SShd", interleave 0x200), checked against the ISO's own PSS.
-
-Verified (menu script `5:start,12:x,20:x,28:x`, `GOW_AUDIO_PCM`, 140 s, NVIDIA): the movie ends (`[gow-movie] st=0`), the game goes
-on to gameplay (screenshot at 135 s shows the rainy-deck fight); the captured PCM during the movie has RMS 4,000-8,000 and
-lag-1 autocorrelation 0.97-1.0 (before the last fix 0.04-0.3 = noise, before ADMA RMS 2 = silence). Not checked by ear.
-`ps2x_tests` 646 pass (run from `PS2Recomp/`); 140 patches apply in order on a fresh pinned tree. Tests: "ADMA streams the DMA
-data ...", "ADMA restarts cleanly after an underrun", "sceMpegGetPicture flags the end of the stream ...", "sceMpegDemuxPssRing
-delivers an audio packet once ...". Left: a second FMV starts about 10 s after the first in this run (state 10 at 125 s, not
-examined); `GOW_SPU2_DIAG` still logs MMIX/volume writes in the uncommitted `PS2Recomp/` WIP.
-
-## FMV a tiempo real: el bucle de la película giraba al 100 % de CPU (2026-10-15, Linux) - corregido
-
-Síntoma (grabación del usuario): la intro iba a ~19 imágenes/s (esperado 29,97), el audio sonaba estirado y al final había 3-4 s de
-audio+escena acelerados. Medición con `GOW_MPEG_DIAG=1` / `GOW_PERF_DIAG=1` / `PS2X_PIPE_STATS=1`: durante la película la GS (25 ms/s) y
-la VU1 (3 ms/s) están ociosas y `guest_wait` es 0: el hilo EE+IOP está al 100 %. ffmpeg + conversión + escritura del cuadro suman
-~8 ms/s cada uno, no son el cuello. Con `GOW_PLAY_FMV`/contador de llamadas temporal: la bomba de película del juego
-(`0x188B80`, que llama a `sceMpegDemuxPssRing` vía `0x2740D0`) se ejecuta **~830.000 veces/s**. Mientras la cola de imágenes
-decodificadas está llena, el stub devolvía 0 al instante y el EE giraba; como el reloj emulado (VBlank, imágenes, SPU2/ADMA a ciclos de
-IOP) avanza con los ciclos del EE, iba al ~63 % del tiempo real (38 vsync/s). Audio y vídeo iban igual de lentos (el SPU2 genera por
-ciclos de IOP, no por reloj de pared); no era un problema de pacing del audio.
-
-Corrección (`patches/ps2recomp-mpeg-pump-vsync.patch`, registrado último; prueba en `ps2xTest`, falla sin el cambio): con la cola llena,
-`sceMpegDemuxPssRing` duerme hasta el siguiente VSync (`waitVSync`) y después devuelve 0 como antes (espera acotada: no hay bloqueo del
-consumidor, ver el comentario de `mpegDemuxBackpressured`). Solo se alcanza mientras suena una película. Medido (intro, `Semo01`):
-imágenes servidas 19 -> 29,9/s, vsync 38 -> 60/s, la película dura 48 s de pared (antes 75-110), audio PCM generado en tiempo real (109 s
-de muestras en 105 s), sin acelerón al final. Otras películas probadas con la misma ejecución (arranque normal, nombre sustituido):
-`A01MP05` (247 imágenes), `MA360` (994) y `D01MP02` (3.184, 106 s): todas terminan (estado 0) y el juego sigue vivo 20 s después.
-Rendimiento del resto del juego (A/B con `GOW_SKIP_FMV=1`, mismas condiciones, `[gow-delta]`): menú ~20-23 FPS y pelea ~12-13 FPS en base y
-candidata (sin diferencia); con película y la misma ruta (`m2*`): pelea 24-37 FPS en ambas.
-
-Diagnósticos nuevos (apagados por defecto): `GOW_PLAY_FMV=<nombre>[,<nombre>...]` sustituye la N-ésima película que pide el juego
-(`0x188CA0`; la intro pide `Semo01`) por otra del TOC sin extensión (`Semo01`, `A01MP05`, `MA360`...), y `GOW_MOVIE_DIAG=1` registra
-`[gow-fmv] request` (nombre y argumentos). El disco tiene 67 `.PSS` y 53 `.PSW` en `GODOFWAR.TOC` (partes 0 y 1 de los PAK); no se han
-reproducido todos. Pendiente: las películas que el usuario dice que se caen (nombres por confirmar); mirar `.PSW` y los `BONUS*` (hasta 566 MB).
-
-## La tercera película de la sesión se abortaba (palabra de fin sin limpiar) (2026-10-15, Linux) - corregido
-
-Síntoma (usuario, partida nueva): la tercera película (`a01MP02`, tras `Semo01` y `a01mp05`) no se ve: pantalla negra con el juego vivo. Reproducido encadenando películas en una sola sesión con el nuevo `GOW_PLAY_FMV_CHAIN` (`A01MP05` sustituyendo a `Semo01`, luego `A01MP05@6ef7`, luego `A01MP02@7eff`): las dos primeras suenan, la tercera pasa por los estados 0->1->3->5 y el juego la para en el estado 6 (`0x189348` imprime `unexpected MPEG error???` y llama a `0x188F20`), sin ninguna imagen (`[0x54]=0`). A01MP02 sola, o como segunda, se reproduce entera (999 imágenes).
-
-Causa: `sceMpegIsEnd` es código del juego y lee la palabra `*(*(mpeg+0x40))`, que mi `sceMpegGetPicture` (7c4c05d) pone a 1 al terminar el flujo. El juego reutiliza el mismo bloque libmpeg para cada película y **no llama a `sceMpegReset` entre ellas** (no aparece en el registro); `sceMpegCreate` (stub) ponía a 0 `mpeg+0..8` pero no la palabra interna `inner+0`. Las dos primeras sesiones usaban otra dirección interna (`0x148D380`, `0x178D380`) y no heredaban nada; la tercera repite `0x178D380` y empezaba con la palabra a 1 (`endWordBefore=1`, medido con un diagnóstico temporal), así que `0x18A170` veía `sceMpegIsEnd` verdadero antes de la primera imagen y devolvía error.
-
-Corrección: `patches/ps2recomp-mpeg-create-endword.patch` (registrado último): `sceMpegCreate` deja a 0 `inner+0/4/8` (como `sceMpegReset`). Prueba en `ps2xTest` ("sceMpegCreate clears the end-of-stream word left by the previous movie"), falla sin el cambio. Verificado en la misma sesión encadenada: la tercera película muestra imágenes (999) y termina (estado 11 -> 0), capturas con imagen. Pendiente de verificar con la secuencia real de la partida (`Semo01` natural, `a01mp05` y `a01MP02` por su propio disparador); el encadenado arranca cada película con las mismas funciones del juego pero no es el flujo exacto. Nota: el encadenado tras `Semo01` real (sin sustitución) dejó el juego congelado al final de la segunda película (artefacto del encadenado en la escena de la cubierta, no examinado).
+| 1 | 47,35 (43,53–59,96) | 50,94 (49,56–52,76) |
+| 2 | 44,75 (42,55–60,16) | 53,76 (48,08–60,00) |
+| 3 | 46,55 (43,55–59,98) | 54,00 (51,00–59,80) |
+
+  Velocidad del juego 1,00 en todas. Sigue por debajo de 60: lo siguiente son las reservas de memoria del hilo
+  trabajador (`RtlAllocateHeap` ~3,9 % de sus muestras) y la VU1 nativa.
+
+### Búferes DMA reutilizables (2026-10-16)
+
+- Traza del trabajador (`PS2X_GS_WORKER_TRACE`, `logs/tools/gap.py` privado), barco con la cámara quieta, `bin\waffle3`:
+  periodo por cuadro 17,75 ms = flip→kick de la cadena DMA 1,66 ms + trabajo VU1/GS 13,01 ms + fin→flip 3,12 ms.
+  60 Hz pide 16,67 ms.
+- El EE aplanaba cada cadena (~2,6 MB por cuadro) en un vector nuevo que crecía realojándose; el trabajador lo
+  liberaba al acabar. `patches/ps2recomp-dma-buffers.patch` reutiliza esos búferes (hasta 4). Prueba
+  `DMA sends reuse buffers without replaying earlier data` (falla si el búfer reutilizado no se vacía).
+- Traza con el cambio (`bin\waffle5`): flip→kick 0,22 ms (antes 1,66–1,78), trabajo 10,63 ms, periodo 16,55 ms en esa
+  ventana de 2 s (una sola ventana; el trabajo de `waffle3` varió entre 13,0 y 14,9 ms en dos ventanas).
+- A/B alterno de 7 rondas, 130 s, `guest_flip_hz` (no FPS físicos), mediana de las 12 últimas ventanas:
+  A `waffle3` 49,39 / 55,55 / 51,15 / 53,20 / 56,15 / 50,16 / 53,79 (mediana 53,20);
+  B `waffle5` 56,96 / 52,94 / 52,17 / 54,57 / 55,75 / 56,36 / 56,96 (mediana 55,75). B gana en 5 de 7; la
+  dispersión entre rondas (±4) es comparable a la diferencia. Velocidad del juego 1,00 en todas.
+- Descartado (sin mejora medible): reutilizar los vectores del árbitro GIF y no ordenar su cola ya ordenada
+  (`waffle4`: A 48,60–58,98, B 53,98–55,37 en 5 rondas válidas).
+- Cuelgue de la presentación: una ejecución de `waffle4` (`runs\abg_2B`) siguió corriendo 148 s sin ninguna línea
+  `[gow-perf]` y no atendió WM_CLOSE; antes, `w1_dump` (`waffle1`, sin cambios propios) tampoco atendió WM_CLOSE.
+  El arnés vuelca ahora las pilas de todos los hilos (`pilas.exe`, privado) si a los 40 s no hay `[gow-perf]`;
+  0 apariciones en las 14 ejecuciones siguientes.
+
+### Vibración fuera del hilo del juego; UNPACK SSE de 16/8 bits descartado (2026-10-16)
+
+- Perfil por muestreo (`muestrear4`, 150 s, barco con la cámara quieta, `bin\waffle5`): en el hilo del EE el 1,9 % de
+  las muestras estaba en `openSonyPads ← sonyRumble ← ps2PadWindowsRumble`. Sin un mando Sony conectado, cada cambio
+  de motores del juego volvía a enumerar los dispositivos HID (SetupDi + `CreateFile` en cada uno) como mucho cada
+  2 s, en el hilo del juego. En dos trazas del trabajador apareció un cuadro aislado de 73-74 ms.
+- `patches/ps2recomp-pad-rumble-scan.patch` hace ese escaneo en un hilo aparte; la vibración usa los mandos ya
+  abiertos. Con el cambio (`bin\waffle7b`, perfil de 120 s) `openSonyPads` no aparece en el hilo del EE. Sin prueba
+  en `ps2xTest`: es código de Windows con dispositivos HID reales.
+- A/B alterno a tres bandas, 4 rondas de 130 s (`guest_flip_hz`, no FPS físicos), `waffle5` = `main`:
+  `waffle5` 59,15 / 56,15 / 57,54 / 54,97; `waffle7b` (vibración) 56,56 / 55,17 / 58,54 / 58,57: neutro en media;
+  `waffle8b` (UNPACK V4/V3 de 16 y 8 bits con SSE4.1) 51,56 / 51,95 / 58,74 / 52,16: peor en 3 de 4, descartado
+  (la prueba diferencial pasaba; queda por entender por qué es más lento que el bucle escalar).
+- Error de procedimiento corregido: `waffle6/7/8` se compilaron sin `ps2recomp-dma-buffers` (copia de trabajo
+  revertida), así que sus primeras comparaciones no valen; las de esta sección usan `waffle7b/8b`, con la base de `main`.
+- Cuelgue de la presentación: reapareció una vez en `waffle6` (`runs\ab6_3B`: 4 líneas `[gow-perf]` y luego nada,
+  el juego siguió 148 s). El vigilante del arnés detecta ahora 15 s sin líneas nuevas y vuelca las pilas. 0 apariciones
+  en las 38 ejecuciones siguientes (`caza5_*`, `caza6_*`, `sep_*`, `sepb_*`); 4 en total desde la migración.
+
+### Tabla `[mmio]` del reproductor de vídeo (2026-10-16)
+
+- `GOW_IO_HIST=80` durante el vídeo de apertura (`Semo01`, partida nueva con `GOW_SKIP_FMV=0`, `bin\waffle5`):
+  13 instrucciones del reproductor seguían accediendo a hardware por la ruta genérica (~1360 veces cada una por
+  canal): `0x26ee18/24/34/54` (QWC/MADR/D_STAT/CHCR de VIF1 y GIF), `0x26eda0/ac/bc/d0` (canal toIPU),
+  `0x26ed54` (D_ENABLEW), `0x26e844/60/68` y `0x26cc74` (registros de pantalla del GS, 64 bits). Son las 13
+  entradas privadas que Waffle565 describe en las funciones 0x26CB90, 0x26E798, 0x26ED20, 0x26ED68 y 0x26EDE0.
+- Añadidas a `[mmio]` de `config/recomp.template.toml`. Al regenerar cambian exactamente esos 5 archivos; el código
+  emitido pasa por el servicio DMA nativo (`eeDmaStore`) o por los registros de pantalla nativos.
+- Con el cambio (`bin\waffle9`): `GOW_IO_HIST` ya no lista ningún acceso durante el vídeo; `Semo01` se ve igual
+  (49 marcas `[MPEG:sync]`, capturas correctas).
+- El fallo de un vídeo pedido desde el menú de extras (`tools/pruebas/videos.py` de la PR #107, `GOW_BONUS_MOVIE`):
+  llamada virtual a `0x0` en `0x161c68` (método `+0xB4` de la tabla de un objeto global en `-0x3D48($s0)`, aún sin
+  construir) y el hilo principal dormido. **No lo arregla la tabla `[mmio]`** (una primera ejecución correcta con
+  ella resultó ser casualidad): es intermitente, 3 de 9 intentos con `D01MP03`; luego 3/3 correctos sin la tabla
+  (`waffle5`) y 3/3 con ella (`waffle9`). Ocurre cuando el arnés fuerza la petición (`GOW_BONUS_MOVIE_DELAY` segundos
+  después de que el menú empiece a actualizarse) antes de que el título haya construido ese objeto. Ejecución
+  correcta: 270 imágenes a 30,00/s, 8,01 s de imagen y 8,00 s de audio, deriva A/V 0,01 s.
+
+### Validación de los 67 vídeos y VBlank NTSC (2026-10-16)
+
+- `tools/pruebas/videos.py` (PR #107) con el ejecutable de `main` + tabla `[mmio]`, una sesión por vídeo (`--batch 1`):
+  25/67 correctos a la primera; 41 fallos eran la llamada virtual nula del arnés al forzar la petición desde el menú
+  de extras (`missing-target` en `0x161c68`; el vídeo ni se carga). Reintentando esos (hasta 3 sesiones,
+  `logs/tools/reintentar_videos.py`, privado): **61/67 correctos**. En lotes la 2.ª petición forzada falla casi
+  siempre; con `GOW_BONUS_MOVIE_DELAY=20` en vez de 8 fallaron 5 de 7 sesiones.
+- Fallos reales: BONUS03 y BONUS06 (deriva A/V 0,80 y 0,44 s), SEMO10 (deriva 0,46 s y audio faltante), SEMO08
+  (214,6 s de audio para 210,2 s de imagen, igual que en Waffle565), P04MP05 (se detiene, abierto también en Waffle565)
+  y BONUS20 (imagen correcta, RMS 0 durante 208 s: por comprobar si el vídeo tiene audio).
+- Causa de las derivas de BONUS03/06: el VBlank del runtime era de 16 667 µs (59,9988 Hz) y la PS2 NTSC da
+  60/1,001 Hz (59,94). Los vídeos se presentaban a 30,00 imágenes/s en lugar de 29,97 y el audio quedaba atrás un
+  0,1 %: 436 s × 0,001 = 0,44 s (BONUS06), 812 s → 0,81 s (BONUS03).
+- `patches/ps2recomp-vblank-ntsc.patch`: periodo del VBlank = 16 683 350 ns y kEeClockHz × 1001 / 60000 ciclos.
+  Prueba `VBlank field period is the NTSC 60/1.001 Hz field` (falla con el valor anterior; comprobado).
+- Con el cambio (`bin\waffle10`): BONUS06 correcto (29,97 imágenes/s, deriva 0,01 s), BONUS03 correcto (deriva
+  0,08 s), SEMO10 correcto (deriva 0,01 s, sin audio faltante). SEMO08, P04MP05 y BONUS20 siguen igual (otras causas).
+  Barco con la cámara quieta: `guest_flip_hz` mediana 56,15 (54,16–59,98), velocidad 1,00; el techo pasa a 59,94.
+
+### Anatomía de un cuadro en el barco y traza ampliada (2026-10-16)
+
+- `patches/ps2recomp-gs-worker-trace.patch` amplía el diagnóstico `PS2X_GS_WORKER_TRACE=<s>`: ventana configurable
+  (`PS2X_GS_WORKER_TRACE_SECS`, por defecto 2 s), funciones del juego extra (`PS2X_GS_WORKER_TRACE_PCS=hex,hex,...`) y
+  eventos `stage-wake` (el stage del GS levanta FINISH y despierta al EE), `ee-gs-irq` (el EE despacha la interrupción
+  del GS), `vblank` y `thread <id>` (hilo del EE que pasa a ejecutarse). Desactivado por defecto.
+- Traza de 30 s en el barco con la cámara quieta (`bin\wtrace`, 1640 cuadros, `logs/tools/gap2.py` privado):
+  - Por cuadro: flip → kick de la cadena DMA (~2,6 MB) 0,3 ms; la lógica del juego en el EE (`sub_00162F18`…) dura
+    8,5 ms de mediana (p90 9,6) y corre en paralelo con el trabajo del trabajador VU1/VIF + stage GS (mediana
+    14,6 ms, p90 15,9, máx. 19,6); el stage termina a la vez que el trabajador (`stage-wake` = `job-done`).
+  - Tras el trabajo: `ee-gs-irq` 10–20 µs después; de ahí al siguiente kick mediana 0,86 ms (p90 2,48; los casos
+    lentos tienen un VBlank en medio); de `WaitForDMAComplete` al flip mediana 2,15 ms (p10 1,00, p90 3,05) de trabajo
+    del EE en serie (no es espera de VBlank: los flips caen a 6,85 ms de mediana del último VBlank, repartidos).
+  - Periodo de cuadro ≈ trabajo + 3,5 ms: trabajo 12–14 ms → 17,12 ms; 14–16 ms → 18,32 ms; 16–18 ms → 20,18 ms.
+    Para 60 Hz estables el trabajo VU1+GS tendría que bajar de ~13 ms.
+  - No hay cambios de hilo del EE en ese tramo (un solo hilo activo). `DelayThread` no se llama.
+- El hilo del EE pasa ~46 % del tiempo durmiendo en `processDueDeadlines` (ritmo frente al tiempo real, 16 pasos por
+  campo), sobre todo desde `advanceIopEeCycles`.
+- Descartado: caché de registros VF/ACC en los bloques de la VU1 nativa (`vu1n_gen.py --regcache`, no subido): menos
+  lecturas generadas (ACC 3052 → 1636) pero el mismo coste, ~3,8 ns por ciclo de VU1 (el compilador ya reenviaba los
+  valores); `GOW_VU1N_VERIFY=20000` daba el mismo único desajuste que sin el cambio (ejecución 15759, ya existente).
+
+### Imágenes perdidas en la presentación (2026-10-16, partida del usuario)
+
+- Partida del usuario con el medidor (`jugar.cmd`, 274 s de juego): el juego daba ~60 cuadros/s de mediana, pero en
+  28 segundos llegaron a la ventana bastantes menos imágenes (p. ej. 60 cuadros del juego y 44 imágenes). Es la caída
+  que se veía "con muchos enemigos" y que el medidor de cuadros del juego no registraba. En combate denso además el
+  juego baja a 44–56 (EE ~3,8 s y VU1 ~3,7 s por ventana de 5 s).
+- Causa: el ritmo del juego es irregular (cuadros de 10 a 22 ms; los VBlank que recibe llegan cada 10,8–23,3 ms) y
+  `GSSharedPresent::Acquire` tomaba siempre el cuadro más reciente: si dos cuadros caían en un mismo refresco de la
+  ventana, el primero no se veía.
+- `patches/ps2recomp-present-orden.patch`: se muestra el siguiente cuadro aún no mostrado; solo se salta al más
+  reciente con 3 o más pendientes. `PS2X_GS_PRESENT_LATEST=1` vuelve al comportamiento anterior.
+  `patches/ps2recomp-fps-imagenes.patch`: el medidor (F2) y la línea `[gow-fps]` cuentan también las imágenes.
+- A/B alterno, 6 rondas de 130 s con combate continuo (el guion por defecto), segundos 40-130:
+  imágenes por segundo (mediana) 55,0 / 55,9 / 58,0 / 54,9 / 56,0 / 54,9 antes, 59,9 / 59,4 / 58,9 / 59,6 / 59,9 /
+  59,9 con el cambio; imágenes perdidas 413 / 293 / 277 / 359 / 208 / 455 → 102 / 34 / 58 / 169 / 58 / 166.
+  Cuadros del juego (mediana) 58,9 / 58,9 / 59,9 / 59,0 / 58,9 / 59,0 antes y 59,9 / 55,0 / 55,9 / 58,1 / 56,0 /
+  59,9 con el cambio: posible bajada pequeña, sin confirmar (la velocidad del juego queda en 1,00–1,01 en ambos).
+
+### Paquetes GIF en lotes hacia la etapa GS (2026-10-16)
+
+Cronómetros por fase del hilo de trabajo (diagnóstico temporal, no subido) en combate en el barco: dos trabajos por
+cuadro de ~7,5 ms; la VU1 se lleva ~88 % (~930 llamadas por trabajo) y pasar los paquetes a la etapa GS ~13 % (~2850
+`push` por trabajo, cada uno con bloqueo, copia y a menudo un despertar del hilo de la etapa). El "modo lento" que se
+veía entre partidas es carga de la escena: las partidas lentas hacen hasta un 50 % más de llamadas a la VU1 con el
+mismo coste por ciclo (3,8-4,0 ns).
+
+`ps2recomp-gs-stage-lotes.patch`: el trabajador acumula los paquetes (cabecera de 16 bytes con ruta y tamaño, datos
+alineados a 16) y los entrega a la etapa cada `PS2X_GS_STAGE_BATCH` bytes (16384 por defecto; 0 = uno a uno), al
+final de cada trabajo y antes de esperar a la etapa desde el propio hilo productor. Prueba: "GS stage batches packets
+and delivers them in order with exact sizes".
+
+A/B en combate, 5 rondas alternas (trabajo por cuadro, mediana / cuadros con trabajo > 15 ms), antes → después:
+13,15/9 % → 12,98/6 %; 14,04/22 % → 13,58/10 %; 14,47/30 % → 11,39/1 %; 13,65/12 % → 12,82/2 %; 14,48/30 % →
+13,24/4 %. Las 5 a favor; mediana de medianas 14,04 → 12,98 ms, periodo de cuadro mediano 17,3 → 16,9 ms.
+
+### Ciclos del IOP acumulados en el lado del EE (2026-10-16)
+
+Perfil por muestreo (con símbolos) de una partida en combate con los lotes de la etapa GS: el hilo de trabajo
+espera ~44 % del tiempo; el hilo del EE está ocupado ~88 %, y ~30 % de él es contabilidad de los puntos de control
+(cada 8 ciclos del EE, decenas de millones por segundo): `IopEmulator::accrueEeCycles` 15 %, `checkpointDue` 6 %,
+`advanceEeTimers` 2,5 %, `advanceIopEeCycles` 2,2 %, `eeCheckpointDue` 2,2 %, `IopSubsystem::accrueEeCycles` 1,7 %.
+El IOP solo hace algo cada lote de 512 ciclos suyos (4096 del EE).
+
+`ps2recomp-iop-acumulado.patch`: `PS2Runtime::advanceIopEeCycles` (ahora en línea) suma los ciclos y llama al IOP solo
+cuando vence su lote, que el IOP informa con `eeCyclesUntilBatch()`: mismos lotes en el mismo punto de control que
+antes. Prueba: "IOP batches are due exactly after eeCyclesUntilBatch EE cycles" (también compara con la acumulación
+paso a paso durante ~30 lotes).
+
+Resultado: el hilo del EE pasa de ~88 % a ~64 % de muestras en el ejecutable (espera ~31 % en vez de ~8 %). Los
+cuadros del combate en el barco no cambian (3 rondas: trabajo 12,32/13,28, 10,92/9,67, 12,47/12,83 ms; periodo
+16,70/16,95, 16,83/16,68, 16,68/16,81 ms): ahí manda el hilo de trabajo (VU1). Es margen para escenas donde
+manda la lógica del EE.
+
+Nota: `ps2xTest/src/ps2_spu2_tests.cpp` no está en `ps2xTest/CMakeLists.txt`; sus pruebas no se ejecutan.
+
+### Ritmo del EE: 64 puntos por campo (2026-10-16)
+
+Traza del cuadro en combate con los momentos en que el EE se duerme (diagnóstico local): tras el aviso de la GS el
+EE no seguía enseguida, sino que dormía en `processDueDeadlines` ~1-2,5 ms por cuadro, esperando puntos de ritmo
+(eventos `ExternalWake` 0xFFFFFFFF de la rejilla del VBlank). Mientras espera a la GS, el juego sondea
+(`vid::WaitForDMAComplete`), y cada vuelta suma ciclos del EE ~10 veces más rápido que el tiempo real; el ritmo deja
+que el reloj del EE vaya hasta un punto por delante del real (1/16 de campo, ~1 ms), y al terminar la GS el juego
+tiene que dormir ese adelanto antes de enviar el siguiente cuadro. En la PS2 no existe: es un artefacto de la
+emulación.
+
+`ps2recomp-ritmo-fino.patch`: 64 puntos por campo (adelanto máximo ~0,26 ms). Prueba: "EE clock never runs more
+than 1/64 field ahead of the host clock" (una función invitada que solo gasta ciclos; falla con 16 puntos).
+
+A/B en combate, 3 rondas (periodo mediano / p90 / % de cuadros <= 17 ms), 16 → 64: 16,91/18,45/55 → 16,73/18,09/59;
+17,15/18,97/43 → 16,71/18,02/60; 17,13/19,01/43 → 16,71/17,89/61. 64 frente a 256 puntos: sin diferencia clara
+(16,71/16,72/16,67 frente a 16,67/16,68/17,06). El paso de tiempo del juego (`[gow-animation] delta`) sigue en
+~0,01668-0,01679 s (1/59,94) en ambos casos: la velocidad no cambia.
+
+### Coste de ciclos del EE a la mitad (2026-10-16)
+
+Con 64 puntos de ritmo, la parte en serie del cuadro (fin del trabajo de la VU1 -> siguiente flip) seguía en ~3,7 ms,
+de los que el EE dormía ~3,1 ms y trabajaba ~0,6 ms (traza local con los momentos en que duerme). El recompilador
+cobra 32 ciclos del EE por salto hacia atrás del código generado y 8 por despacho, sin mirar cuántas instrucciones
+hay; como el reloj del EE va atado al real, una estimación alta obliga al juego a dormir tiempo de PS2 que nunca
+gastó.
+
+Experimento con un divisor temporal (A/B en combate, 3 rondas, periodo mediano / p90 / % <= 17 ms): divisor 1 -> 2:
+17,23/18,98/39 -> 16,67/17,66/67; 17,18/18,97/42 -> 16,67/17,69/67; 16,74/18,07/59 -> 16,68/17,68/68. Por tramos de
+trabajo de la VU1: 12-14 ms pasa de 17,0 a 16,6 ms de cuadro y 14-16 ms de 18,1 a 17,0. Divisor 2 frente a 4: sin
+diferencia (16,70/16,68/16,66 frente a 16,66/16,75/16,68). Paso de tiempo del juego (`[gow-animation] delta`)
+~0,01667-0,01669 s en todos los casos: la velocidad no cambia.
+
+`ps2recomp-ciclos-mitad.patch`: `kGeneratedCheckpointCycles` 32 -> 16, `kGuestDispatchCycles` 8 -> 4 (y el valor
+por defecto de `PS2Runtime::eeCheckpointDue`). Prueba: "generated checkpoints charge 16 EE cycles each". Con la
+compilación final, 2 rondas frente a la anterior: 17,03/18,59/49 -> 16,67/17,63/70; 16,98/18,40/52 -> 16,72/18,00/63.
+
+### Despachador de la VU1 nativa: ranura de 64 bytes (2026-10-17)
+
+Perfil por dirección (`muestrear4` con `MUESTREO_DIRS`) de `VU1Interpreter::runNative` en combate: el salto más
+caliente es la lectura de `sl.known` (fallo de caché: 2048 ranuras de 128 bytes = 256 KB) y, tras cada bloque, la
+lectura de `cyc[pairs - 1]` de su tabla de tiempos y las escrituras del historial.
+
+`ps2recomp-vu1-ranura64.patch`: los campos de memo por predecesor pasan de la ranura a `BlockTiming` (solo los usan
+los bloques que leen flags de entrada) y la ranura guarda `idleLast` (= idle[pairs - 1]): cabe en una línea de caché
+(static_assert) y el fin de un bloque con tabla ociosa no lee la tabla. Al reemplazar una entrada de la caché de
+tiempos ya no recorre las 2048 ranuras. Reproducción determinista (4000 ejecuciones de combate x 19): 0 diferencias;
+381,9/392,2/400,4 -> 384,2/379,0/383,6 ms (~2 %). En el juego, por debajo del ruido (3 rondas: 2 a favor).
+
+Descartados: precarga de la ranura del sucesor (reproducción 378-382 -> 383-391 ms; en el juego neutra) y no invalidar
+el código traducido cuando un MPG sube bytes idénticos (el juego cambia de microprograma de verdad: el bucle de
+invalidación seguía apareciendo en el perfil).
+
+### Redondeo de la VU con el MXCSR (2026-10-17)
+
+El juego llama a la VU1 ~110 000 veces por segundo (~1900 por cuadro), siempre por tres entradas (0x0000, 0x0018 y
+0x0030), de 5-9 µs cada una (estadística temporal por dirección de inicio). Cada `VU1Interpreter::run` cambiaba el
+redondeo con `fegetround` + `fesetround` dos veces: ~77 ns frente a ~8 ns con `_mm_getcsr`/`_mm_setcsr`
+(microprueba, MSVC /O2).
+
+`ps2recomp-vu-redondeo.patch`: en x86-64 solo se cambia el MXCSR (toda la aritmética de float va por SSE); en otras
+arquitecturas sigue `fesetround`. Prueba: "VU1 runs round toward zero and restore the host rounding mode".
+Reproducción: 0 diferencias. Combate, 2 rondas: trabajo mediano 12,69 -> 12,44 y 13,68 -> 13,36 ms.
+
+Nota para jugar: `GOW_PERF_DIAG=1` activa la contabilidad completa (lee el reloj en cada cambio de cubeta, miles de
+veces por cuadro); para medir cuadros basta `GOW_PERF_DIAG=frames`.
+
+### VU1 nativa: un MPG solo invalida los bloques que lee (2026-10-17)
+
+Contadores temporales en combate: ~550 000 entradas a `runNative`, ~4200 cambios de generación del código de la VU1
+(el juego cambia de microprograma ~14 veces por cuadro) y ~260 000 resoluciones de ranura (`slotFor`) cada 5 s: cada
+cambio invalidaba las 2048 ranuras, también las del código residente (las entradas 0x0000/0x0018/0x0030 y rutinas
+comunes).
+
+`ps2recomp-vu1-invalidacion-rango.patch`: `PS2Memory` anota el rango escrito por cada generación (MPG del VIF1; las
+demás escrituras, toda la memoria) en un registro de 64 entradas (`vu1CodeWritesSince`), y `runNative` solo descarta
+las ranuras cuyo bloque lee ese rango ([pc, pc + (pares + 1) * 8)); si el registro no cubre todas las generaciones,
+descarta todo como antes. Prueba: "VIF MPG logs the VU1 code range of each generation".
+
+Resultado: ~134 000 resoluciones cada 5 s (la mitad; las que quedan son del microprograma recién cargado).
+Verificación nativa contra el motor exacto (`GOW_VU1N_VERIFY=200000`, combate): 12 discrepancias, las mismas 12 que
+la base (diferencias de 1 en el último bit de un resultado, ya conocidas); ninguna nueva. En el juego la ganancia está
+por debajo del ruido entre partidas.
+
+### Regresión de audio de #120 y reloj del EE al día (2026-10-17)
+
+La validación de vídeos con la versión del 17 dio primero 0 de 67, por dos causas:
+
+1. Arnés: la copia local de `videos.py` había vuelto a `GOW_BONUS_MOVIE_DELAY` 8; la petición llegaba antes de que el
+   menú construyera su objeto (llamada nula en 0x161c68). Con 20 s funciona; con 30 s llega cuando el título ya pasó
+   a la demostración automática por inactividad y vuelve la llamada nula (el juego queda congelado tras la petición).
+2. Real, de #120 (16 ciclos por punto de control): ~6 300-6 700 muestras sin audio (~0,13 s) al final de cada vídeo.
+   Bisección con A01MP01 y P01MP01 sobre las compilaciones del día: hasta el ritmo de 64 puntos, correctos; desde
+   los ciclos a la mitad, fallan todas. En los tramos largos de trabajo del EE (salir de un vídeo) el reloj del EE
+   iba por detrás del real, el IOP (que avanza con los ciclos del EE) también y el búfer de audio se vaciaba.
+
+`ps2recomp-ee-ponerse-al-dia.patch`: cada 2048 puntos de control, `checkpointDue` llama a `catchUpToHost` con un
+margen de un campo (`slack`): si el reloj del EE va más de un campo por detrás del real, se pone al día. Sin margen
+el problema de audio desaparecía pero el periodo de cuadro en combate subía a 17,2-17,5 ms; con un campo (y con
+50 ms) los vídeos A01MP01, SEMO01, P01MP01 y BONUS06 pasan y el combate sigue en 16,66-16,70 ms (2 rondas).
+Prueba: "a slow guest still reaches the first VBlank on host time" (falla sin el cambio).
+
+### Pruebas de vídeo congeladas: el mando del jugador (2026-10-17)
+
+Las validaciones de vídeo se congelaban a partir de un punto distinto en cada tanda (llamada nula desde 0x161C68
+justo después de la petición forzada). La única diferencia entre los registros buenos y malos era
+`[pad] gamepad slot 0: Xbox Controller`: el usuario jugaba a otro juego con su mando mientras corrían las pruebas, y
+raylib lee los mandos aunque la ventana no tenga el foco. La entrada movía el menú del título y la petición del vídeo
+caía en un estado sin el método +0xB4 del objeto `*0x29C2B8`. Sin mando, 14 de 14 correctos; con mando, 6 de 10
+congelados. Las esperas de 8, 20 y 30 s (`GOW_BONUS_MOVIE_DELAY`) solo cambiaban la suerte.
+
+`ps2recomp-prueba-sin-mando.patch`: con `GOW_PAD_TEST=1`, `ps2_pad.cpp` no usa ningún mando físico; solo el guion
+controla el juego. Nota: en partida normal el juego también recibe el mando sin tener el foco.
+
+### Parpadeo del menú en mitad de los vídeos (2026-10-17)
+
+El usuario veía durante unos milisegundos el fondo del menú principal en mitad de las cinemáticas. Registro de cada
+presentación (diagnóstico local) en BONUS14: casi todas muestran el búfer del vídeo (FBP 0x68), pero cada ~1000
+presentaciones (~17 s) 2-3 muestran FBP 0xD0, cuyo render target no se dibujaba desde antes del vídeo (el menú).
+Registro de las escrituras de los registros de pantalla: el reproductor pone `DISPFB2` = 0xD0 y lo devuelve a 0x68
+~130 µs después, cada 66,7 ms. La consola no lo muestra nunca (la CRTC no ve un valor que solo dura una fracción de
+línea); el port tomaba la foto de los registros desde el hilo de la ventana en cualquier momento y a veces caía dentro.
+
+`ps2recomp-pantalla-latch.patch`: `GS::latchDisplayField()` captura los registros de pantalla al empezar cada VBlank
+(lo llama el planificador del EE antes de publicar `vsyncTick`) y la presentación usa esa foto. Prueba: "presentation
+uses the display state latched at VBlank, not a transient write". Resultado en A01MP01: 1579 presentaciones del
+vídeo, todas de FBP 0x68 y ninguna con contenido viejo.
+
+### VU1 nativa: medidas del despacho y regiones (descartado, 2026-10-17)
+
+Medida con `rdtsc` (1 de cada 16 bloques) en combate: ~105 M bloques nativos cada 5 s (~194 por ejecución de la
+VU1, ~137 ciclos de CPU por bloque); el tiempo de la VU1 se reparte en bloques ~73 %, despacho y contabilidad de
+tiempos ~26 %, coste fijo por ejecución ~1 %. El tiempo de los bloques está repartido por toda la memoria de código
+(0x0000-0x03FF 19 %, 0x2800-0x2BFF 14 %, 0x0C00-0x0FFF 14 %, el resto 1-9 % por zona): reescribir a mano unos pocos
+microprogramas (HLE) no daría una mejora grande.
+
+Experimento: regiones (rama local `vu1-regiones` del clon y `stash@{0}` del repositorio): el generador agrupaba los
+bloques de cada imagen unidos por saltos estáticos (426 regiones) en una función con `goto` entre bloques, misma
+contabilidad por bloque en línea; el despachador entraba en la región si todos sus bloques coincidían con el código
+cargado. Correcto (reproducción: 0 diferencias; ~97 % de los bloques dentro de regiones, 11,6 por llamada), pero sin
+ganancia medible: reproducción 377-381 frente a 382-397 ms; en el juego, tiempo de VU1 por ciclo 3,4-3,5 frente a
+3,6-3,7 ns en una ronda y 3,6 frente a 3,5 en otra. El coste del despacho son esperas de memoria al leer el estado de
+cada bloque, que la contabilidad necesita igual. Descartado por la complejidad que añade.
+### sceCdStop en el IOP nativo (2026-10-17)
+
+Al probar los vídeos empezando una partida nueva y sustituyendo la intro (Semo01) por otro vídeo
+(`GOW_MOVIE_OVERRIDE`), el IOP registraba `unhandled import cdvdman:15` y una llamada que agotaba su presupuesto de
+400 M instrucciones: `sceCdStop` no estaba implementada y el hilo que la esperaba quedaba en bucle; el vídeo no
+empezaba. `ps2recomp-cd-stop.patch`: sin lector no hay nada que parar, termina al momento (y llama a la función de
+aviso con SCECdFuncStop, como `sceCdSeek`). Con el cambio, A01MP02 se reproduce entero en ese caso (998 imágenes).
+Prueba: "IOP sceCdStop completes at once". En las partidas del usuario no había aparecido.
+
+Otros vídeos revisados: SEMO08 va a 29,32 imágenes/s (4,7 s de desfase en 210 s; el reproductor espera un ciclo de
+imagen extra en ~40 % de los tramos de 30 imágenes; ni el disco, que responde al momento, ni la decodificación,
+~1 ms por imagen, son la causa; pendiente). BONUS20: su pista de audio en el disco son ~15 s de PCM muy bajo (RMS
+~540) para 208 s de imagen; el port lo deja en silencio. Las cinco cinemáticas del barco (A01MP01-05), con el sonido
+por el dispositivo real: desfase <= 0,2 s y sin huecos.
+
+### DelayThread fuera de un hilo en el IOP nativo (2026-10-17)
+
+Con la misma prueba (partida nueva e intro sustituida) y el sonido silenciado, la llamada RPC "Stopping sound system"
+de 989snd agotaba su presupuesto de instrucciones: el bucle en 0x2D49C espera a que su manejador de alarma (0x2D664)
+ponga a 2 el contador en 0x44360, con `DelayThread(33 ms)` entre sondeos. El servidor RPC corre sin hilo actual y
+`DelayThread` volvía al momento sin que avanzara el reloj del IOP, así que la alarma nunca llegaba.
+`ps2recomp-iop-delay-fuera.patch`: fuera de un hilo, `DelayThread` usa la misma espera que `WaitSema` y
+`WaitEventFlag` (el emulador deja correr al resto del IOP) hasta que pasa el retraso. Prueba: "DelayThread outside a
+thread lets the IOP run for the delay". En combate en el barco no se produce ninguna de estas esperas; la intro
+sustituida ya no agota el presupuesto.
+
+### Fin de P04MP05: la demultiplexación se detiene en 0x1B9 (2026-10-18)
+
+Con la intro sustituida por P04MP05 (el juego carga la versión panorámica, `P04MP05.PSW`), el vídeo se reproducía
+hasta el final y el juego se quedaba atascado: 0 cuadros de juego hasta el final de la prueba. El hilo del EE daba
+vueltas en 0x18AC20 → 0x188848. El reproductor lee el PSS en bloques de 0x4000 a un anillo de 16 (0x188848); el último
+bloque lleva solo 4 bytes válidos (el código de fin de programa 0x1B9) y el resto son datos viejos del anillo. El
+callback `sceMpegCbNodata` del juego (0x18AAA8) llama a 0x18AC20 en modo bloqueante hasta tener 0x2000 bytes de
+vídeo pendientes, y solo envía el resto y vuelve cuando la demultiplexación devuelve 0. El `sceMpegDemuxPssRing`
+original (0x273CF0) se detiene en 0x1B9 y devuelve los bytes anteriores, y después 0. El HLE daba por consumido el
+bloque entero, así que el juego volvía a leer, recibía 0 bytes y repetía para siempre. En otros vídeos el final
+caía con más de 0x2000 bytes pendientes y no se notaba. P04MP05.PSW tiene 741 imágenes; antes se servían 739.
+
+`ps2recomp-mpeg-fin-programa.patch`: ni 0x1B9 ni lo que le sigue cuentan como consumidos, y una entrada que empieza
+por él devuelve 0. Prueba: "sceMpegDemuxPssRing stops at the program end code". Verificado con la intro sustituida:
+P04MP05 sirve las 741 imágenes, termina (`ended=1`) y la partida empieza a los 60,2 s. A01MP02 sigue terminando
+igual (998 imágenes, partida a los 66,9 s).
+
+### Corrección: el "Stopping sound system" de 989snd era el cierre del juego (2026-10-18)
+
+La entrada "DelayThread fuera de un hilo" atribuía la llamada RPC "Stopping sound system" a la prueba de la intro
+sustituida. La traza de una ejecución en la que aparece (A01MP02 en lugar de Semo01, con el arreglo ya aplicado)
+muestra otra cosa: el bucle principal 0x17AA18 termina porque la bandera 0x29C4D8 deja de ser 0, `main` llama al
+cierre 0x17A9B0 (que para el sonido con la orden 0x1 de 989snd) y vuelve a crt0, que llama a `Exit()`. Antes del
+arreglo, ese cierre se quedaba colgado en el IOP; ahora termina y el hilo principal queda dormido. No hay ningún
+escritor estático de 0x29C4D8 en el ELF. Se dio en 1 de 9 ejecuciones (8 sin fallo, 6 de ellas con el vigilante
+`PS2X_EE_WATCH=29C4D8:4` sin registrar ninguna escritura). Puede depender de la sustitución del vídeo del arnés
+(`GOW_MOVIE_OVERRIDE`). Pendiente: atrapar la escritura con el vigilante en una ejecución que falle.
+
+### Panorámico ampliado opcional (2026-10-18)
+
+El usuario propuso el pnach de PCSX2 `SCUS-97399_CBE116C1.pnach` ("Widescreen 16:9", nemesis2000 y CRASHARKI). El
+port ya aplicaba su parte de datos (bandera 0x29CC90 y flotantes de aspecto); la parte "enhanced" reescribe la función
+de proyección 0x169238 y en un port recompilado no se puede parchear en ejecución. Comparando instrucción a
+instrucción, su único cambio de fondo es multiplicar la apertura horizontal (campo 0x37C) por 0.75 × aspecto
+(0x32F1B0). Se hace con `[patches] instructions` de `config/recomp.template.toml` (0x169298-0x1692F4, sin desplazar el
+resto: una comparación entera con `slt`/`movn` sustituye a la de coma flotante y el 1.0 sale de aspecto/aspecto). El
+factor se lee de 0xFFFF0 (un vigilante `PS2X_EE_WATCH=FFF00:100` no vio ninguna escritura del juego en una partida) y
+lo fija el override cada cuadro: 0.75 con `GOW_PANORAMICO=ampliado`, 9/16 si no (factor total 1, igual que antes).
+Verificado con capturas del GS a los 3 s de partida: sin la variable, el encuadre es el de siempre; con ella, la vista
+se ensancha sin deformar. Coste en combate en el barco: mediana de 59,9 a 54,9 cuadros por segundo del juego.
+Requiere `scripts\2_compilar.cmd` (regenera el C++ de 0x169238).
+
+### Hilo del EE: vía rápida de los puntos de control (2026-10-18)
+
+Perfil del combate en el barco (muestreador, 35 s, binario de `main`): el hilo del EE estaba ocupado ~85–90 % del
+cuadro y más de un tercio era contabilidad por punto de control: `EeScheduler::accountCycles` 18,9 %,
+`checkpointDue` 10,4 %, `PS2Memory::advanceEeTimers` 4,9 %, `PS2Runtime::eeCheckpointDue` 2,9 %. El código generado
+llama a `eeCheckpointDue` cada 16 ciclos del EE y cada llamada entregaba los ciclos a los temporizadores y al IOP y
+comprobaba plazo, porción de tiempo y puesta al día con el reloj real. El hilo del trabajador (VIF1/VU1) y los del
+GS esperaban ~50 % del tiempo.
+
+`ps2recomp-ee-via-rapida.patch`: `checkpointDue` (en línea) solo suma los ciclos mientras no se alcance
+`m_fastLimitCycle` (el mínimo de: próximo suceso de un temporizador, próximo lote del IOP, fin de la porción de
+tiempo y próxima puesta al día con el reloj real, ahora cada 2048 × 16 ciclos en vez de cada 2048 llamadas) ni el
+plazo siguiente (`m_nextDeadlineCycle`, que pueden adelantar otros hilos) y no haya nada pendiente. En ese ciclo
+(`checkpointDueSlow`) los temporizadores y el IOP reciben los ciclos de golpe: mismos sucesos en los mismos ciclos.
+Un acceso a un registro de temporizador (gancho `PS2Memory::setEeCycleSync`, solo en el hilo del EE) y la espera
+ociosa (`waitForEvent`) entregan antes los ciclos pendientes. Prueba: "an EE timer read sees the cycles of the
+checkpoint fast path" (falla si se quita el gancho).
+
+Resultado: en el mismo perfil el hilo del EE queda ocupado ~46 % (`eeCheckpointDue` 4,6 %); el resto es espera del
+ritmo de 60 Hz. A 60 Hz el periodo de cuadro no cambia (A/B alterno de 3 rondas, `ab_traza.sh`: mediana
+16,68/16,71/16,70 frente a 16,70/16,69/16,68 ms; % ≤17 ms 72/65/71 frente a 71/67/68), porque el EE no era el límite;
+es margen para más cuadros por segundo. Suite 454/454.
+
+Paso de tiempo del juego (0x17D860, guarda 0x29C64C): `delta = max(VBlanks desde el cuadro anterior, cuadros medidos
+con un temporizador y limitados a [1, 4]) / 60`. Nunca baja de 1/60 s: para más de 60 cuadros por segundo hará falta
+un VBlank del invitado más frecuente y otro cálculo del paso.
+
+### Presentación: la etapa GS cede el lock (2026-10-18)
+
+Con el juego por encima de 60 cuadros por segundo (experimento de 120 Hz, ver la entrada siguiente) la ventana
+llegaba a mostrar 2-8 imágenes por segundo en tramos de varios segundos. Las pilas del hilo principal durante la
+caída: `GSHostPresentation::prepare` → `GS::latchHostPresentationFrame`, esperando `m_stateMutex`. La etapa GS lo
+toma y lo suelta una vez por paquete, miles de veces por cuadro; el mutex no es justo y el hilo que lo suelta vuelve
+a cogerlo antes que el que espera. `ps2recomp-gs-prioridad-presentacion.patch`: la presentación registra una espera
+prioritaria (`ps2_gs_stage::priorityWaitBegin/End`) mientras toma el lock, y la etapa, entre paquetes y sin ningún
+lock, cede mientras la haya. Con 120 Hz, las imágenes mostradas pasan a 59,8-60,6 por segundo en todo el combate.
+Prueba: "GS stage yields between packets while a priority waiter is registered". Suite 455/455.
+
+Pendiente: con `PS2X_GS_HW_SCALE=4` (y a 60 Hz) la ventana sigue cayendo a 0,5-1,7 imágenes por segundo; es otra
+causa (sin investigar).
+
+### Experimento: lógica del juego a 120 Hz (2026-10-18, sin subir)
+
+Árbol local, `GOW_HZ=120`: el VBlank del EE (no el del IOP) cada 8,34 ms, y un override de 0x17D778 que sustituye el
+paso de tiempo por el tiempo real transcurrido, limitado a [1/120, 4/60] s (con la bandera 0x29C660 del juego, "solo
+VBlanks", su valor a la mitad). La primera versión, que solo dividía el resultado entre 2, iba a cámara lenta
+(velocidad 0,57): el término del temporizador ya está en sesentavos y limitado a un mínimo de 1. Con la versión
+corregida, la velocidad del juego (`GOW_DELTA_DIAG`) es 1,00. El bucle del juego da ~120 cuadros por segundo en escenas
+ligeras y 63-72 en el combate del barco: ahí limita la tubería VIF1/VU1/GS. La presentación del host sigue limitada a
+60 Hz. Sin revisar todavía: vídeos (cuentan VBlanks), cinemáticas, física y sonido a 120.
+
+Corrección sobre el cierre del juego en las pruebas de vídeos (entrada "el Stopping sound system era el cierre del
+juego"): la pantalla de muerte y la pausa tienen la opción "Quit Game", y el guion de botones del arnés pulsa X a
+horas fijas. Es muy probable que el cierre lo pidiera el propio menú del juego (escribe la bandera por un puntero, por
+eso no hay escritor directo en el ELF). No es un fallo del port.
+
+### Niebla por distancia: el buffer Z leído como color en la GPU (2026-10-18)
+
+Perfil del hilo del backend GS a 120 Hz: `GSMem::ReadColorRun` 10,6 % y `decodeDirect` 8,9 % (casi todo en la línea
+de cada téxel). Con `GOW_GS_HW_STATS` y un contador temporal: ~300 decodificaciones de 5 s de una textura PSMCT24 de
+1024×1024 en `tbp 0xD00`: unos 63 millones de téxeles por segundo, un millón por cuadro, más su subida a la GPU.
+`0xD00` es la página 104, el buffer Z del juego (Z24, `zbp 104` en todos los objetivos). Son las tiras de 32 píxeles
+de la niebla/DOF que copian la profundidad como PSMCT24 a `fbp 320`. `overwrittenByDepth` descartaba con razón el
+objetivo de color de esa página (un vídeo viejo), pero entonces se decodificaba en la CPU una memoria del GS que nunca
+tuvo la profundidad de la GPU, y cualquier subida en la media VRAM que cubre la textura la volvía a invalidar.
+
+`ps2recomp-gs-z-como-color.patch`: si una textura cae en el buffer Z de un objetivo y ese Z es lo último escrito
+allí, se lee con la reinterpretación en la GPU (`reinterpretTexel`). El dueño es la textura de profundidad, su
+formato Z (tablas inversas de 0x30/0x31/0x32/0x3A) y la palabra es el valor de Z (`zpsm` del objetivo).
+`GOW_GS_HW_ZCOLOR=0` vuelve a la decodificación en la CPU, para comparar.
+
+Resultado: 0 téxeles decodificados en la CPU (antes ~310 millones cada 5 s). Las capturas del GS a los 3 y 8 s de
+partida muestran la niebla por distancia (fondo y montañas lavados) que faltaba y que sí se ve en la captura de
+PCSX2 del combate del barco (`logs/vif_pcsx2_inicio2/Screenshot.png`). Menús, intro en el motor y barco correctos. A
+120 Hz (experimento), el bucle del juego en combate pasa de 67,4 a 72,3 cuadros por segundo de media. Sin prueba en
+`ps2xTest`: el backend OpenGL no se ejecuta en la CI (sin GPU); suite 455/455.
+
+Uso de GPU (contador "GPU Engine", motor 3D, del proceso): 80 % a 2x y 62 % a 1x a 60 Hz en el barco; ~88 % a 120 Hz
+con o sin este cambio. Sigue alto para lo que se dibuja; pendiente de investigar.
+
+## Linux: contexto OpenGL del GS con EGL (2026-10-18)
+
+En Linux el GS por GPU no arrancaba (`[gs-hw] GL unavailable: GPU GS backend is only implemented for Windows`): el
+contexto solo existía con WGL, no hay otro renderer y la ventana mostraba el marcador magenta de la presentación por
+RAM con el juego corriendo detrás. `ps2recomp-gs-egl-linux.patch` crea en Linux el contexto con EGL (`libEGL.so.1`
+cargada en tiempo de ejecución, pantalla sin superficie de Mesa y, si no, la pantalla por defecto; núcleo 4.6, con 4.5
+y 4.3 de respaldo) y los contextos de los trabajadores compartidos con él. La lista de funciones GL pasa a una función
+común a WGL y EGL; en Windows el comportamiento no cambia. En Linux no se comparte el contexto con la ventana: la
+presentación va por RAM (lectura de vuelta y subida), la ruta que ya existía.
+
+Verificado en Linux Mint (Ubuntu 24.04), Ryzen con Radeon integrada (radeonsi, Mesa 25.2.8), disco NTSC-U
+(`SCUS_973.99`, una sola capa) leído con `GOW_ISO`: `[gs-gl] EGL: AMD Radeon Graphics ... 4.6 (Core Profile)`, menú de
+dificultad y partida con imagen correcta. Sin prueba en `ps2xTest/`: crear el contexto necesita una GPU y la CI no
+tiene. La compilación del juego en Linux se hizo a mano siguiendo `compilar.ps1` (no hay script para Linux). Dos
+diferencias con Windows: los IRX de `IOP_MOD/` tienen que existir también en minúsculas (el juego pide
+`IOP_MOD/sio2man.irx` y el sistema de archivos distingue mayúsculas), y el enlace con LTO de GCC tarda ~20 min en una
+sola partición del código generado.
+
+Velocidad medida con `GOW_FPS=1` en el menú: ~6 cuadros/s del juego con el intérprete de VU1 y del IOP; 40-50 con la
+VU1 nativa (1.156 micromemorias) y el IOP nativo. Tras una sesión jugada a mano la captura subió a 6.448
+micromemorias; esa compilación todavía no se ha medido.
+
+`ps2recomp-vu1-captura-nativa.patch`: `GOW_VU1_CAPTURA` solo guardaba micromemorias cuando la VU1 corría por el motor
+exacto, es decir, con `GOW_VU1_NATIVE_OFF=1` y el juego a ~6 cuadros/s. Ahora también guarda con la VU1 nativa activa,
+así que se puede capturar jugando a velocidad normal lo que aún falta. Es un diagnóstico activado por la variable; sin
+ella no cambia nada.
+
+## GS: agrupación conservadora de volúmenes de sombra (2026-10-18)
+
+Las pasadas de volúmenes con mezcla modular (`COLCLAMP=0`) leen el destino en el shader. El backend las separaba en una
+llamada por triángulo y colocaba una barrera entre todas las llamadas, unas 3.000 por cuadro en el barco. El parche
+`ps2recomp-gs-volumenes-agrupados.patch` mantiene juntos únicamente triángulos consecutivos cuyas áreas no se solapan;
+cuando dos triángulos pueden tocar el mismo píxel, conserva su orden y la barrera anterior. El análisis se limita a
+grupos de 64 para mantener acotado su coste. `GOW_GS_HW_VOLGROUP=0` restaura la ruta de una llamada por triángulo.
+
+La suite independiente cubre triángulos adyacentes, separados, solapados y el orden entre grupos. El efecto sobre FPS
+queda pendiente de una medición alternada dentro del juego; no se atribuye todavía una mejora de rendimiento.
+
+### Medida de la agrupación de volúmenes de sombra (2026-10-23)
+
+Pendiente de la entrada anterior. Compilación completa de `main` (`bin\wmain`), barco a 60 Hz, contador "GPU Engine"
+(motor 3D) del proceso durante 8 s, dos rondas alternas: `GOW_GS_HW_VOLGROUP=1` 52,2 % y 51,2 %; `=0` 78,6 % y
+77,2 %. El juego, a 59,9-60,0 cuadros por segundo en los cuatro casos. Antes de agrupar: ~180 000 barreras de textura
+y llamadas de dibujo por segundo, el 99 % de los volúmenes (contador temporal).
+
+### Lógica del juego a 120 Hz: `GOW_HZ=120` (2026-10-23)
+
+`ps2recomp-ee-120hz.patch` (último de la pila): `EeScheduler::configuredVBlankDivisor()` lee `GOW_HZ` (2 con 120, si
+no 1). El VBlank del EE y los puntos de ritmo usan el campo NTSC dividido por él; `eeCycle()` da el reloj del EE.
+El HLE de MPEG cuenta el tiempo de los vídeos en campos NTSC (`mpegFieldTickQ32`) y convierte sus esperas a VBlanks
+del EE. La presentación del host usa `SetTargetFPS(60 × divisor)`. En `src/gow_overrides.cpp`, `gowFrameStep120`
+sustituye el paso de tiempo de 0x17D778 por el tiempo del invitado transcurrido (ver "Experimento: lógica del juego a
+120 Hz"). Prueba: "GOW_HZ=120 halves the EE VBlank period". Suite 457/457.
+
+Medido con `bin\w120` (compilación completa de `main` más este cambio), combate del barco: velocidad del juego
+(`GOW_DELTA_DIAG`) 0,995-1,003, juego 65-73 cuadros por segundo, presentación 119,6 por segundo con 78-112 imágenes
+distintas, GPU 65 %. A01MP02 en lugar de la intro: entre las imágenes 270 y 870 pasan 20,02 s de vídeo y 20,02 s
+reales, 998 imágenes, y la partida empieza a los 66,7 s (66,98 s a 60 Hz).
+
+### Corrección: el cierre del juego en las pruebas de vídeos era un fallo del arnés (2026-10-23)
+
+Con `GOW_HZ=120` el cierre (bucle principal terminado, `Exit()`) ocurría en 2 de 3 pruebas con
+`GOW_MOVIE_OVERRIDE`, así que la hipótesis del menú "Quit Game" no se sostiene. La causa era `gowMovieOverrideLoad`:
+ponía el nombre del vídeo bajo el puntero de pila, bajaba el SP para la llamada a 0x188CA0 y lo restauraba después, y
+no comprobaba las reanudaciones (`ctx->pc` distinto de la entrada). Si 0x188CA0 se detenía en un punto de control, el
+SP se restauraba con la función a medias, la reanudación volvía a sustituir el nombre y el marco del bucle principal
+quedaba desplazado 32 bytes. Ahora el nombre va en un búfer propio (`guestMalloc`), no se toca el SP y las
+reanudaciones llaman al original. 4 de 4 pruebas correctas a 120 Hz. Solo afectaba a `GOW_MOVIE_OVERRIDE`.
+### CI en ubuntu-26.04: DIV.S/SQRT.S fuera del cambio de redondeo (2026-10-23)
+
+La imagen `ubuntu-latest` de GitHub pasó a ubuntu-26.04 y la prueba "EE FPU div/sqrt round to nearest under a
+round-toward-zero MXCSR" empezó a fallar también en `main` (relanzada la ejecución de #138: falla igual). En local
+(WSL, GCC anterior) y en Windows pasa. `ps2FpuDivideNearest`/`ps2FpuSqrtNearest` ponen el MXCSR en redondeo al más
+cercano, operan y lo restauran; sin `-frounding-math`, GCC y Clang suponen el redondeo por defecto y pueden mover la
+operación fuera de ese tramo (el juego en Linux redondearía hacia cero). `ps2recomp-fpu-barrera.patch`:
+`PS2_FP_PIN` (un `asm volatile` vacío con el valor en un registro SSE) fija operandos y resultado entre los dos
+`_mm_setcsr`; en MSVC no hace nada. La prueba usa lo mismo para su división de control.
+
+### Resolución interna 3x y 4x tras descargar la GPU; cuadros en vuelo (2026-10-23)
+
+Compilación completa de `main` con VU1 e IOP nativos (`bin\wbase`), barco a 60 Hz, contador de GPU del proceso:
+con `PS2X_GS_HW_SCALE=3` (≈1440p) el juego da 60,0 cuadros por segundo y la ventana 58,7 imágenes por segundo (GPU
+88 %). El 2026-10-18, antes de la niebla en la GPU (#136) y de agrupar los volúmenes (#138), daba ~33. Con
+`PS2X_GS_HW_SCALE=4` el juego daba 59,7 pero la ventana solo 2,4 imágenes por segundo. Las pilas del hilo principal:
+`EndDrawing` → `SwapBuffers`, esperando dentro del controlador. El backend seguía enviando cuadros a una GPU más
+lenta que el juego, la cola del controlador crecía y la ventana esperaba detrás.
+
+`ps2recomp-gs-cuadros-en-vuelo.patch`: al presentar, el backend espera (100 ms como mucho) a que la GPU termine el
+cuadro presentado dos cuadros antes (`PS2X_GS_FRAMES_IN_FLIGHT`, 2 por defecto, 0 = sin límite). Con 4x: juego 49,9
+y ventana 48,5 imágenes por segundo (GPU 95 %). Con 2x: 59,9 y 59,2, igual que antes. Con `GOW_HZ=120`: 69,9
+cuadros por segundo con el límite y 70,4 sin él (dentro del ruido). Sin prueba en `ps2xTest` (backend OpenGL);
+suite 457/457.
+
+Perfil a 120 Hz (combate, `GOW_HZ=120`, ~70 cuadros por segundo), para la siguiente fase: el cuello de botella es el
+hilo trabajador de la VU1. En 16 pilas tomadas durante el juego, 14 lo muestran trabajando (bloques nativos,
+despacho de `runNative`, `XGKICK`/entrega a la etapa) y 2 esperando trabajo. El trabajo del cuadro dura ~13 ms
+(`ab_env.sh`, 3 rondas). La etapa GS procesa ~8 ms por cuadro y el backend del GS está ocupado ~24 %. En
+`runNative`, el 28 % de sus muestras está en la llamada indirecta al bloque y el 22,5 % en la lectura de la ranura
+(`sl.known`): fallos de predicción y de caché del despacho. Más cola en el backend (`PS2X_GS_QUEUE_CHUNKS=64`)
+no cambia la duración del trabajo (13,1 frente a 13,0 ms); lotes de etapa de 2 KB o de 64 KB son peores que los 16 KB
+actuales.
+
+### VU1 en paralelo por microprogramas: no es viable (2026-10-23)
+
+Datos de partida (combate, `GOW_VU1_STATS=1`, 60 Hz): ~1 650 microprogramas por cuadro, de ~1 730 ciclos de media,
+~2,85 M ciclos de VU1 por cuadro a 3,4 ns por ciclo (~10 ms). Reparto del hilo trabajador a 120 Hz (muestreador,
+tiempo ocupado): bloques nativos 44 %, despacho 21 %, temporización exacta 15 %, desempaquetado VIF1 11 %,
+XGKICK/GIF 4 %.
+
+Para repartir los microprogramas entre hilos, cada `MSCAL` tendría que depender solo de constantes y de su búfer
+de entrada. Diagnóstico local (VU1 interpretada, `GOW_VU1_NATIVE_OFF=1 GOW_VU1_SIN_COMPILAR=1`; registros leídos
+antes de escribirse según `decodeUpperUsage`/`decodeLowerUsage`; memoria leída que escribió otro microprograma y que
+el VIF no ha sobrescrito), 840 000 microprogramas: el 99,9 % lee registros que escribió el inmediatamente anterior
+(`vf5`, `vf4`, `vf29`, `vf15`, `vf16`, en las tres entradas 0x0000/0x0018/0x0030), y el ~78 % lee memoria del
+anterior (quadwords 656, 315, 269, 587). El valor de registro recibido del anterior es distinto del que había antes
+en el 87 % de los casos (en memoria, el 21 %), así que tampoco sirve especular con que no cambia. Los microprogramas
+forman una cadena de datos: la VU1 debe ejecutarse en orden. Para más de ~75 cuadros por segundo en combate queda
+acelerar la propia ejecución (bloques, despacho, temporización).
+
+### VU1 nativa: CLIP sin saltos (2026-10-23)
+
+Perfil por líneas de los bloques más calientes en combate: en `b0d00_53ba0530`, `clipVal` era el 15 % de las
+muestras. Bajaba los dos vectores a memoria y hacía seis comparaciones escalares con salto; con datos de recorte el
+procesador falla muchas predicciones. `ps2recomp-vu1-clip-sinsaltos.patch`: `vu1n::clipBits` da los seis juicios con
+dos comparaciones SSE (`v > |w|`, `v < -|w|`), `movemask` y una tabla que intercala los bits. Con NaN las comparaciones
+SSE ordenadas dan falso como las escalares, y `-|w|` como cambio de signo da lo mismo con ±0. Prueba: "VU1 native CLIP
+without branches matches the scalar judgements" (1 331 combinaciones de ±0, ±1, ±2,5, ±FLT_MAX, ±inf y NaN).
+
+Medido: reproducción de la VU1 (`replay_vu1.sh`, 76 000 ejecuciones, 3 rondas alternas) 398,4/392,6/404,4 ms antes,
+403,4/386,3/389,6 ms después, y 0 diferencias bit a bit con lo grabado. En el juego (combate, `GOW_VU1_STATS`,
+mediana de ns por ciclo de VU1; métrica que no depende de cuánto se dibuja): 3,476/3,450 antes y 3,448/3,432/3,415
+después, ~1 %. La reproducción repite los mismos datos y el predictor de saltos se los aprende, así que subestima
+justo lo que corrige este cambio. La duración del trabajo por cuadro (`ab_traza.sh`) varía ±1 ms entre ejecuciones
+según la escena: no sirve para cambios de este tamaño.
+
+### VU1: dos experimentos descartados (ACC local, VIF1 en paralelo) (2026-10-23)
+
+Reparto de los bloques nativos más calientes en combate (perfil por líneas de 40 bloques, agrupado por función
+auxiliar): `madd` con sus cargas (`ldAcc`, `ldn`, `bc`) ~41 %, `divOp` 8 %, `ftoi` 8 %, `itof` 6 %, entrada y salida
+de las funciones ~12 % (en Windows x64 hay que guardar `xmm6`-`xmm15`; los bloques ya se compilan con `/GS-`,
+`/arch:AVX2` y `/fp:fast`).
+
+- ACC en una variable local del bloque (generador `tools/vu1/vu1n_gen.py`: carga al entrar, guarda antes de
+  `callUpper`/`callLower`/`xgkick` y de cada salida, recarga tras `callUpper`): bit a bit idéntico (0 diferencias en
+  la reproducción), pero sin ganancia. Reproducción 392,0/388,9/383,3 frente a 388,4/395,1/391,4 ms; juego 3,46 frente
+  a 3,40 ns por ciclo. El procesador ya ocultaba la latencia del paso por memoria. No se sube.
+- VIF1 en paralelo con la VU1 (`PS2X_VU1_HILO`, local): el trabajo propio del VIF son ~1,6 ms por cuadro a 60 Hz
+  (`processVIF1Data` ~3,97 s de cada 5 s, de los que ~3,5 s son la VU1); el 97 % de los bytes desempaquetados llevan
+  `FLG` (doble búfer). Con los programas de la VU1 en un hilo propio, traspaso por espera activa, y el VIF esperando
+  antes de `MSCAL`/`MSCNT`, `FLUSH*`, `MPG`, `DIRECT*`, `MSKPATH3` y de los `UNPACK` que tocan el búfer del programa
+  en marcha, el juego funciona y se ve igual, pero va más lento: trabajo por cuadro a 120 Hz 13,59 y 13,70 ms con el
+  hilo frente a 12,96 y 13,07 ms sin él (dos rondas, orden invertido). Lo más probable: cada `MSCAL` cambia de núcleo
+  y los datos desempaquetados (~2,6 MB por cuadro) y el estado de la VU1 viajan entre las cachés de los dos núcleos.
+  No se sube.
+
+### Bodega del barco, prioridad de hilos y UNPACK con SSE4.1 (2026-10-24)
+
+- Bodega del barco (la zona donde una partida del usuario del 17-10 bajaba a 40-46 FPS): es `ATHN01B`, a la que se
+  llega con `GOW_WARP=ATHN01B` (las zonas `ATHN01*` son el barco; recorrido de 35 s por zona con capturas). Con
+  `main` (`bin\wfin`) y 190 s en la zona: a 60 Hz, media 59,9 por segundo según `[gow-fps]` (percentil 10: 59,8;
+  mínimo de un segundo: 56,0); con `GOW_HZ=120`, 73,4 (mínimo 63,6). La caída de aquella partida ya no se reproduce.
+- `GOW_HZ=120`: ráfaga de 8 capturas del GS cada 20 ms en combate: ningún cuadro a medio dibujar.
+- Prioridad `AboveNormal` para el trabajador de la VU1 (`gsWorkerLoop`) y la etapa GS, como el hilo del backend:
+  A/B a 120 Hz, 3 rondas alternas (`GOW_PRIO_OFF` como interruptor, mismo binario), trabajo por cuadro de 13,76,
+  12,97 y 12,80 ms sin el cambio frente a 12,73, 14,04 y 10,33 ms con él. Sin diferencia clara; no se sube.
+- UNPACK de 8 y 16 bits sin máscara con SSE4.1 (`pmovzx`/`pmovsx` de todas las componentes a la vez, en lugar de
+  la versión escalar componente a componente): misma salida (prueba "VIF1 UNPACK fast paths match the generic path",
+  suite completa en WSL 458/458), pero más lento. Perfil por muestreo (`muestrear4`, 95 s en `ATHN01B` a 120 Hz, dos
+  ejecuciones de cada versión): `processVIF1Data` con sus lambdas es el 9,0 y el 9,1 % de las muestras del hilo de
+  la VU1 sin el cambio, y el 13,0 y el 12,9 % con él (MSVC no integra la función por formato y la versión escalar ya
+  salía bien compilada). El trabajo por cuadro (`ab_traza.sh`, 4 rondas) no lo distingue: varía ±1 ms entre
+  ejecuciones. No se sube. Aunque la versión vectorial fuera el doble de rápida, el UNPACK de 8 y 16 bits es menos
+  del 4 % de ese hilo (~0,25 ms por cuadro).
+- Las pruebas locales con el juego se lanzan con `GOW_AUDIO=0` (sin sonido; la grabación con `GOW_AUDIO_PCM` sigue
+  funcionando).
+
+### VU1 nativa: sin clampv tras las FMAC (2026-10-24)
+
+Cada resultado de `add`/`sub`/`mul`/`madd`/`msub` de los bloques nativos pasaba por `vu1n::clampv` (un `max` y un
+`min`: unos 8 ciclos más en la cadena de dependencias, que en la VU1 suele ir por ACC). No cambiaba nada: los
+operandos ya son finitos (`ldn` normaliza Inf/NaN a +-FLT_MAX, y los registros del conjunto `clean` son resultados
+de FMAC del propio bloque) y los bloques corren con redondeo hacia cero, así que una suma, resta o producto de
+finitos no da Inf ni NaN (el desbordamiento se queda en FLT_MAX). La única excepción era la vía lenta de `madd`
+(`maddWide`, en doble precisión), que devolvía +-inf a propósito.
+
+- `tools/vu1/vu1n_gen.py`: solo emite `clampv` en `add`/`sub`/`mul` con I o Q como operando (se leen sin normalizar).
+- `patches/ps2recomp-vu1-madd-saturado.patch`: `maddWide` devuelve su resultado ya pasado por `clampv`. `macVal`
+  cuenta 0x7F7FFFFF como desbordamiento, así que los flags MAC son los mismos que con el infinito. Prueba: "VU1
+  native madd returns overflows clamped with the same MAC flags".
+- Contadores en combate a 120 Hz (`GOW_VU1N_DIAG`, temporales): 22,5 M bloques nativos por segundo, 8,5 pares de
+  media; el 15 % son bucles sobre sí mismos, el 9,7 % pasan por `blockTiming` y el 48 % dejan cola de flags.
+  ~33 ns por bloque, de los que el despacho en `runNative` es ~7.
+- Medido: reproducción de la VU1 (`replay_vu1.sh`, 76 000 ejecuciones, 3 rondas alternas) 396,6/395,7/392,6 ms
+  antes y 386,3/384,6/383,7 ms después (-2,6 %), 0 diferencias bit a bit en los 4 000 registros. En el juego
+  (combate, `GOW_VU1_STATS`, mediana de ns por ciclo de VU1): 3,466 y 3,427 antes, 3,374 y 3,380 después (-2 %).
+
+### VU1 nativa: despacho, tres intentos descartados (2026-10-25)
+
+Perfil por dirección de `runNative` en combate a 120 Hz (`muestrear4` con `MUESTREO_DIRS`, `bin\wsat`): el 13 % de
+sus muestras cae en la lectura de `sl.known` de la ranura del bloque siguiente y otro ~17 % en las escrituras del
+historial justo después de la llamada al bloque. Es la cadena resultado -> `pc` -> ranura -> función -> llamada
+indirecta, que el procesador no puede adelantar. Reparto del hilo de la VU1 (perfil de `ATHN01B`): bloques ~40 %
+(contando la cola que no sale en el top 70), despacho y temporización exacta ~27 %, VIF 9 %, espera ~22 %.
+
+- Caché de operandos normalizados en el generador (cada `ldn` de un registro se reutiliza hasta que se escribe;
+  MSVC reutilizaba la carga pero repetía la normalización: 8 `vpblendvb` para 3 registros en `b0d00_53ba0530`):
+  reproducción 382,7/378,5/386,5 ms antes y 378,9/379,3/386,7 ms después. Sin ganancia: el procesador ya ocultaba
+  esas instrucciones.
+- Precarga de la ranura del sucesor (dentro de la propia ranura, escrita solo si cambia; ya se había probado el
+  17-10 con una tabla aparte): en el juego 3,413 y 3,382 ns por ciclo de VU1 sin ella, 3,422 y 3,364 con ella. Neutra.
+- Bucles de un bloque repetidos dentro del propio bloque (187 bloques cuyo salto vuelve a su inicio, 15 % de las
+  ejecuciones; `VU1NativeAccess::loopAgain` hacía la contabilidad de una vuelta de `runNative`): 0 diferencias bit a
+  bit, pero reproducción 386,9/382,8/379,8 ms antes y 385,3/386,7/392,7 ms después. Son bucles cortos, la
+  contabilidad sigue y la llamada indirecta al mismo destino ya se predecía bien.
+- 16 puntos de llamada indirecta según el bloque anterior (para que el predictor aprenda los sucesores de cada uno
+  por separado), mismo binario con `GOW_VU1N_SITES_OFF`: 399,9/402,5/396,4 ms sin ellos y 424,8/419,2/421,2 ms con
+  ellos (+6 %). El predictor ya acertaba; la capa de llamada extra solo añade coste.
+
+- UNPACK del VIF1, segundo intento con SSE4.1 (perfil por líneas de `processVIF1Data` en combate: 8 bits V4 19,7 %,
+  16 bits V2 con signo 12,8 %, 16 bits V4 7,9 %, 8 bits V3 7,4 % de sus muestras). Esta vez solo cambia el cuerpo de
+  esas lambdas dentro del mismo `unpackAll`, leyendo exactamente los bytes del vector y con la extensión con o sin
+  signo fuera del bucle. Perfil del hilo de la VU1 en `ATHN01B` a 120 Hz (dos ejecuciones alternas de cada uno):
+  `processVIF1Data` 9,14 y 9,19 % sin el cambio, 9,02 y 9,11 % con él. Sin diferencia: ese tiempo es de memoria
+  (los ~2,6 MB por cuadro de datos de origen), no de instrucciones.
+
+Con esta arquitectura (un bloque por función y temporización exacta en el despachador) el despacho está en su suelo.
+Lo que queda es reducir la propia maquinaria de temporización (que los bloques que no leen flags de entrada no
+necesiten historial) o rehacer el backend con análisis estático de flags por programa, como el microVU de PCSX2.
+
+### Estado del combate a 60 y 120 Hz (2026-10-25)
+
+- 60 Hz, combate del barco (`ab_traza.sh`, `bin\wsat` = `main` con #147): 2396 cuadros; periodo entre flips de 13 a
+  19 ms (mediana 16,67) y ninguno por encima de 25 ms, es decir, ningún cuadro perdido. Trabajo VU1+VIF+GS mediano
+  8,9 ms (p90 12,0, máx. 15,8). El 31 % de periodos entre 17 y 19 ms es variación alrededor del VBlank, no cuadros
+  perdidos. Nota de VIF1/VU1 en `docs/estado/datos.toml` actualizada.
+- 120 Hz (`GOW_HZ=120`), recorrido por zonas con `GOW_WARP`: ATHN04B 112,4 de media, SEWR02 118,3, DEST00 117,0
+  (cuadros del juego por segundo); combate del barco ~75. Con el monitor a 120 Hz se muestran ~6 imágenes por segundo
+  menos que cuadros: contadores temporales en `PublishSharedTexture`/`Acquire` (113 publicaciones por segundo, ningún
+  fallo de publicación ni salto al adquirir) indican que dos cuadros caen a veces en un mismo VBlank del invitado y la
+  pantalla capta el último, como haría el hardware.
+- Hilo del EE en combate a 120 Hz: ~23 % durmiendo en `EeScheduler::processDueDeadlines` (esperas de la VU1 y del
+  VBlank), la lógica del juego en paralelo con la VU1 (8,5 ms por cuadro) y ~1,7 ms por cuadro en serie entre el fin
+  del trabajo y el siguiente lanzamiento.

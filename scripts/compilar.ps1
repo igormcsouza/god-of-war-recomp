@@ -13,148 +13,101 @@ $bld  = Join-Path $rec 'out\build'
 
 $template  = Join-Path $RepoRoot 'config\recomp.template.toml'
 $funcmap   = Join-Path $RepoRoot 'config\funcmap.csv'
-$patch     = Join-Path $RepoRoot 'patches\ps2recomp-runtime.patch'
-$checkpointPatch = Join-Path $RepoRoot 'patches\ps2recomp-checkpoint.patch'
-$xgkickPatch = Join-Path $RepoRoot 'patches\ps2recomp-xgkick.patch'
-$vifUnpackPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif-unpack.patch'
-$vifDiagnosticPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif-diagnostic.patch'
-$heapPatch = Join-Path $RepoRoot 'patches\ps2recomp-heap.patch'
-$vuJumpPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu-jump.patch'
-$vuEfuPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu-efu.patch'
-$mpegNodataPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-nodata.patch'
-$spu2Patch = Join-Path $RepoRoot 'patches\ps2recomp-spu2.patch'
-$fpuRootsPatch = Join-Path $RepoRoot 'patches\ps2recomp-fpu-roots.patch'
-$spu2OutputPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-output.patch'
-$sio2Patch = Join-Path $RepoRoot 'patches\ps2recomp-sio2.patch'
-$perfPatch = Join-Path $RepoRoot 'patches\ps2recomp-perf.patch'
-$gsOpenGlPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-opengl.patch'
-$eeFixesPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-fixes.patch'
-$gsPresentationPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-presentation.patch'
-$vifDirectPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif-direct.patch'
-$vifDirectFragmentsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif-direct-fragments.patch'
-$gifOrderPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-order.patch'
-$gifTagSemanticsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-tag-semantics.patch'
-$gifStreamPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-stream.patch'
-$gifImageOrderPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-image-order.patch'
-$gifImage2Patch = Join-Path $RepoRoot 'patches\ps2recomp-gif-image2.patch'
-$gifNativeTagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-native-tag.patch'
-$gsImageFragmentsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-image-fragments.patch'
-$gsTriangleSamplingPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-triangle-sampling.patch'
-$gsSpriteSamplingPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-sprite-sampling.patch'
-$iopFastPatch = Join-Path $RepoRoot 'patches\ps2recomp-iop-fast.patch'
-$vu0MacroPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu0-macro.patch'
-$mmiPatch = Join-Path $RepoRoot 'patches\ps2recomp-mmi.patch'
-$gsTriangleConstantsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-triangle-constants.patch'
-$gsTriangleTexcoordsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-triangle-texcoords.patch'
-$vu1EfuOpcodesPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-efu-opcodes.patch'
-$gsCpuStatePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-cpu-state.patch'
-$gsCpuRoundingPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-cpu-rounding.patch'
-$getenvHotPatch = Join-Path $RepoRoot 'patches\ps2recomp-getenv-hot.patch'
-$vu1PerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-perf.patch'
-$sprChainPatch = Join-Path $RepoRoot 'patches\ps2recomp-spr-chain.patch'
-$mpegCreatePatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-create.patch'
-$audioPcmPatch = Join-Path $RepoRoot 'patches\ps2recomp-audio-pcm.patch'
-$iopSoundPatch = Join-Path $RepoRoot 'patches\ps2recomp-iop-sound.patch'
-$memcardPatch = Join-Path $RepoRoot 'patches\ps2recomp-memcard.patch'
-$gsTrianglePrecisionPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-triangle-precision.patch'
-$gsPackedDepthPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-packed-depth.patch'
-$gsBilinearPrecisionPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-bilinear-precision.patch'
-$gsNearestStqPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-nearest-stq.patch'
-$gsFeedbackSnapshotPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-feedback-snapshot.patch'
-$gsBilinearStqPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-bilinear-stq.patch'
-$gsRegionPagesPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-region-pages.patch'
-$gsTargetAliasPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-target-alias.patch'
-$vu1DirectPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-direct.patch'
-$vu1CompiledPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-compiled.patch'
-$vu1BudgetDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-budget-diag.patch'
-$vu1StickyPreservePatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-sticky-preserve.patch'
-$vu1BlocksPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-blocks.patch'
-$vu1RunnerPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-runner.patch'
-$iopSchedulerPatch = Join-Path $RepoRoot 'patches\ps2recomp-iop-scheduler.patch'
-$vif1UnpackFastPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-unpack-fast.patch'
-$eeTimersFastPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-timers-fast.patch'
-$vu1SimdPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-simd.patch'
-$vu1LazyFlagsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-lazy-flags.patch'
-$gsCoordinateAliasPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-coordinate-alias.patch'
-$gsStqHardwareTestPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-stq-hardware-test.patch'
-$gsFinishAsyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-finish-async.patch'
-$gsHardwareProfilePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-hardware-profile.patch'
-$gsProfileAsyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-profile-async.patch'
-$vu1FastFlagsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-fast-flags.patch'
-$gsUploadRingPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-upload-ring.patch'
-$vu1ZeroFactorPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-zero-factor.patch'
-$vu1DirectStorePatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-direct-store.patch'
-$vu1ColdScalarPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-cold-scalar.patch'
-$vu1SimdZeroPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-simd-zero.patch'
-$vu1XgkickFlushPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-xgkick-flush.patch'
-$gsSharedHostPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-shared-host.patch'
-$vu1GeneratorDirPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-generator-dir.patch'
-$gsDiscardUncoveredPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-discard-uncovered.patch'
-$dmaIopTimersCachePatch = Join-Path $RepoRoot 'patches\ps2recomp-dma-iop-timers-cache.patch'
-$vif1EeTimersFastPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-ee-timers-fast.patch'
-$padAutodetectPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-autodetect.patch'
-$vu1ThreadPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-thread.patch'
-$gsFrontPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-front-thread.patch'
-$vif1UnpackFormatsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-unpack-formats.patch'
-$vu1BlockCheckCachePatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-block-check-cache.patch'
-$vu1ChainedStepsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-chained-steps.patch'
-$gameSpeedPatch = Join-Path $RepoRoot 'patches\ps2recomp-game-speed.patch'
-$vu1FastPairsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-fast-pairs.patch'
-$vu1Path1EventsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-path1-events.patch'
-$vu1LazyDecodePatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-lazy-decode.patch'
-$gifArbiterBuffersPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-arbiter-buffers.patch'
-$vif1UnpackMaskSsePatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-unpack-mask-sse.patch'
-$vu1XgkickBulkPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-xgkick-bulk.patch'
-$vu1AdvanceEventsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-advance-events.patch'
-$vu1LowerSpecialsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-lower-specials.patch'
-$vu1StaticStoresPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-static-stores.patch'
-$vu1SimdSpecialsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-simd-specials.patch'
-$eeCop0CountPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-cop0-count.patch'
-$gsSourceAddressPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-source-address.patch'
-$gsHostFrameDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-host-frame-diag.patch'
-$gsHostDiagWindowPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-host-diag-window.patch'
-$gsAcquiredModeDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-acquired-mode-diag.patch'
-$gsHostAcquiredCapturePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-host-acquired-capture.patch'
-$eePmulthPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-pmulth.patch'
-$gsExternalObserverPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-external-observer.patch'
-$gsFogLatchPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-fog-latch.patch'
-$gsFogMathPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-fog-math.patch'
-$gsZtePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-zte.patch'
-$gsCpuColclampPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-cpu-colclamp.patch'
-$gsTexaDepthPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-texa-depth.patch'
-$gsPcrtcBlendPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-pcrtc-blend.patch'
-$linuxPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-perf.patch'
-$gsVulkanPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan.patch'
-$linuxVu1Patch = Join-Path $RepoRoot 'patches\ps2recomp-linux-vu1.patch'
-$linuxDefaultsPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-defaults.patch'
-$linuxBuildPatch = Join-Path $RepoRoot 'patches\ps2recomp-linux-build.patch'
-$padMappingsPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings.patch'
-$mpegDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-diag.patch'
-$gifTraceDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-trace-diag.patch'
-$mpegSyscallDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-syscall-diag.patch'
-$gsVulkanPerfPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-perf.patch'
-$gsLazySyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-lazy-sync.patch'
-$pipelinePatch = Join-Path $RepoRoot 'patches\ps2recomp-pipeline.patch'
-$displayOptionsPatch = Join-Path $RepoRoot 'patches\ps2recomp-display-options.patch'
-$mpegSyncCallbacksPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-sync-callbacks.patch'
-$wave0MeasurePatch = Join-Path $RepoRoot 'patches\ps2recomp-wave0-measure.patch'
-$vu1ProfileDiagPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-profile-diag.patch'
-$vu1ReplayPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-replay.patch'
-$vu1StaticBlockPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-static-block.patch'
-$gsVulkanZReadPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-zread.patch'
-$gsVulkanBatchSpanPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-batch-span.patch'
-$gsVulkanTileRectsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-tile-rects.patch'
-$gsVulkanBatchCapPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-batch-cap.patch'
-$gsVulkanRecordRingPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-vulkan-record-ring.patch'
-$vu1ReplayBenchPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-replay-bench.patch'
-$vu1BlockCheckPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-block-check.patch'
-$vu1StaticTicksPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-static-ticks.patch'
-$cdvdReadLatencyPatch = Join-Path $RepoRoot 'patches\ps2recomp-cdvd-read-latency.patch'
-$spu2LoopLatchPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-loop-latch.patch'
-$spu2AdmaPatch = Join-Path $RepoRoot 'patches\ps2recomp-spu2-adma.patch'
-$mpegEndAudioPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-end-audio.patch'
-$mpegPumpVsyncPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-pump-vsync.patch'
-$mpegCreateEndwordPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-create-endword.patch'
+# GOW-Port: runtime de Waffle565/God-Of-War-Native-Port (rama runtime),
+# que ya incluye la pila de parches de este repositorio al 2026-10-09. Los parches anteriores
+# siguen en patches\anteriores\ como referencia y no se aplican.
+$waffleRuntimePatch = Join-Path $RepoRoot 'patches\ps2recomp-waffle-runtime.patch'
+# GOW-Port: retira de ps2xTest las pruebas de piezas que el runtime de Waffle565 sustituye por diseño.
+$waffleTestsPatch = Join-Path $RepoRoot 'patches\ps2recomp-waffle-tests.patch'
+# GOW-Port: el runtime de Waffle565 se compila con MSVC; esto lo deja compilar y enlazar con GCC (CI de Linux).
+$waffleGccPatch = Join-Path $RepoRoot 'patches\ps2recomp-waffle-gcc.patch'
+# GOW-Port: el NativeState de la VU1 nativa se perdía con cada VU1Interpreter (std::shared_ptr).
+$vu1nLeakPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1n-leak.patch'
+# GOW-Port: rutas rápidas del UNPACK de VIF1 (de la base anterior), con STMOD 3 como la ruta genérica de Waffle565.
+$vif1UnpackRapidoPatch = Join-Path $RepoRoot 'patches\ps2recomp-vif1-unpack-rapido.patch'
+# GOW-Port: búferes de las cadenas DMA reutilizables (el EE aplanaba ~2,6 MB por cuadro en un vector nuevo).
+$dmaBuffersPatch = Join-Path $RepoRoot 'patches\ps2recomp-dma-buffers.patch'
+# GOW-Port: la vibración busca mandos Sony (HID) en un hilo aparte, no en el hilo del juego.
+$padRumbleScanPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-rumble-scan.patch'
+# GOW-Port: VBlank al campo NTSC real (59,94 Hz): los vídeos iban a 30,00 imágenes/s y el audio se quedaba atrás.
+$vblankNtscPatch = Join-Path $RepoRoot 'patches\ps2recomp-vblank-ntsc.patch'
+# GOW-Port: diagnóstico opcional de la traza por cuadro (PS2X_GS_WORKER_TRACE_SECS/_PCS, VBlank, IRQ del GS, hilos).
+$gsWorkerTracePatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-worker-trace.patch'
+# GOW-Port: medidor de FPS en pantalla (F2 o GOW_FPS=1) y línea [gow-fps] por segundo en el registro.
+$fpsOverlayPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-overlay.patch'
+# GOW-Port: el medidor de FPS cuenta también las imágenes que llegan a la ventana.
+$fpsImagenesPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-imagenes.patch'
+# GOW-Port: la ventana muestra los cuadros en orden (no salta al más reciente si hay menos de 3 pendientes).
+$presentOrdenPatch = Join-Path $RepoRoot 'patches\ps2recomp-present-orden.patch'
+# GOW-Port: el trabajador pasa los paquetes GIF a la etapa GS en lotes (PS2X_GS_STAGE_BATCH).
+$stageLotesPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-stage-lotes.patch'
+# GOW-Port: pantalla completa sin bordes por defecto (F11) y depurador oculto al empezar (F1).
+$pantallaPatch = Join-Path $RepoRoot 'patches\ps2recomp-pantalla-completa.patch'
+# GOW-Port: los ciclos de los puntos de control del EE se pasan al IOP solo cuando vence su lote.
+$iopAcumuladoPatch = Join-Path $RepoRoot 'patches\ps2recomp-iop-acumulado.patch'
+# GOW-Port: 64 puntos de ritmo por campo (antes 16): menos adelanto del reloj del EE que dormir al terminar la GS.
+$ritmoFinoPatch = Join-Path $RepoRoot 'patches\ps2recomp-ritmo-fino.patch'
+# GOW-Port: 16 ciclos del EE por salto hacia atrás del código generado y 4 por despacho (antes 32 y 8).
+$ciclosMitadPatch = Join-Path $RepoRoot 'patches\ps2recomp-ciclos-mitad.patch'
+# GOW-Port: ranura de despacho de la VU1 nativa en una línea de caché (memo en BlockTiming, idleLast).
+$vu1Ranura64Patch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-ranura64.patch'
+# GOW-Port: el redondeo de cada ejecución de la VU se cambia con el MXCSR en x86-64 (no fegetround/fesetround).
+$vuRedondeoPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu-redondeo.patch'
+# GOW-Port: un MPG solo invalida los bloques de la VU1 nativa que leen el rango escrito.
+$vu1InvalidacionRangoPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-invalidacion-rango.patch'
+# GOW-Port: el reloj del EE se pone al día con el del host si se queda atrás (cada 2048 puntos de control).
+$eePonerseAlDiaPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-ponerse-al-dia.patch'
+# GOW-Port: con GOW_PAD_TEST=1 se ignoran los mandos físicos (solo el guion de la prueba controla el juego).
+$pruebaSinMandoPatch = Join-Path $RepoRoot 'patches\ps2recomp-prueba-sin-mando.patch'
+# GOW-Port: la presentación usa los registros de pantalla capturados al empezar cada VBlank (sin parpadeos del menú en los vídeos).
+$pantallaLatchPatch = Join-Path $RepoRoot 'patches\ps2recomp-pantalla-latch.patch'
+# GOW-Port: sceCdStop (cdvdman:15) del IOP nativo: termina al momento (antes, sin implementar, colgaba el IOP).
+$cdStopPatch = Join-Path $RepoRoot 'patches\ps2recomp-cd-stop.patch'
+# GOW-Port: DelayThread fuera de un hilo deja correr el IOP durante el retraso (antes devolvía al momento y 989snd
+# se colgaba al parar el sistema de sonido).
+$iopDelayFueraPatch = Join-Path $RepoRoot 'patches\ps2recomp-iop-delay-fuera.patch'
+# GOW-Port: la demultiplexación del PSS se detiene en el fin de programa (0x1B9), como libmpeg (sin esto el juego
+# se quedaba al final de P04MP05.PSW pidiendo datos para siempre).
+$mpegFinProgramaPatch = Join-Path $RepoRoot 'patches\ps2recomp-mpeg-fin-programa.patch'
+# GOW-Port: los puntos de control del EE solo suman ciclos hasta el siguiente suceso (temporizador, lote del IOP,
+# plazo, fin de porción); antes cada uno hacía toda la contabilidad (más de un tercio del hilo del EE).
+$eeViaRapidaPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-via-rapida.patch'
+# GOW-Port: la etapa GS cede el lock del GS entre paquetes cuando la presentación lo espera (la ventana llegaba a
+# mostrar 2-8 imágenes por segundo con el juego a 60-120).
+$gsPrioridadPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-prioridad-presentacion.patch'
+# GOW-Port: las pasadas de niebla/DOF que leen el buffer Z como PSMCT24 lo leen en la GPU con el formato de Z (antes
+# se decodificaba en la CPU una VRAM sin la profundidad: sin niebla y 1024x1024 téxeles por cuadro).
+$gsZComoColorPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-z-como-color.patch'
+# GOW-Port: agrupa triángulos consecutivos sin píxeles comunes en las pasadas de volúmenes de sombra, reduciendo
+# llamadas y barreras de textura sin alterar el orden de los solapamientos.
+$gsVolumenesAgrupadosPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-volumenes-agrupados.patch'
+# GOW-Port: barreras para que GCC/Clang no saquen DIV.S/SQRT.S del cambio de MXCSR a redondeo al más cercano.
+$fpuBarreraPatch = Join-Path $RepoRoot 'patches\ps2recomp-fpu-barrera.patch'
+# GOW-Port: GOW_HZ=120: el VBlank del EE el doble de frecuente (la lógica del juego hasta 120 cuadros/s); el reloj de
+# los vídeos sigue en campos NTSC y la presentación del host sube a 120.
+$ee120hzPatch = Join-Path $RepoRoot 'patches\ps2recomp-ee-120hz.patch'
+# GOW-Port: como mucho 2 cuadros presentados de trabajo de la GPU en cola (con la GPU al límite, la ventana se
+# quedaba en 0,5-2 imágenes por segundo).
+$gsCuadrosEnVueloPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-cuadros-en-vuelo.patch'
+# GOW-Port: CLIP de la VU1 nativa sin saltos (dos comparaciones SSE en lugar de seis ramas).
+$vu1ClipSinSaltosPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-clip-sinsaltos.patch'
+# GOW-Port: madd/msub de la VU1 nativa devuelven el desbordamiento ya en +-FLT_MAX (los bloques no repiten clampv).
+$vu1MaddSaturadoPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-madd-saturado.patch'
+# GOW-Port: contexto OpenGL del GS en Linux con EGL (antes solo WGL: en Linux la ventana quedaba magenta).
+$gsEglLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-egl-linux.patch'
+# GOW-Port: GOW_VU1_CAPTURA también con la VU1 nativa activa (antes solo guardaba con GOW_VU1_NATIVE_OFF=1, a ~6 FPS).
+$vu1CapturaNativaPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1-captura-nativa.patch'
+# GOW-Port: VF0 y VI0 de VU0 son constantes (PR #79), no incluido en el runtime de Waffle565.
+$vu0Vf0Patch = Join-Path $RepoRoot 'patches\ps2recomp-vu0-vf0.patch'
+$vu0Vi0Patch = Join-Path $RepoRoot 'patches\ps2recomp-vu0-vi0.patch'
+# GOW-Port: permite pasar tools\vu1\vu1n_heads.txt (entradas extra de la VU1 nativa) desde este repositorio.
+$vu1nHeadsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1n-heads.patch'
+# GOW-Port: gamepads sin mapeo SDL (p. ej. un mando GameSir) leian todo a cero en GLFW: se cargan mapeos y hay uno generico.
+$padMappingsLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings-linux.patch'
+# GOW-Port: texto del contador de FPS en ingles y mas pequeno; claves del registro [gow-fps] en ingles (game, shown, display).
+$fpsOverlayEnglishPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-overlay-english.patch'
+# GOW-Port: pantalla completa real en Linux (la ventana sin bordes deja el panel del escritorio encima de la imagen).
+$fullscreenLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-fullscreen-linux.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -192,148 +145,49 @@ foreach ($patchFile in Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'patches'
         }
     }
 }
-Run $git @('apply', '--ignore-whitespace', '--verbose', $patch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $checkpointPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $xgkickPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vifUnpackPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vifDiagnosticPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $heapPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vuJumpPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vuEfuPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegNodataPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2Patch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $fpuRootsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2OutputPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $sio2Patch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $perfPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsOpenGlPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $eeFixesPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPresentationPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vifDirectPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vifDirectFragmentsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifOrderPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifTagSemanticsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifStreamPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifImageOrderPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifImage2Patch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifNativeTagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsImageFragmentsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTriangleSamplingPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsSpriteSamplingPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $iopFastPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu0MacroPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mmiPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTriangleConstantsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTriangleTexcoordsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1EfuOpcodesPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCpuStatePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCpuRoundingPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $getenvHotPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1PerfPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $sprChainPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegCreatePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $audioPcmPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $iopSoundPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $memcardPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTrianglePrecisionPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPackedDepthPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsBilinearPrecisionPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsNearestStqPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFeedbackSnapshotPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsBilinearStqPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsRegionPagesPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTargetAliasPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1DirectPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1CompiledPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1BudgetDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StickyPreservePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1BlocksPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1RunnerPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $iopSchedulerPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1UnpackFastPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $eeTimersFastPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1SimdPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1LazyFlagsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCoordinateAliasPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsStqHardwareTestPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFinishAsyncPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsHardwareProfilePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsProfileAsyncPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1FastFlagsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsUploadRingPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ZeroFactorPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1DirectStorePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ColdScalarPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1SimdZeroPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1XgkickFlushPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsSharedHostPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1GeneratorDirPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsDiscardUncoveredPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $dmaIopTimersCachePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1EeTimersFastPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $padAutodetectPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ThreadPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFrontPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1UnpackFormatsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1BlockCheckCachePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ChainedStepsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gameSpeedPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1FastPairsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1Path1EventsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1LazyDecodePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifArbiterBuffersPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1UnpackMaskSsePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1XgkickBulkPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1AdvanceEventsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1LowerSpecialsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StaticStoresPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1SimdSpecialsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $eeCop0CountPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsSourceAddressPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsHostFrameDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsHostDiagWindowPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsAcquiredModeDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsHostAcquiredCapturePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $eePmulthPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsExternalObserverPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFogLatchPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFogMathPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsZtePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCpuColclampPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsTexaDepthPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPcrtcBlendPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxPerfPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxVu1Patch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxDefaultsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $linuxBuildPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gifTraceDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegSyscallDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanPerfPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $pipelinePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsLazySyncPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $displayOptionsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegSyncCallbacksPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $wave0MeasurePatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ProfileDiagPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ReplayPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StaticBlockPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanZReadPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanBatchSpanPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanTileRectsPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanBatchCapPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVulkanRecordRingPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ReplayBenchPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1BlockCheckPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1StaticTicksPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $cdvdReadLatencyPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2LoopLatchPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $spu2AdmaPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegEndAudioPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegPumpVsyncPatch)
-Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegCreateEndwordPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $waffleRuntimePatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $waffleTestsPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu0Vf0Patch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu0Vi0Patch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1nHeadsPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $waffleGccPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1nLeakPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vif1UnpackRapidoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $dmaBuffersPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $padRumbleScanPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vblankNtscPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsWorkerTracePatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsImagenesPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $presentOrdenPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $stageLotesPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $pantallaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $iopAcumuladoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $ritmoFinoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $ciclosMitadPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1Ranura64Patch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vuRedondeoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1InvalidacionRangoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $eePonerseAlDiaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $pruebaSinMandoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $pantallaLatchPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $cdStopPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $iopDelayFueraPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $mpegFinProgramaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $eeViaRapidaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsPrioridadPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsEglLinuxPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1CapturaNativaPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsZComoColorPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsVolumenesAgrupadosPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fpuBarreraPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $ee120hzPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsCuadrosEnVueloPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ClipSinSaltosPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1MaddSaturadoPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsLinuxPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayEnglishPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fullscreenLinuxPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
@@ -349,6 +203,13 @@ $t2 = $t -replace '(?m)^\s*/GL\b.*\r?\n', '' -replace '(?m)^\s*/LTCG\b.*\r?\n', 
          -replace 'set_property\(TARGET \$\{TargetName\} PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE\)', '# IPO desactivado (GOW-Port)'
 if ($t2 -ne $t) { Set-Content -LiteralPath $rm -Value $t2 -NoNewline; Write-Host 'ReleaseMode.cmake: LTCG desactivado' }
 
+# GOW-Port: IOP nativo (tools\iop\iopn_gen.py, Waffle565). GOW_IOP_MODULOS es la carpeta que deja una ejecucion
+# con PS2X_IOP_DUMP_MODULES=<carpeta>. Sin ella se enlaza el registro vacio y los IRX corren en el interprete.
+if ($env:GOW_IOP_MODULOS -and (Test-Path -LiteralPath (Join-Path $env:GOW_IOP_MODULOS 'modules.txt'))) {
+    Paso 'Generando el IOP nativo'
+    Run 'python' @('-I', (Join-Path $RepoRoot 'tools\iop\iopn_gen.py'), $env:GOW_IOP_MODULOS, (Join-Path $rec 'ps2xIOP\src\native'))
+}
+
 Paso 'Configurando CMake'
 # Las trazas por función vacían el archivo en cada entrada/salida. Activarlas solo para investigar.
 $logsEnabled = if ($Trazas) { 'ON' } else { 'OFF' }
@@ -359,7 +220,10 @@ Run 'cmake' @('-S', $rec, '-B', $bld, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release
 # GOW_VU1_CAPTURA. Sin ella (o vacía) el juego usa el intérprete. Ver docs\RENDIMIENTO.md.
 $vu1Micro = if ($env:GOW_VU1_MICROCODIGO) { (Resolve-Path -LiteralPath $env:GOW_VU1_MICROCODIGO).Path -replace '\\', '/' } else { '' }
 $vu1Gen = if ($vu1Micro) { (Join-Path $RepoRoot 'tools\vu1\generar_vu1.cpp') -replace '\\', '/' } else { '' }
-Run 'cmake' @('-S', $rec, '-B', $bld, "-DPS2X_VU1_MICROCODE_DIR=$vu1Micro", "-DPS2X_VU1_GENERATOR_SOURCE=$vu1Gen")
+# GOW-Port: generador de la VU1 nativa (adaptado de Waffle565/God-Of-War-Native-Port); se activa con GOW_VU1_NATIVE=1.
+$vu1nGen = if ($vu1Micro) { (Join-Path $RepoRoot 'tools\vu1\vu1n_gen.py') -replace '\\', '/' } else { '' }
+$vu1nHeads = if ($vu1Micro) { (Join-Path $RepoRoot 'tools\vu1\vu1n_heads.txt') -replace '\\', '/' } else { '' }
+Run 'cmake' @('-S', $rec, '-B', $bld, "-DPS2X_VU1_MICROCODE_DIR=$vu1Micro", "-DPS2X_VU1_GENERATOR_SOURCE=$vu1Gen", "-DPS2X_VU1N_GEN_OVERRIDE=$vu1nGen", "-DPS2X_VU1N_HEADS_FILE=$vu1nHeads")
 
 Paso 'Compilando el recompilador'
 Run 'cmake' @('--build', $bld, '--target', 'ps2_recomp')

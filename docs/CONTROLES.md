@@ -24,6 +24,44 @@ Cuando no hay un gamepad conectado al backend:
 El backend usa el gamepad de índice 0 cuando está disponible. Sus botones, sticks y gatillos se
 adaptan al paquete libpad2. Las presiones se simulan como 0 o 255 según el botón esté suelto o pulsado.
 
+## Pantalla y depurador
+
+Desde 2026-10-16 el juego empieza en **pantalla completa sin bordes**: la ventana ocupa todo el monitor y tapa la barra
+de tareas. Antes era una ventana de 1920x1080 en un monitor del mismo tamaño, con la barra de título fuera de la
+pantalla y la barra de tareas encima de la franja inferior de la imagen. **F11** alterna pantalla completa y ventana.
+`GOW_PANTALLA_COMPLETA=0` empieza en ventana, igual que pedir un tamaño con `GOW_WINDOW=<ancho>x<alto>`;
+`GOW_PANTALLA_COMPLETA=1` fuerza la pantalla completa aunque se pida un tamaño. No se usa Alt+Enter porque Enter es Start.
+
+**Panorámico.** El juego va siempre en 16:9 con su panorámico propio, que recorta la imagen arriba y abajo.
+`GOW_PANORAMICO=ampliado` activa el panorámico ampliado: la cámara recupera la altura de 4:3 y ensancha la vista a los
+lados, como el "enhanced native widescreen" de nemesis2000 y CRASHARKI para PCSX2. Se ve más escena, así que dibuja
+más: en el combate del barco la mediana bajó de 59,9 a 54,9 cuadros por segundo del juego (2026-10-18).
+
+## 120 Hz
+
+`GOW_HZ=120` (experimental) genera el VBlank del EE cada 8,34 ms en lugar de cada 16,68 ms: el bucle del juego, que
+espera un VBlank por cuadro, puede dar hasta 120 vueltas por segundo. El paso de tiempo del juego (0x17D778) pasa a
+ser el tiempo del invitado transcurrido, limitado a [1/120, 4/60] s, así que la velocidad no cambia. El IOP, el sonido
+y el reloj de los vídeos siguen en campos NTSC, y la presentación del host sube a 120 imágenes por segundo (sin
+sincronía vertical: en un monitor de 60 Hz se ven cortes de imagen). En el combate del barco el juego da 65-73
+cuadros por segundo en un Ryzen con RX 5700 XT; en escenas ligeras, 120. Sin revisar a fondo: física, cinemáticas en
+el motor y todos los niveles.
+
+El **depurador del runtime** ("Runtime Debugger") ya no se abre al empezar: **F1** lo muestra u oculta.
+
+## Medidor de FPS
+
+**F2** muestra u oculta, arriba a la izquierda, los cuadros por segundo del juego (entradas a `vid::Flip`, la función de
+cuadro del juego; `GOW_PERF_FRAME_PC` la cambia) y los refrescos de la ventana. Verde a partir de 57, amarillo de 45 a 57,
+rojo por debajo. `GOW_FPS=1` lo muestra desde el inicio. Mientras se ve, cada segundo se escribe en el registro
+(`logs\ejecutar_err.log`) una línea `[gow-fps] t=<s> juego=<fps> min=<mínimo en ventanas de 0,25 s> pantalla=<Hz>`, para
+localizar después dónde hubo tirones.
+
+Desde 2026-10-16 muestra también las **imágenes** por segundo que llegan de verdad a la ventana (`imagenes=` y
+`min_imagenes=` en el registro); el color sigue a la peor de las dos cifras. Si el juego va a 60 y las imágenes no, el
+tirón viene de la presentación, no del juego. `PS2X_GS_PRESENT_LATEST=1` vuelve a mostrar siempre el cuadro más reciente
+(comportamiento anterior, con imágenes perdidas cuando el ritmo del juego es irregular).
+
 ## Validación
 
 `scripts\probar_pad2.cmd` compila y ejecuta una prueba independiente del juego. Comprueba el orden
@@ -110,16 +148,6 @@ $env:GOW_SKIP_FMV = '1'
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\probar_menu.ps1 -Segundos 230
 Remove-Item Env:GOW_SKIP_FMV
 ```
-
-`GOW_PLAY_FMV=<nombre>[,<nombre>...]` (diagnóstico, desactivado por defecto) sustituye la N-ésima película que pide el juego por otra
-del `GODOFWAR.TOC` (nombre sin extensión: `A01MP05`, `MA360`, `D01MP02`...; la intro pide `Semo01`) para probar cada FMV sin
-jugar hasta ella; la última de la lista se repite. `GOW_MOVIE_DIAG=1` registra cada petición (`[gow-fmv] request`) y el estado del
-reproductor cada 5 s (`[gow-movie]`).
-`GOW_PLAY_FMV_CHAIN=<nombre>[@banderas_hex][,...]` (diagnóstico, desactivado por defecto) encadena películas en una sola sesión: cuando
-una película ha sonado y el estado `[0x29C838]` vuelve a 0, se espera ~1,5 s y se pide la siguiente con la función del juego (`0x188CA0`)
-y se arranca con `0x188F00(0)` + `0x188E80(0)` como hace `0x1B2958`; usa los argumentos de la primera petición salvo las banderas `a2`
-(`A01MP05@6ef7`; el juego usa `0x7eff` para `Semo01`/`a01MP02` y `0x6ef7` para `a01mp05`). Con `GOW_MOVIE_DIAG=1` registra cada cambio de estado,
-cada parada (`[gow-fmv] stop`) y `request #N name=<pedida> -> <sustituta>`. Ejemplo: `GOW_PLAY_FMV=A01MP05 GOW_PLAY_FMV_CHAIN=A01MP05@6ef7,A01MP02@7eff`.
 
 `GOW_FAST_BOOT=1` permite repetir diagnósticos sin esperar la animación de entrada: solo su consulta
 de finalización (`ra=0x0021E714`) devuelve la duración total cuando el nivel ya está cargado.
@@ -931,58 +959,6 @@ certifica paridad. Ambas imágenes revisadas muestran la pose elevada de la
 introducción del barco. Véase ESTADO.md para identidad, cantidades y límites;
 las matrices finitas y esa semejanza no resuelven el espasmo ni miden FPS.
 
-## Gamepad autodetect and hotplug (English)
-
-Patch `patches/ps2recomp-pad-autodetect.patch`. On every pad read the runtime scans gamepad indices 0-3
-(`ps2PadActiveGamepad()`), keeps the current pad while it stays connected and otherwise picks the first
-connected one, so plugging or unplugging a pad mid-game is picked up without restarting. With no pad
-connected, the keyboard mapping in the table above applies unchanged.
-
-`GOW_PAD_INDEX=<n>` forces gamepad index `n` (0-3). If that index is not connected the keyboard is used;
-there is no fallback to another pad. Unset it for autodetect.
-
-The selection rule is the pure function `ps2SelectGamepad()` (`ps2_pad_select.h`), covered by the
-`PadSelect` tests in `ps2xTest/src/pad_input_tests.cpp`.
-
-### Pads without an SDL mapping (patch `ps2recomp-pad-mappings.patch`)
-
-GLFW (inside raylib) only reports buttons and sticks for pads that have an SDL-style mapping. An unmapped pad
-is "present" (autodetect picks it) but every button and stick reads as zero. This was why a GameSir dongle
-(`3537:103e`, kernel name "Generic X-Box pad", xpad driver, GUID `03000000373500003e10000010010000`) did
-nothing. Now, once the window is up, the runtime:
-
-1. loads `platform:Linux` lines from `$GOW_PAD_MAPPINGS` (a gamecontrollerdb.txt), `~/.config/gow-one/gamecontrollerdb.txt`,
-   `/usr/share/sdl-gamecontrollerdb/`, `/usr/share/SDL_GameControllerDB/`, the Lutris or Steam copy, and
-   `$SDL_GAMECONTROLLERCONFIG`;
-2. for a pad that is still unmapped, applies a generic Xbox-like evdev mapping for its GUID (A/B/X/Y = b0-b3,
-   bumpers b4/b5, back/start b6/b7, sticks a0,a1 / a3,a4, triggers a2/a5, d-pad hat 0) and logs
-   `[gow-pad] ... has no SDL mapping`.
-
-`GOW_PAD_DIAG=1` logs once per second `[gow-pad] #i 'name' guid=... gamepad=0|1 axes=... buttons=...` (raw GLFW
-values, so you can see which index each physical button has) or a hint if GLFW sees no joystick (permissions:
-`/dev/input/event*` is `root:input 0660`; a logged-in desktop session normally gets an ACL, otherwise add the user to
-group `input`). Pure logic is covered by the `PadMappings` tests. Mapping verified with the GameSir dongle through
-GLFW (name and six axes read; physical button presses not yet verified in game).
-
-## Linux runtime options
-
-- `GOW_DEBUG_UI=1`: show the ImGui debug panel (off by default on Linux).
-- `PS2X_GS_RASTER_THREADS=N`: CPU rasterizer threads (see `docs/ESTADO.md`, Linux M2).
-- `GOW_SCREENSHOT_AT=<s>[,<s>...]` / `GOW_SCREENSHOT_DIR`: save PNG screenshots of the window.
-- The window title shows the live FPS.
-
-## Display options (English)
-
-Runtime window options (`patches/ps2recomp-display-options.patch`), also set by the Linux launcher:
-
-| Variable / key | Effect |
-|---|---|
-| `GOW_FULLSCREEN=1` | Starts in borderless fullscreen (raylib `ToggleBorderlessWindowed`). **F11** toggles at runtime. ESC is unchanged: it closes the window. |
-| `GOW_SCALE_FILTER=nearest\|bilinear\|sharp-bilinear` | Upscale filter for the GS image (default `bilinear`; unknown values fall back to it). `sharp-bilinear` is a small shader that keeps texel interiors flat and blends only across texel edges. |
-| `GOW_WINDOW_SCALE=<n>` | Initial window size multiplier over 640x448 (1..8, default 1). |
-
-The image is always letterboxed/pillarboxed to keep the aspect ratio. The window title keeps the FPS counter.
-
 ## GOW_CHEAT: modo depuración para saltarse los combates (2026-10-15)
 
 Desactivado por defecto. `GOW_CHEAT` es una lista separada por comas (`god`, `noenemies`, `diag`) y sirve para llegar
@@ -991,9 +967,6 @@ rápido a escenas posteriores sin pelear (por ejemplo, tras las películas Semo0
 ```sh
 GOW_CHEAT=god,noenemies ./ps2EntryRunner SCUS_973.99     # normal, con las películas
 ```
-
-El launcher de Linux tiene la sección "Cheats (debug)" con una casilla por cheat (`god`, `noenemies`); las marcadas se
-exportan como `GOW_CHEAT` (si hay alguna marcada, sustituye al `GOW_CHEAT` exportado a mano; `diag` solo por variable).
 
 - `god`: Kratos no pierde vida (el valor nunca baja; la barra del HUD se queda llena).
 - `noenemies`: cada enemigo se queda con vida 0 en cuanto aparece, y la lógica de muerte del propio juego hace el resto

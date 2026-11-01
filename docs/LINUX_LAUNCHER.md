@@ -43,17 +43,17 @@ The header check reads only the ISO sectors that describe the root directory and
 | Control | Effect |
 |---|---|
 | ISO + Browse | Prefilled with the resolved ISO (see above). Validated on Play with the normal ELF SHA-256 check; the error text is shown in red. |
-| Fullscreen | Exports `GOW_FULLSCREEN=1` (borderless fullscreen at start; F11 toggles in game). |
-| Scaling | Bilinear (default, exports nothing) / Sharp bilinear / Nearest: exports `GOW_SCALE_FILTER=sharp-bilinear` / `nearest`. Saved as `scaling` in `settings.json`; older files without it load as Bilinear. |
-| Show FPS | Stored only (applies with the Vulkan backend). The window title already shows FPS. |
-| Internal resolution 1x/2x/3x | Stored only (applies with the Vulkan backend). |
-| Raster threads | `PS2X_GS_RASTER_THREADS` (0/Auto = unset). |
-| Controller | Lists pads found in `/proc/bus/input/devices`; choosing one exports `GOW_PAD_INDEX`, "Auto" leaves it unset. |
-| Debug UI | `GOW_DEBUG_UI=1`. |
+| Start in fullscreen | Exports `GOW_PANTALLA_COMPLETA=1` (borderless fullscreen at start) or `0` (windowed, the default). Always exported, because the runtime itself starts fullscreen. F11 toggles in game. |
+| Scaling | Sharp (default, exports nothing) / Bilinear: exports `GOW_SCALER=bilinear`. Saved as `scaling`; older labels (Nearest, Sharp bilinear) load as Sharp. |
+| Show FPS counter | `GOW_FPS=1`: on-screen counter ("60 FPS game  60 shown  (display 60 Hz)"); F2 toggles it in game. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
 | Skip movies (FMV, workaround) | `GOW_SKIP_FMV=1`: skips the pre-rendered movies. Use it while movie audio and the screen after a cutscene are still being fixed. |
 | Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See `docs/CONTROLES.md`. |
-| GPU | `gpu` setting, `Auto` by default (discrete GPU first, then integrated). Any other value is a device index or a name substring and sets `PS2X_VK_DEVICE`. The list comes from `vulkaninfo --summary` (empty if it is not installed; you can still type a value). |
+
+Older settings keys with no effect on this runtime (`resolution_scale`, `raster_threads`, `pad_index`, `debug_ui`, `gpu`) are still
+read and kept in `settings.json` but have no row in the window. Controllers are autodetected; pads without an SDL mapping
+(for example a GameSir dongle) get a generic Xbox-like layout, `GOW_PAD_MAPPINGS=<gamecontrollerdb.txt>` overrides it and
+`GOW_PAD_DIAG=1` logs what the game reads once a second.
 
 `--mute` forces audio off for a single run, with or without the window (and works with `--iso`
 and `--last`). It is not saved: the settings file keeps the checkbox value.

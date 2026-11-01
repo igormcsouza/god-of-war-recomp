@@ -295,8 +295,8 @@ def _choose_iso() -> Path:
     raise IsoError("specify the ISO with --iso (no graphical picker is available)")
 
 
-# Launcher label -> GOW_SCALE_FILTER value (Bilinear is the runtime default, so it exports nothing).
-SCALING_ENV = {"Bilinear": None, "Sharp bilinear": "sharp-bilinear", "Nearest": "nearest"}
+# Launcher label -> GOW_SCALER value (the runtime default is the sharp scaler, so it exports nothing).
+SCALING_ENV = {"Sharp": None, "Bilinear": "bilinear"}
 
 # Debug cheats (GOW_CHEAT): (key, label). Adding a cheat is one entry here; its setting is "cheat_<key>".
 CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemies (enemies die on spawn)")]
@@ -304,7 +304,7 @@ CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemie
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
     "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "skip_movies": False, "gpu": "Auto",
-    "scaling": "Bilinear",
+    "scaling": "Sharp",
     **{f"cheat_{key}": False for key, _ in CHEATS},
 }
 
@@ -332,7 +332,7 @@ def load_settings(path: Path | None = None) -> dict:
             if ok:
                 result[key] = value
     if result["scaling"] not in SCALING_ENV:
-        result["scaling"] = "Bilinear"
+        result["scaling"] = "Sharp"
     if result["resolution_scale"] not in (1, 2, 3):
         result["resolution_scale"] = 1
     result["raster_threads"] = max(0, min(result["raster_threads"], 256))
@@ -368,20 +368,15 @@ def remember_iso(iso: Path, path: Path | None = None) -> None:
 
 
 def settings_to_env(settings: dict) -> dict[str, str]:
-    """Environment variables for the runner. Only options the runtime already reads are mapped
-    (GOW_FULLSCREEN, GOW_SCALE_FILTER included). show_fps and resolution_scale are stored
-    only: they apply with the Vulkan backend."""
-    env: dict[str, str] = {}
-    if settings.get("fullscreen"):
-        env["GOW_FULLSCREEN"] = "1"
+    """Environment variables for the runner. Only options the runtime reads are mapped: the window starts
+    borderless fullscreen unless GOW_PANTALLA_COMPLETA=0, so the choice is always exported. F1 shows the debug
+    panel and F11 toggles fullscreen in game. Stored-only keys (resolution_scale, raster_threads,
+    pad_index, debug_ui, gpu) are kept in settings.json for older launchers but have no effect."""
+    env: dict[str, str] = {"GOW_PANTALLA_COMPLETA": "1" if settings.get("fullscreen") else "0"}
+    if settings.get("show_fps"):
+        env["GOW_FPS"] = "1"  # F2 toggles the overlay in game
     if SCALING_ENV.get(settings.get("scaling")):
-        env["GOW_SCALE_FILTER"] = SCALING_ENV[settings["scaling"]]
-    if settings.get("debug_ui"):
-        env["GOW_DEBUG_UI"] = "1"
-    if settings.get("pad_index") is not None:
-        env["GOW_PAD_INDEX"] = str(settings["pad_index"])
-    if settings.get("raster_threads"):
-        env["PS2X_GS_RASTER_THREADS"] = str(settings["raster_threads"])
+        env["GOW_SCALER"] = SCALING_ENV[settings["scaling"]]
     if settings.get("mute_audio"):
         env["GOW_AUDIO"] = "0"
     if settings.get("skip_movies"):
@@ -389,8 +384,6 @@ def settings_to_env(settings: dict) -> dict[str, str]:
     cheats = [key for key, _ in CHEATS if settings.get(f"cheat_{key}")]
     if cheats:  # overrides an exported GOW_CHEAT only when at least one box is ticked
         env["GOW_CHEAT"] = ",".join(cheats)
-    if settings.get("gpu") not in (None, "", "Auto"):
-        env["PS2X_VK_DEVICE"] = settings["gpu"]
     return env
 
 
@@ -532,17 +525,8 @@ def settings_window(settings: dict) -> dict | None:
     iso = tkinter.StringVar(value=settings["iso"])
     full = tkinter.BooleanVar(value=settings["fullscreen"])
     fps = tkinter.BooleanVar(value=settings["show_fps"])
-    dbg = tkinter.BooleanVar(value=settings["debug_ui"])
     mute = tkinter.BooleanVar(value=settings["mute_audio"])
     skip = tkinter.BooleanVar(value=settings["skip_movies"])
-    scale = tkinter.StringVar(value=f"{settings['resolution_scale']}x")
-    threads = tkinter.StringVar(value=str(settings["raster_threads"] or "Auto"))
-    pads = detect_pads()
-    pad_values = ["Auto"] + [f"{i}: {n}" for i, n in enumerate(pads[:4])]
-    pad_index = settings["pad_index"]
-    pad = tkinter.StringVar(value="Auto" if pad_index is None else
-                            next((v for v in pad_values if v.startswith(f"{pad_index}:")), str(pad_index)))
-    gpu = tkinter.StringVar(value=settings["gpu"])
     scaling = tkinter.StringVar(value=settings["scaling"])
     cheat_vars = {key: tkinter.BooleanVar(value=settings[f"cheat_{key}"]) for key, _ in CHEATS}
     error = tkinter.StringVar()
@@ -553,19 +537,10 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Button(frame, text="Browse...", command=lambda: iso.set(filedialog.askopenfilename(
         filetypes=[("ISO image", "*.iso"), ("All files", "*")]) or iso.get())).grid(row=0, column=2)
     ttk.Label(frame, textvariable=error, foreground="red", wraplength=480).grid(row=1, column=0, columnspan=3, sticky="w")
-    ttk.Checkbutton(frame, text="Fullscreen (F11 toggles in game)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
-    ttk.Checkbutton(frame, text="Show FPS (applies with Vulkan backend)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
-    ttk.Label(frame, text="Internal resolution (applies with Vulkan backend)").grid(row=4, column=0, columnspan=2, sticky="w")
-    ttk.Combobox(frame, textvariable=scale, values=["1x", "2x", "3x"], state="readonly", width=8).grid(row=4, column=2)
-    ttk.Label(frame, text="Raster threads (0/Auto = default)").grid(row=5, column=0, columnspan=2, sticky="w")
-    ttk.Spinbox(frame, from_=0, to=64, textvariable=threads, width=8).grid(row=5, column=2)
-    ttk.Label(frame, text="Controller").grid(row=6, column=0, sticky="w")
-    ttk.Combobox(frame, textvariable=pad, values=pad_values, width=40).grid(row=6, column=1, columnspan=2, sticky="w")
-    ttk.Checkbutton(frame, text="Debug UI", variable=dbg).grid(row=7, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Start in fullscreen (unticked = windowed; F11 toggles in game)", variable=full).grid(row=2, column=0, columnspan=3, sticky="w")
+    ttk.Checkbutton(frame, text="Show FPS counter (F2 toggles in game)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Skip movies (FMV, workaround)", variable=skip).grid(row=11, column=0, columnspan=3, sticky="w")
-    ttk.Label(frame, text="GPU (Auto = discrete first)").grid(row=9, column=0, sticky="w")
-    ttk.Combobox(frame, textvariable=gpu, values=["Auto"] + detect_gpus(), width=40).grid(row=9, column=1, columnspan=2, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=scaling, values=list(SCALING_ENV), state="readonly", width=16).grid(row=10, column=1, columnspan=2, sticky="w")
     cheat_frame = ttk.LabelFrame(frame, text="Cheats (debug)", padding=6)
@@ -579,15 +554,9 @@ def settings_window(settings: dict) -> dict | None:
         error.set(message)
         if message:
             return
-        digits = re.match(r"\d+", pad.get())
-        try:
-            count = int(threads.get())
-        except ValueError:
-            count = 0
-        result = {"iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
-                  "resolution_scale": int(scale.get()[0]), "raster_threads": max(0, count),
-                  "pad_index": int(digits.group()) if digits else None, "debug_ui": dbg.get(),
-                  "mute_audio": mute.get(), "skip_movies": skip.get(), "gpu": gpu.get().strip() or "Auto",
+        # Stored-only keys (no effect with this runtime) are carried over unchanged.
+        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
+                  "mute_audio": mute.get(), "skip_movies": skip.get(),
                   "scaling": scaling.get(), **{f"cheat_{k}": v.get() for k, v in cheat_vars.items()}}
         root.destroy()
 

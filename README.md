@@ -6,12 +6,13 @@
 
 **A native PC port of *God of War* (PS2, NTSC-U `SCUS-97399`) built by statically recompiling MIPS R5900 code to C++.**
 
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x64-0078D6?logo=linux&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64-0078D6)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white)
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-8A2BE2)
 ![Status](https://img.shields.io/badge/status-experimental-orange)
-[![Tests](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml)
+[![Tests](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml)
+[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/337-god-of-war/)
 
 </div>
 
@@ -23,11 +24,8 @@
 
 ## Contents
 
-- [Purpose and goals](#purpose-and-goals)
-- [Status map](#status-map)
 - [What is this?](#what-is-this)
 - [Current status](#current-status)
-- [Linux (native port)](#linux-native-port)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
@@ -35,143 +33,67 @@
 - [Documentation](#documentation)
 - [Credits and license](#credits-and-license)
 
-## Purpose and goals
-
-A **playable, native Linux port of *God of War* (2005)** through static recompilation, on top of
-[PS2Recomp](https://github.com/ran-j/PS2Recomp). Milestones, in order:
-
-1. **A steady 60 FPS** in gameplay.
-2. **1080p** rendering with upscaling.
-
-Honest state today: the game boots from your own ISO, plays through the intro and into gameplay, and saves work,
-but gameplay runs at only **~20-30 FPS** (RTX 5050), well short of 60. Known issues: some visual glitches on
-orbs and particles, a hang after the intro cutscene, and the in-game movies still need a skip workaround
-(**Skip movies** in the launcher / `GOW_SKIP_FMV=1`; the intro now plays, other movies and their audio are unverified).
-
-This repository is a fork of [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp). The Linux
-work lives on the `linux-native-port` branch; fixes that are useful to everyone (for example the MPEG stream-callback
-fix, upstream PR #92) are sent upstream as small, separate PRs.
-
-## Status map
-
-**Linux (this fork)**
-
-<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.linux.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status - Linux" width="100%"></a>
-
-**Windows (upstream, not maintained here)**
-
-<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.windows.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status - Windows" width="100%"></a>
-
-The Linux map is the one maintained in this fork. It starts from the same baseline as the upstream (Windows) map and only differs where there is Linux evidence of its own (Vulkan GS, launcher, native build, speed, hang after the intro cutscene).
-
-Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
-
 ## What is this?
 
-Instead of emulating the PlayStation 2 one instruction at a time, this project **translates the game's
-original executable (`SCUS_973.99`) into C++** with [PS2Recomp](https://github.com/ran-j/PS2Recomp) and
-compiles it as a native program (Linux or Windows), linked against a runtime that reimplements the PS2 hardware and
-operating system (EE kernel, GS, DMA, CD/DVD…). The I/O processor (IOP) runs the game's **original IRX
-modules** (sound driver, data streamer…) on PS2Recomp's R3000A interpreter.
+Instead of emulating the PlayStation 2, this project **translates the game's original executable (`SCUS_973.99`)
+into C++** with [PS2Recomp](https://github.com/ran-j/PS2Recomp) and compiles it into a native Windows program.
+Since October 2026 the base is the runtime of [**Waffle565**](https://github.com/Waffle565/God-Of-War-Native-Port)'s
+native port, which replaces every piece of PS2 hardware with native code that produces the
+same result from the game's own data:
 
-This repository holds everything that is specific to God of War:
+| Layer | Native replacement |
+|---|---|
+| **EE CPU** (game code) | Static recompilation to C++ (6,414 functions) |
+| **VU1** (vector microcode) | Microprograms compiled ahead of time to C++ |
+| **GS** (graphics) | OpenGL render-target renderer, 2x internal resolution; texture/CLUT store instead of a VRAM model |
+| **IOP** (I/O CPU) | The game's 8 IRX modules compiled ahead of time to C++ (optional) |
+| **Sound** (SPU2) | Native sound engine driven by the game's LIBSD calls |
+| **Pad / memory card** | Native services, no SIO2 model |
+| **DMA / VIF / GIF** | The game's packets go straight to VU1 and the GS, no DMA controller model |
+| **Disc** | Files extracted from the disc, each at its original sector (the ISO is not read) |
+
+This repository contains everything specific to God of War:
 
 | Component | Description |
 |---|---|
 | **Function map** | 6,414 functions identified in the ELF (`config/funcmap.csv`) |
-| **Recompiler configuration** | Stubs, entry points (including vtable-only virtual methods) and instruction patches (`config/recomp.template.toml`) |
-| **Game overrides** | Hand-written replacements and diagnostics for game functions (`src/gow_overrides.cpp`) |
-| **Runtime patch** | Fixes to PS2Recomp's IOP emulator and EE runtime needed by this game (`patches/`) |
-| **Build scripts** | A complete, reproducible Windows pipeline (`scripts/`) |
-| **Tools** | DVD-9 layer 1 extractor (`tools/`) |
+| **Recompiler configuration** | Stubs, entry points (including virtual methods reachable only through a vtable) and instruction patches (`config/recomp.template.toml`) |
+| **Game overrides** | Replacements and diagnostics for game functions (`src/gow_overrides.cpp`) |
+| **Runtime patches** | Waffle565's runtime and our fixes on top, one patch per topic (`patches/`) |
+| **Build scripts** | Complete, reproducible pipeline on Windows (`scripts/`) |
+| **Tools** | Disc extractor, native VU1 and IOP generators, CI and status map (`tools/`) |
 
 ## Current status
 
-Linux status and instructions: [Linux (native port)](#linux-native-port).
+<a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
 
+Per-library and per-component breakdown: [`docs/estado/detalle.en.md`](docs/estado/detalle.en.md). Regenerated from `docs/estado/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
 
-Native Windows build (OpenGL renderer) on a Ryzen 7 5800XT with an RX 5700 XT:
+Native Windows build on a Ryzen 7 5800XT with an RX 5700 XT (GS captures at 1024×894):
 
 <p align="center">
-  <img src="docs/capturas/menu.jpg" alt="Main menu" width="49%">
-  <img src="docs/capturas/partida.jpg" alt="Gameplay" width="49%">
+  <img src="docs/capturas/menu.jpg" alt="Difficulty menu" width="49%">
+  <img src="docs/capturas/partida.jpg" alt="Fight on the ship" width="49%">
 </p>
 
 | Milestone | Status |
 |---|:---:|
-| Extracting both layers of the DVD-9 | ✅ |
-| Recompiling `SCUS_973.99` to C++ (6,418 files) | ✅ |
-| Building the native executable (MSVC, x64) | ✅ |
-| Boot: raylib/OpenGL, heap and thread initialization | ✅ |
-| The game's original IRX modules on the IOP emulator (`989snd`, `smpd`, `libsd`…) | ✅ |
-| Streaming data from the original ISO (`smpd` → `R_PERM.WAD`, game configuration) | ✅ |
-| Main game loop (`sys::GameLoop`) | ✅ |
-| Video output: legal screen and title logo | ✅ |
-| Ship, Kratos, enemies and HUD have correct shapes; further rendering checks remain | 🔧 in progress |
-| Controller/keyboard through libpad2 HLE; menu and difficulty selection | ✅ |
-| Gameplay reached; Athens docks at ~12 fps by default and ~25 fps with the optional VU1/GS threads (goal: 30) | 🔧 in progress |
-| FMV video: intro decoded and displayed without skipping; other videos unverified | 🔧 in progress |
-| Audio: banks and continuous emulated sound verified; playback stutters at the current speed | 🔧 in progress |
-| Memory card: listing, loading, saving and reloading verified on a PCSX2 copy; formatting unverified | 🔧 in progress |
+| `SCUS_973.99` recompiled to C++ and native executable (MSVC, x64) | ✅ |
+| Data read from the extracted disc files, no ISO | ✅ |
+| Boot, menus, new game and the ship fight, with HUD | ✅ |
+| Native VU1 (every block on the ship without the interpreter) | ✅ |
+| Native IOP: the 8 IRX compiled (gameplay at ~21 s instead of ~34 s) | ✅ |
+| Exact game speed (1.00) | ✅ |
+| Runtime test suite on Windows (MSVC) and Linux (GCC) | ✅ |
+| 60 fps on the ship with the camera still: median ~53–56 `vid::Flip` calls per second | 🔧 in progress |
+| Saved zones, save/load and movies with sound: verified by Waffle565, to be repeated here | 🔧 in progress |
+| Full playthrough | ⏳ pending |
+| PAL languages and launcher with a selector | ⏳ on hold |
 
-The game boots, loads its data from the ISO and reaches the menu and gameplay with keyboard or controller
-input. After fixing scratchpad DMA chains, captures show the ship, Kratos, enemies and HUD with correct
-shapes. The FMV intro also decodes without `GOW_SKIP_FMV`. Loading, saving and reloading a game have been
-verified on a copied 8 MB PCSX2 card with ECC; formatting and reopening it in PCSX2 remain unverified.
-The port is still experimental. In the Athens docks it runs at ~12 fps with the default settings and at
-~25 fps with the optional VU1 and GS front-end threads and asynchronous GS FINISH (`PS2X_VU1_HILO=1`,
-`PS2X_GS_FRENTE=1`, `GOW_GS_FINISH_ASINCRONO=1`), which can still hang occasionally; the compiled VU1
-microcode is the main bottleneck. Audio playback stutters, and CPU/OpenGL differences and graphics coverage
-need further checks. See [performance](docs/RENDIMIENTO.md), [rendering](docs/COMPARACION_PCSX2.md),
-[FMV and audio](docs/FMV_Y_AUDIO.md), [memory card](docs/MEMORY_CARD.md) and
-[`docs/ESTADO.md`](docs/ESTADO.md) for the checks and their limits.
-
-## Linux (native port)
-
-The Linux port is native: no Wine. Windows is kept compatible on a best-effort basis.
-
-- **Vulkan is required.** The GS (graphics) is rasterized by a Vulkan compute backend whose output is byte-identical
-  to the CPU reference renderer ([`docs/VULKAN.md`](docs/VULKAN.md)); it is the default on Linux, with the CPU
-  renderer as fallback.
-- **Compiled VU1 microcode.** VU1 programs are compiled to C++ at build time from a **local capture** of the game's own
-  microcode (never committed); without it the slower interpreter is used.
-- **Launcher** (`tools/linux/gow_launcher.py`): finds your ISO (`GOW_ISO`, remembered, or a scan of `~/Games`,
-  `~/Downloads`), validates it, **extracts the ELF and IRX modules automatically** to `~/.cache/gow-one-recomp/`, and
-  opens a settings window (fullscreen, scaling filter, GPU, controller, mute, **Skip movies**…). Details:
-  [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md).
-- **Controllers** are autodetected (hotplug supported); the launcher can pick a specific one.
-
-**Requirements:** x86-64 Linux, a Vulkan-capable GPU and driver, Python 3 (`python3-tk` for the window), Git, CMake,
-Ninja, a C++20 compiler, the PS2Recomp development libraries (X11, OpenGL, FFmpeg), `glslangValidator` and Vulkan
-headers, and your own **NTSC-U `SCUS-97399`** ISO.
-
-**Build and run** (details in [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md)):
-
-```sh
-# 1. extract the ELF from your ISO (also validates it), then build the runner
-python3 tools/linux/gow_launcher.py --iso "/path/God of War.iso" --prepare-only
-GOW_ELF=/path/to/SCUS_973.99 python3 scripts/compilar_linux.py
-
-# 2. optional but recommended: compile VU1 microcode (capture once while playing, then rebuild)
-GOW_VU1_CAPTURA=~/vu1_micro <run the game for a few minutes>
-GOW_VU1_MICROCODIGO=~/vu1_micro python3 scripts/compilar_linux.py
-
-# 3. play
-python3 tools/linux/gow_launcher.py --runner /path/to/ps2EntryRunner   # window; --last skips it
-```
-
-**Useful environment variables** (most are launcher options):
-
-| Variable | Effect |
-|---|---|
-| `GOW_ISO`, `GOW_ISO_DIRS` | ISO path / extra folders to scan |
-| `GOW_SKIP_FMV=1` | Skip the pre-rendered movies |
-| `GOW_AUDIO=0` | Mute (SPU2 is still emulated) |
-| `GOW_FULLSCREEN=1`, `GOW_SCALE_FILTER=nearest\|sharp-bilinear`, `GOW_WINDOW_SCALE=<n>` | Display options (F11 toggles fullscreen) |
-| `PS2X_VK_DEVICE=<index or name>` | Pick the Vulkan GPU (default: discrete first) |
-| `GOW_PAD_INDEX=<n>` | Pick a controller (default: auto) |
-| `PS2X_GS_BACKEND=cpu` | Force the CPU renderer |
-| `GOW_DEBUG_UI=1` | Debug overlay |
+The game plays like Waffle565's port: it boots, loads its data from the extracted disc and reaches gameplay with
+keyboard or controller. Performance in heavy scenes does not reach 60 on this machine yet; the critical path of each
+frame is the VU1 and GS work (~11–13 ms). An intermittent hang of the window thread (the game keeps running) is
+being investigated. See [`docs/ESTADO.md`](docs/ESTADO.md) for the measurements and their limits.
 
 ## Repository layout
 
@@ -182,61 +104,59 @@ python3 tools/linux/gow_launcher.py --runner /path/to/ps2EntryRunner   # window;
 ├── config/
 │   ├── funcmap.csv               # Function map (name, start, end, size)
 │   └── recomp.template.toml      # PS2Recomp configuration (@ELF@, @MAP@, @OUT@)
-├── docs/                         # Technical documentation (Spanish)
+├── docs/                         # Technical documentation
+│   ├── capturas/                 # Screenshots for this page
 │   └── estado/                   # Status map data and generated SVG/tables
-├── game/                         # YOUR SCUS_973.99 goes here (ignored by git)
+├── game/                         # YOUR extracted disc goes here: SCUS_973.99, IRX, PAK, .disc_layout (git-ignored)
 ├── patches/
-│   └── ps2recomp-*.patch         # Changes on top of PS2Recomp @ c5a9d02, applied in order
+│   ├── ps2recomp-waffle-runtime.patch   # Waffle565's runtime on PS2Recomp @ c5a9d02
+│   ├── ps2recomp-*.patch         # Our fixes on top, in scripts/compilar.ps1 order
+│   └── anteriores/               # Patch stack from before the migration (reference, not applied)
 ├── scripts/
-│   ├── 1_instalar_herramientas.cmd  # Install the tools
-│   ├── 2_compilar.cmd               # Full build pipeline
-│   ├── 2_recompilar_rapido.cmd      # Rebuild only src/gow_overrides.cpp (~1 min)
-│   ├── 3_ejecutar.cmd               # Run for 60 s and keep the logs
-│   ├── 3_ejecutar_manual.cmd        # Run with no time limit
-│   ├── probar_menu.ps1              # Menu smoke test with GS frame captures
-│   ├── probar_pad2.cmd              # Builds and runs the libpad2 packet test
-│   ├── monitor.cmd                  # Monitor CPU/RAM while building
-│   └── *.ps1                        # Script logic
+│   ├── 1_instalar_herramientas.cmd
+│   ├── 2_compilar.cmd            # Full pipeline (GOW_IOP_MODULOS: native IOP)
+│   ├── 2_recompilar_rapido.cmd   # Rebuilds only src/gow_overrides.cpp (~1 min)
+│   ├── 3_ejecutar.cmd            # Runs for 60 s and saves logs (extracts the disc the first time)
+│   ├── 3_ejecutar_manual.cmd     # Runs with no time limit
+│   ├── probar_menu.ps1           # Menu test with GS captures
+│   ├── probar_pad2.cmd           # Builds and runs the libpad2 packet test
+│   └── *.ps1                     # Script logic
 ├── src/
-│   ├── gow_overrides.cpp         # Game-specific overrides
-│   └── gow_pad2_packet.h         # libpad2 packet format (tested)
-├── tests/                        # Game-independent tests and known runtime-suite failures
+│   ├── gow_overrides.cpp         # Game-specific overrides (from Waffle565)
+│   └── *.h                       # Tested formats and helpers (libpad2 packet, GS replay…)
+├── tests/                        # Game-independent tests and known suite failures
 └── tools/
-    ├── ci/                       # CI helpers (patch order, config/test checks)
-    ├── extraer_capa2.ps1         # Extracts layer 1 of a PS2 DVD-9 ISO
-    ├── linux/gow_launcher.py     # Linux launcher: ISO detection/extraction, settings window
-    └── estado/generar.py         # Status map generator
+    ├── ci/                       # CI helpers (patch order, config, tests)
+    ├── estado/generar.py         # Status map generator
+    ├── iop/iopn_gen.py           # Compiles the game's IRX to C++ (native IOP)
+    ├── vu1/vu1n_gen.py           # Compiles the VU1 microcode to C++ (native VU1)
+    └── iso_extract.py            # Extracts the disc keeping its original sectors (--layout)
 ```
 
-> Script and folder names are in Spanish, the project's original language.
-
 ## Requirements
-
-This section and the next describe the Windows build; for Linux see [above](#linux-native-port).
 
 - Windows 10/11 x64
 - [Visual Studio 2022 Build Tools](https://visualstudio.microsoft.com/downloads/) with the **C++** workload (includes CMake and Ninja)
 - [Git](https://git-scm.com/)
-- ~10 GB of free space; 16 GB of RAM recommended (the build uses every core)
+- [Python 3](https://www.python.org/) (disc extraction and the native VU1/IOP generators)
+- ~20 GB of free space (the extracted disc takes ~8.5 GB); 16 GB of RAM recommended (the build uses every core)
 - Your own copy of **God of War (NTSC-U, SCUS-97399)**
 
 `scripts\1_instalar_herramientas.cmd` installs Git and the Build Tools with `winget`.
 
 ## Building and running
 
-**1. Get the game files.** Copy the executable from your disc/ISO to `game\SCUS_973.99`
-(or point the `GOW_ELF` environment variable at it).
+**1. Extract the disc.** As in Waffle565's port, the game reads its data from the extracted disc files,
+each at its original sector (the ISO is not read). With Python 3:
 
-Place the disc's **`.IRX` modules** (`SMPD_IOP.IRX`, `989NOMID.IRX`, `LIBSD.IRX`…) next to the ELF: the IOP
-emulator runs the originals, and `scripts\ejecutar.ps1` copies them into `IOP_MOD\` on first run.
-Reading the game data requires the **original ISO**: name it `God of War.iso` and put it in the folder
-above the ELF's folder, or set the `GOW_ISO` environment variable to its path.
-
-To also extract the data on the second layer of the DVD:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools\extraer_capa2.ps1 -Iso "D:\God of War.iso" -Salida "D:\GOW ISO extraida"
+```bat
+python tools\iso_extract.py "D:\God of War.iso" game --layout
 ```
+
+This leaves the executable `SCUS_973.99`, the `.IRX` modules, `PART1.PAK`/`PART2.PAK` (both DVD layers) and the
+`.disc_layout` index in `game\`. If the ELF is somewhere else, point `GOW_ELF` at it; the disc files must sit next
+to it. `scripts\ejecutar.ps1` extracts the disc by itself on first run if it finds `God of War.iso` in the folder
+above the ELF's, and `GOW_ISO=<path>` makes the runtime read the image directly.
 
 **2. Install the tools** (first time only):
 
@@ -265,6 +185,26 @@ scripts\3_ejecutar.cmd          :: 60 seconds, output in logs\
 scripts\3_ejecutar_manual.cmd   :: no time limit
 ```
 
+**F2** shows an FPS meter (also with `GOW_FPS=1`); see [`docs/CONTROLES.md`](docs/CONTROLES.md#medidor-de-fps).
+The game starts in borderless fullscreen; **F11** switches to a window and back (`GOW_PANTALLA_COMPLETA=0` starts
+windowed). **F1** opens the runtime debugger.
+`GOW_PANORAMICO=ampliado` uses the enhanced widescreen (a wider view instead of cropping top and bottom, an idea by
+nemesis2000 and CRASHARKI); it draws more and costs performance.
+`GOW_HZ=120` (experimental) lets the game logic run above 60 frames per second (up to 120, depending on the scene and
+the computer) and presents up to 120 pictures per second; see [`docs/CONTROLES.md`](docs/CONTROLES.md#120-hz).
+
+**5. Native IOP (optional, as in Waffle565's port).** Compiles the game's 8 IRX modules ahead of time and
+shortens loading (gameplay starts at ~21 s instead of ~34 s). One run dumps the modules and the next build
+uses them:
+
+```bat
+set PS2X_IOP_DUMP_MODULES=%CD%\logs\iop_modulos
+scripts\3_ejecutar.cmd
+set PS2X_IOP_DUMP_MODULES=
+set GOW_IOP_MODULOS=%CD%\logs\iop_modulos
+scripts\2_compilar.cmd
+```
+
 ## How it works
 
 ```mermaid
@@ -277,8 +217,8 @@ flowchart LR
     O[gow_overrides.cpp] --> E
     P["PS2Recomp runtime<br/>+ patches/*.patch"] --> E
     E --> F[ps2EntryRunner.exe]
-    I[Original IRX modules] --> G[IOP emulator<br/>R3000A]
-    ISO[God of War.iso] --> G
+    I[Original IRX modules] --> G[IOP<br/>native IRX or interpreter]
+    ISO["Extracted disc<br/>.disc_layout"] --> G
     F <--> G
 ```
 
@@ -292,16 +232,14 @@ The technical documentation is currently written in Spanish:
 - [`docs/CONTROLES.md`](docs/CONTROLES.md) — controls and menu/input tests
 - [`docs/RENDERIZADO.md`](docs/RENDERIZADO.md) — optional CPU/threaded CPU/OpenGL renderers and comparisons
 - [`docs/RENDIMIENTO.md`](docs/RENDIMIENTO.md) — performance measurements, optional threads and VU1 optimizations
-- [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_ISO.md`](docs/LINUX_ISO.md), [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) — Linux launcher, ISO handling and build (English)
-- [`docs/VULKAN.md`](docs/VULKAN.md) — Vulkan GS backend (English)
-- [`docs/PROGRESS_LOG.md`](docs/PROGRESS_LOG.md), [`docs/NEXT_STEPS_PLAN.md`](docs/NEXT_STEPS_PLAN.md) — Linux progress log and the plan towards 60 FPS (English)
 - [`AGENTS.md`](AGENTS.md) — project conventions for contributors and coding agents
 - [`docs/ESTADO.md`](docs/ESTADO.md) — current status, investigation log, known issues and next steps
 
 ## Credits and license
 
 - [**PS2Recomp**](https://github.com/ran-j/PS2Recomp) by ran-j and contributors — recompiler and runtime (GPL-3.0).
-- [**PCSX2**](https://github.com/PCSX2/pcsx2) contributors — original GS used by the optional DX11 diagnostic module (GPL-3.0+).
+- [**God-Of-War-Native-Port**](https://github.com/Waffle565/God-Of-War-Native-Port) by Waffle565 — native runtime (GS, VU1, IOP, sound, DMA, disc), overrides and tools that are the base of the port since October 2026; their port in turn started from this repository.
+- [**PCSX2**](https://github.com/PCSX2/pcsx2) contributors — original GS used by the optional DX11 diagnostic module, and the EE interpreter and VU operations of the runtime (`ee_ref/`, `vu_pcsx2/`, brought in with Waffle565's runtime) (GPL-3.0+).
 - [**Urban Reign recomp**](https://github.com/thiagordsfx/urban-reign-recomp) by thiagordsfx — shared GS integration reference; helped identify the VSync field convention in our diagnostic mirror ([review and scope](docs/REVISION_URBAN_REIGN.md)).
 - [**SotC runtime fork**](https://github.com/LightVelox/PS2Recomp/tree/ac9efa070638ad3b3accd284de6f898d5ab271d1) by Taylor N. Albarnaz / LightVelox — OpenGL GS backend and command queue, and EE fixes (FPU, 64-bit branches, LQ/SQ, tail jumps, VU0 macro mode and long DMA chains) (GPL-3.0, `ac9efa0`).
 - *God of War* © Sony Interactive Entertainment / Santa Monica Studio. This project is not affiliated with

@@ -183,42 +183,34 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(launcher.settings_path(), Path("/cfg/gow-one-recomp/settings.json"))
 
     def test_env_mapping(self) -> None:
-        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS), {})
+        # The runtime starts fullscreen unless told otherwise, so the choice is always exported.
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, show_fps=False)),
+                         {"GOW_PANTALLA_COMPLETA": "0"})
+        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS)["GOW_FPS"], "1")
         env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, fullscreen=True, debug_ui=True,
-                                            pad_index=0, raster_threads=3, resolution_scale=3))
-        self.assertEqual(env, {"GOW_FULLSCREEN": "1", "GOW_DEBUG_UI": "1", "GOW_PAD_INDEX": "0",
-                               "PS2X_GS_RASTER_THREADS": "3"})
+                                            pad_index=0, raster_threads=3, resolution_scale=3, gpu="NVIDIA"))
+        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1", "GOW_FPS": "1"})  # stored-only keys export nothing
 
     def test_scaling_env_mapping_roundtrip_and_old_files(self) -> None:
-        self.assertNotIn("GOW_SCALE_FILTER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
-        for label, value in (("Sharp bilinear", "sharp-bilinear"), ("Nearest", "nearest")):
-            self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, scaling=label)),
-                             {"GOW_SCALE_FILTER": value})
+        self.assertNotIn("GOW_SCALER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, scaling="Bilinear"))["GOW_SCALER"],
+                         "bilinear")
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
-            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, scaling="Nearest"), path)
-            self.assertEqual(launcher.load_settings(path)["scaling"], "Nearest")
+            launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, scaling="Bilinear"), path)
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
             path.write_text('{"debug_ui": true}')  # file written before the key existed
-            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
-            path.write_text('{"scaling": "bogus"}')
-            self.assertEqual(launcher.load_settings(path)["scaling"], "Bilinear")
-
-    def test_gpu_env_mapping(self) -> None:
-        self.assertNotIn("PS2X_VK_DEVICE", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
-        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, gpu="NVIDIA")),
-                         {"PS2X_VK_DEVICE": "NVIDIA"})
-        with patch.object(launcher.subprocess, "run", side_effect=FileNotFoundError):
-            self.assertEqual(launcher.detect_gpus(), [])
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
+            path.write_text('{"scaling": "Nearest"}')  # label from the Vulkan-era launcher
+            self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
 
     def test_mute_audio_env_mapping(self) -> None:
         self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
-        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True)),
-                         {"GOW_AUDIO": "0"})
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=True))["GOW_AUDIO"], "0")
 
     def test_skip_movies_env_mapping(self) -> None:
         self.assertNotIn("GOW_SKIP_FMV", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS)))
-        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, skip_movies=True)),
-                         {"GOW_SKIP_FMV": "1"})
+        self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, skip_movies=True))["GOW_SKIP_FMV"], "1")
 
     def test_cheats_env_mapping_and_compat(self) -> None:
         d = launcher.DEFAULT_SETTINGS
@@ -277,10 +269,10 @@ class SettingsTest(unittest.TestCase):
                  patch.object(launcher, "ELF_SHA256", hashlib.sha256(elf).hexdigest()), \
                  patch.object(launcher, "settings_window") as win, \
                  patch.object(launcher.subprocess, "call", return_value=0) as call:
-                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso), debug_ui=True))
+                launcher.save_settings(dict(launcher.DEFAULT_SETTINGS, iso=str(iso), fullscreen=True))
                 self.assertEqual(launcher.main(["--last", "--runner", str(runner)]), 0)
                 win.assert_not_called()
-            self.assertEqual(call.call_args[1]["env"]["GOW_DEBUG_UI"], "1")
+            self.assertEqual(call.call_args[1]["env"]["GOW_PANTALLA_COMPLETA"], "1")
 
 
 class FakeTTY:

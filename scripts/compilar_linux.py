@@ -96,17 +96,43 @@ def find_elf(explicit: Path | None) -> Path:
     raise RuntimeError("SCUS_973.99 was not found. Use --elf PATH or set GOW_ELF (game files are not included).")
 
 
+CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "gow-one-recomp"
+
+
+def local_dir(env: str, default: Path, marker: str) -> Path | None:
+    """Folder from $env, else the per-user cache folder when it already holds `marker` files."""
+    value = os.environ.get(env)
+    path = Path(value).expanduser().resolve() if value else default
+    if not any(path.glob(marker)):
+        if value:
+            raise RuntimeError(f"{env} has no {marker} files: {path}")
+        return None
+    return path
+
+
 def vu1_cmake_args() -> list[str]:
-    """Optional compiled VU1: GOW_VU1_MICROCODIGO is a local folder of microprogram dumps (*.bin) captured at
-    run time with GOW_VU1_CAPTURA=<folder>. The C++ is generated at build time and never committed. Without
-    it the runner only has the VU1 interpreter. Same contract as scripts/compilar.ps1."""
-    folder = os.environ.get("GOW_VU1_MICROCODIGO")
-    if not folder:
+    """Compiled and native VU1: GOW_VU1_MICROCODIGO (default ~/.cache/gow-one-recomp/vu1cap) is a local folder of
+    microprogram dumps (*.bin) captured at run time with GOW_VU1_CAPTURA=<folder>. The C++ is generated at
+    build time and never committed. Without it the runner only has the VU1 interpreter (about 10 FPS).
+    Same contract as scripts/compilar.ps1; the two VU1N overrides point upstream's CMake at this repo's tools/."""
+    path = local_dir("GOW_VU1_MICROCODIGO", CACHE / "vu1cap", "*.bin")
+    if path is None:
+        print("No VU1 microcode folder: building with the VU1 interpreter (slow). See docs/LINUX_COMPILACION.md.")
         return []
-    path = Path(folder).expanduser().resolve()
-    if not any(path.glob("*.bin")):
-        raise RuntimeError(f"GOW_VU1_MICROCODIGO has no *.bin files: {path}")
-    return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generar_vu1.cpp'}"]
+    return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generar_vu1.cpp'}",
+            f"-DPS2X_VU1N_GEN_OVERRIDE={ROOT / 'tools/vu1/vu1n_gen.py'}",
+            f"-DPS2X_VU1N_HEADS_FILE={ROOT / 'tools/vu1/vu1n_heads.txt'}"]
+
+
+def generate_native_iop(checkout: Path) -> None:
+    """Native IOP: GOW_IOP_MODULOS (default ~/.cache/gow-one-recomp/iopdump) is the folder a run leaves with
+    PS2X_IOP_DUMP_MODULES=<folder>. Without it the IRX modules run in the IOP interpreter."""
+    path = local_dir("GOW_IOP_MODULOS", CACHE / "iopdump", "modules.txt")
+    if path is None:
+        print("No IOP module dump: the IRX modules will run in the interpreter.")
+        return
+    out = checkout / "ps2xIOP/src/native"
+    run([sys.executable, "-I", str(ROOT / "tools/iop/iopn_gen.py"), str(path), str(out)])
 
 
 def main() -> int:
@@ -123,10 +149,12 @@ def main() -> int:
             if shutil.which(tool) is None:
                 raise RuntimeError(f"Required tool not found: {tool}")
         prepare_checkout(checkout)
+        if not opts.runtime_only:
+            generate_native_iop(checkout)
         build = checkout / "build"
         logs = "ON" if opts.traces else "OFF"
         run(["cmake", "-S", str(checkout), "-B", str(build), "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_DISABLE_IPO=ON", "-DPS2X_RUNNER_O1=ON", "-DPS2X_BUILD_STUDIO=OFF",
+             "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF", "-DPS2X_DISABLE_IPO=ON", "-DPS2X_BUILD_STUDIO=OFF",
              "-DCMAKE_FIND_LIBRARY_SUFFIXES=.so", "-DPKG_CONFIG_USE_STATIC_LIBS=OFF", "-UFFMPEG_*",
              f"-DPS2X_ENABLE_RUNTIME_LOGS={logs}", f"-DPS2X_ENABLE_AGRESSIVE_LOGS={logs}",
              f"-DPS2X_ENABLE_IOP_RPC_TRACE={logs}", "-DPS2X_ENABLE_RUNNER_UNITY_BUILD=ON", "-DPS2X_ENABLE_RUNNER_PCH=ON",
@@ -165,6 +193,9 @@ def main() -> int:
         for header in (ROOT / "src").glob("*.h"):
             shutil.copy2(header, runner / header.name)
         run(["cmake", "-S", str(checkout), "-B", str(build)])
+        # The generated VU1 sources do not use the PCH: a stale object keeps an old VU1Interpreter layout.
+        for stale in build.glob("ps2xRuntime/CMakeFiles/ps2EntryRunner.dir/vu1_generado/*.o"):
+            stale.unlink()
         prefer_shared_ffmpeg(build)
         run(["cmake", "--build", str(build), "--target", "ps2EntryRunner", "--parallel", str(opts.jobs)])
         print(f"Runner built in {build}")

@@ -1,0 +1,225 @@
+diff --git a/ps2xRuntime/src/lib/ps2_pad.cpp b/ps2xRuntime/src/lib/ps2_pad.cpp
+index 96deb57..13fa501 100644
+--- a/ps2xRuntime/src/lib/ps2_pad.cpp
++++ b/ps2xRuntime/src/lib/ps2_pad.cpp
+@@ -1,8 +1,12 @@
+ #include <cstdlib>
+ #include "runtime/ps2_pad.h"
++#include "runtime/ps2_pad_mappings.h"
+ #include "ps2_host_backend.h"
+ #include <cstdio>
+ #include <cstring>
++#include <fstream>
++#include <string>
++#include <vector>
+ 
+ #ifdef _WIN32
+ bool ps2PadWindowsRumble(uint8_t large, bool small); // ps2_pad_rumble_win.cpp
+@@ -31,6 +35,92 @@ namespace
+     constexpr uint16_t PAD_L2 = 0x0100u;
+ }
+ 
++
++#ifndef _WIN32
++// GOW-Port: raylib bundles GLFW; declare the few joystick calls needed (no header on our path).
++extern "C"
++{
++    int glfwJoystickIsGamepad(int jid);
++    const char *glfwGetJoystickGUID(int jid);
++    int glfwUpdateGamepadMappings(const char *string);
++}
++
++namespace
++{
++    std::string readTextFile(const std::string &path)
++    {
++        std::ifstream f(path);
++        std::stringstream ss;
++        ss << f.rdbuf();
++        return ss.str();
++    }
++
++    // GOW-Port: load SDL_GameControllerDB mappings once the window (GLFW) is up: $GOW_PAD_MAPPINGS (file),
++    // ~/.config/gow-one/gamecontrollerdb.txt, system/Lutris/Steam copies and $SDL_GAMECONTROLLERCONFIG.
++    void loadPadMappings()
++    {
++        static bool done = false;
++        if (done || !IsWindowReady())
++            return;
++        done = true;
++        std::vector<std::string> paths;
++        const char *e = std::getenv("GOW_PAD_MAPPINGS");
++        if (e && *e)
++            paths.push_back(e);
++        const char *xdg = std::getenv("XDG_CONFIG_HOME");
++        const char *home = std::getenv("HOME");
++        if (xdg && *xdg)
++            paths.push_back(std::string(xdg) + "/gow-one/gamecontrollerdb.txt");
++        else if (home)
++            paths.push_back(std::string(home) + "/.config/gow-one/gamecontrollerdb.txt");
++        paths.push_back("/usr/share/sdl-gamecontrollerdb/gamecontrollerdb.txt");
++        paths.push_back("/usr/share/SDL_GameControllerDB/gamecontrollerdb.txt");
++        paths.push_back("/usr/share/games/SDL_GameControllerDB/gamecontrollerdb.txt");
++        if (home)
++        {
++            paths.push_back(std::string(home) + "/.local/share/lutris/runtime/gamecontrollerdb/gamecontrollerdb.txt");
++            paths.push_back(std::string(home) + "/.steam/steam/controller_base/gamecontrollerdb.txt");
++        }
++        for (const auto &p : paths)
++        {
++            const std::string m = ps2PadLinuxMappings(readTextFile(p));
++            if (!m.empty() && glfwUpdateGamepadMappings(m.c_str()))
++                std::fprintf(stderr, "[gow-pad] loaded gamepad mappings from %s\n", p.c_str());
++        }
++        const char *env = std::getenv("SDL_GAMECONTROLLERCONFIG");
++        if (env && *env)
++            glfwUpdateGamepadMappings(env);
++    }
++
++    // GOW-Port: a connected pad without any mapping reads as zeros; give it a generic Xbox-like one.
++    void mapUnknownPads()
++    {
++        static std::string tried[4];
++        for (int i = 0; i < 4; ++i)
++        {
++            if (!IsGamepadAvailable(i) || glfwJoystickIsGamepad(i))
++                continue;
++            const char *g = glfwGetJoystickGUID(i);
++            if (!g || tried[i] == g)
++                continue;
++            tried[i] = g;
++            const char *n = GetGamepadName(i);
++            const std::string m = ps2PadGenericMapping(g, n ? n : "");
++            glfwUpdateGamepadMappings(m.c_str());
++            std::fprintf(stderr, "[gow-pad] pad %d '%s' guid=%s has no SDL mapping, using a generic Xbox-like layout "
++                                 "(set GOW_PAD_MAPPINGS=<gamecontrollerdb.txt> to fix)\n",
++                         i, n ? n : "", g);
++        }
++    }
++}
++#else
++namespace
++{
++    void loadPadMappings() {}
++    void mapUnknownPads() {}
++}
++#endif
++
+ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t size)
+ {
+     if (!data || size < 32)
+@@ -43,6 +133,8 @@ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t s
+     data[3] = 0xFF;
+     data[4] = data[5] = data[6] = data[7] = kPadStickCenter;
+ 
++    loadPadMappings();
++    mapUnknownPads();
+     uint16_t btns = 0xFFFFu;
+     // GOW-Port: GLFW can list racing gear (handbrake, pedals) as gamepads before the real pad. The pad whose
+     // button was pressed last becomes the active one (press edges, so idle devices never take over);
+@@ -156,6 +248,19 @@ bool PSPadBackend::readState(int /*port*/, int /*slot*/, uint8_t *data, size_t s
+             clearBit(PAD_SELECT);
+     }
+ 
++    // GOW-Port: GOW_PAD_DIAG=1 logs once a second which pad feeds the game and what it reads (0 bits = pressed).
++    static const bool padDiag = std::getenv("GOW_PAD_DIAG") != nullptr;
++    if (padDiag)
++    {
++        static double lastDiag = -1.0;
++        const double now = IsWindowReady() ? GetTime() : 0.0;
++        if (now - lastDiag >= 1.0)
++        {
++            lastDiag = now;
++            std::fprintf(stderr, "[gow-pad] slot=%d pad=%s buttons=%04x sticks=%d,%d,%d,%d\n", kGamepad,
++                         useGamepad ? "gamepad" : "keyboard", btns, data[4], data[5], data[6], data[7]);
++        }
++    }
+     data[2] = static_cast<uint8_t>(btns & 0xFF);
+     data[3] = static_cast<uint8_t>(btns >> 8);
+ 
+diff --git a/ps2xTest/src/pad_input_tests.cpp b/ps2xTest/src/pad_input_tests.cpp
+index 07f9b7a..13934a2 100644
+--- a/ps2xTest/src/pad_input_tests.cpp
++++ b/ps2xTest/src/pad_input_tests.cpp
+@@ -2,6 +2,7 @@
+ #include "ps2_stubs.h"
+ #include "ps2_syscalls.h"
+ #include "Stubs/Pad.h"
++#include "runtime/ps2_pad_mappings.h"
+ 
+ #include <vector>
+ #include <cstdint>
+@@ -66,6 +67,28 @@ namespace
+ 
+ void register_pad_input_tests()
+ {
++    MiniTest::Case("PadMappings", [](TestCase &tc)
++                   {
++        tc.Run("keeps only Linux mapping lines", [](TestCase &t)
++               {
++            const std::string db = "# comment\r\n"
++                                   "0300,Pad A,a:b0,platform:Windows,\r\n"
++                                   "0301,Pad B,a:b0,platform:Linux,\r\n"
++                                   "\n"
++                                   "0302,Pad C,a:b1,platform:Mac OS X,\n";
++            t.Equals(ps2PadLinuxMappings(db), std::string("0301,Pad B,a:b0,platform:Linux,\n"), "linux only");
++            t.Equals(ps2PadLinuxMappings(""), std::string(), "empty");
++        });
++        tc.Run("generic mapping is a complete GLFW line", [](TestCase &t)
++               {
++            const std::string m = ps2PadGenericMapping("030000004c050000cc09000011810000", "Pad");
++            t.Equals(m.rfind("030000004c050000cc09000011810000,Pad,", 0), (size_t)0, "guid and name first");
++            t.IsTrue(m.find("leftx:a0") != std::string::npos && m.find("dpup:h0.1") != std::string::npos, "sticks and dpad");
++            t.IsTrue(m.find("platform:Linux") != std::string::npos && m.back() == '\n', "platform tag");
++            t.Equals(ps2PadGenericMapping("", "x"), std::string(), "no guid, no mapping");
++        });
++    });
++
+     MiniTest::Case("PadInput", [](TestCase &tc)
+                    {
+         tc.Run("scePadRead uses override state", [](TestCase &t)
+diff --git a/ps2xRuntime/include/runtime/ps2_pad_mappings.h b/ps2xRuntime/include/runtime/ps2_pad_mappings.h
+new file mode 100644
+index 0000000..6201cd9
+--- /dev/null
++++ b/ps2xRuntime/include/runtime/ps2_pad_mappings.h
+@@ -0,0 +1,39 @@
++#ifndef PS2_PAD_MAPPINGS_H
++#define PS2_PAD_MAPPINGS_H
++
++#include <sstream>
++#include <string>
++
++// GOW-Port: GLFW (inside raylib) only reports buttons and sticks for pads that have an SDL-style mapping
++// (glfwJoystickIsGamepad). An unmapped pad (GameSir dongle, DualShock, 8BitDo, generic) is "present" but reads as
++// all zeros, so mappings from an SDL_GameControllerDB file are loaded at startup. Pure logic, no window needed.
++
++// Keeps only the "platform:Linux" mapping lines of a gamecontrollerdb text (drops comments and other platforms).
++inline std::string ps2PadLinuxMappings(const std::string &text)
++{
++    std::istringstream in(text);
++    std::string line, out;
++    while (std::getline(in, line))
++    {
++        if (!line.empty() && line.back() == '\r')
++            line.pop_back();
++        if (line.empty() || line[0] == '#' || line.find("platform:Linux") == std::string::npos)
++            continue;
++        out += line;
++        out += '\n';
++    }
++    return out;
++}
++
++// Fallback for a pad nobody mapped: an Xbox-like evdev layout. Returns "" for an empty guid.
++inline std::string ps2PadGenericMapping(const std::string &guid, const std::string &name)
++{
++    if (guid.empty())
++        return "";
++    return guid + "," + (name.empty() ? "Generic pad" : name) +
++           ",a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,back:b6,start:b7,guide:b8,"
++           "leftstick:b9,rightstick:b10,leftx:a0,lefty:a1,rightx:a3,righty:a4,lefttrigger:a2,"
++           "righttrigger:a5,dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,platform:Linux,\n";
++}
++
++#endif

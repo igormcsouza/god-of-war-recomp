@@ -25,7 +25,6 @@ gowport/
 PS2Recomp/
 out/
 build/
-build-linux/
 
 # --- Logs y archivos locales ---
 logs/
