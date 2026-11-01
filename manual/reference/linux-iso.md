@@ -14,7 +14,7 @@ If `--iso` is omitted, the launcher uses `GOW_ISO`, then the ISO saved from an e
 successful run, then scans `~/Games/Sony Playstation 2`, `~/Games`, `~/Downloads` (and
 `GOW_ISO_DIRS`) for a valid image. Only one match is used without asking; several matches
 open a picker. If nothing resolves, the settings window opens (needs `python3-tk`), or a
-terminal prompt when no graphical display is available. See `docs/LINUX_LAUNCHER.md`.
+terminal prompt when no graphical display is available. See [Launcher details](linux-launcher-details.md).
 `--last` skips the window and launches the resolved ISO. If `--runner` is omitted, the launcher looks for
 `bin/ps2EntryRunner` in the repository; `GOW_RUNNER` can also specify its path. To
 validate and prepare the files without starting the game:

@@ -2,7 +2,7 @@
 
 `tools/linux/gow_launcher.py` opens a Tk settings window when a display is available
 (`DISPLAY` or `WAYLAND_DISPLAY`) and neither `--iso`, `--prepare-only` nor `--no-gui`/`--last`
-is given. ISO preparation and validation are described in `docs/LINUX_ISO.md`.
+is given. ISO preparation and validation are described in [Linux ISO](linux-iso.md).
 
 ```sh
 python3 tools/linux/gow_launcher.py            # settings window, ISO field prefilled
@@ -49,7 +49,7 @@ The header check reads only the ISO sectors that describe the root directory and
 | Render scale | 1080p (default), 2x, 3x, 4x: exports `PS2X_GS_HW_SCALE` (2.41 / unset / 3 / 4; 2x is the runtime's own default, so it exports nothing). The OpenGL GS renders at that multiple of the PS2's 448 lines; 1080p is exactly 1080 lines. Measured on an RTX 5050 laptop, ship zones: 56.0 FPS at 2x and 1080p, 55.2 at 3x, 53.9 at 4x (GS and upload time grow with the scale). The author found all four scales good-looking in play. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
 | Skip movies (FMV, workaround) | `GOW_SKIP_FMV=1`: skips the pre-rendered movies. Use it while movie audio and the screen after a cutscene are still being fixed. |
-| Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See `docs/CONTROLES.md`. |
+| Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See [Controls and menu tests](controls-and-menu-tests.md). |
 
 Older settings keys with no effect on this runtime (`resolution_scale`, `raster_threads`, `pad_index`, `debug_ui`, `gpu`) are still
 read and kept in `settings.json` but have no row in the window. Controllers are autodetected; pads without an SDL mapping
@@ -90,4 +90,4 @@ not distributed). The manifest would need:
 
 Risks: long first-run build with a visible progress UI needed; Flathub review is unlikely to
 accept a package that compiles a commercial game on demand. A self-hosted repo or a plain
-local build script (`docs/LINUX_COMPILACION.md`) is the lower-effort route.
+local build script ([Linux build details](linux-build-details.md)) is the lower-effort route.

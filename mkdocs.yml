@@ -3,7 +3,7 @@ site_description: Native Linux port of God of War (PS2) by static recompilation 
 site_url: https://igormcsouza.github.io/god-of-war-recomp/
 repo_url: https://github.com/igormcsouza/god-of-war-recomp
 repo_name: igormcsouza/god-of-war-recomp
-docs_dir: manual   # not docs/: that folder holds upstream's Spanish research logs and we merge from upstream
+docs_dir: manual
 edit_uri: edit/main/manual/
 theme:
   name: material
@@ -37,4 +37,28 @@ nav:
       - Status: project/status.md
       - Credits and legal: project/credits.md
       - Contributing: project/contributing.md
-      - Upstream docs map: project/upstream-map.md
+      - Upstream docs: project/upstream-map.md
+  - Reference:
+      - Research log: reference/research-log.md
+      - Architecture details: reference/architecture-details.md
+      - Controls and menu tests: reference/controls-and-menu-tests.md
+      - Rendering: reference/rendering.md
+      - Performance research: reference/performance-research.md
+      - GPU profile: reference/gpu-profile.md
+      - Presentation performance: reference/presentation-performance.md
+      - PCSX2 GS: reference/pcsx2-gs.md
+      - PCSX2 comparison: reference/pcsx2-comparison.md
+      - Fragment discard: reference/render-fragment-discard.md
+      - Shared presentation: reference/shared-presentation.md
+      - Upload ring: reference/render-upload-ring.md
+      - Minimum bilinear feedback: reference/minimum-bilinear-feedback.md
+      - Movies and audio: reference/movies-and-audio.md
+      - Memory card: reference/memory-card.md
+      - Shared transition: reference/shared-transition.md
+      - Tobiichi review: reference/review-tobiichi.md
+      - Urban Reign review: reference/review-urban-reign.md
+      - Persona 4 reference: reference/persona4-reference.md
+      - Linux launcher details: reference/linux-launcher-details.md
+      - Linux build details: reference/linux-build-details.md
+      - Linux ISO: reference/linux-iso.md
+      - Status map: status-map/detalle.en.md

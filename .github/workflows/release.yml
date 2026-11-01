@@ -62,7 +62,7 @@ jobs:
           3. First run: pick your own God of War (NTSC-U, SCUS-97399) ISO. The app builds the runtime on your machine (30+ minutes depending on your CPU, one time) and installs it in `~/.local/share/gow-one-recomp/<version>/`.
           4. Every later run opens the launcher and starts the game from that cache.
 
-          Nothing from the game is uploaded or shipped. See `docs/LINUX_COMPILACION.md` and `docs/LINUX_LAUNCHER.md`.
+          Nothing from the game is uploaded or shipped. See https://igormcsouza.github.io/god-of-war-recomp/.
 
           ---
           EOF

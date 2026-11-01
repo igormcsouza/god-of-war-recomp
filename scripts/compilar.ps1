@@ -220,7 +220,7 @@ Run 'cmake' @('-S', $rec, '-B', $bld, '-G', 'Ninja', '-DCMAKE_BUILD_TYPE=Release
               "-DPS2X_ENABLE_RUNTIME_LOGS=$logsEnabled", "-DPS2X_ENABLE_AGRESSIVE_LOGS=$logsEnabled", "-DPS2X_ENABLE_IOP_RPC_TRACE=$logsEnabled",
               '-DPS2X_ENABLE_RUNNER_UNITY_BUILD=ON', '-DPS2X_ENABLE_RUNNER_PCH=ON')
 # VU1 compilada (opcional): GOW_VU1_MICROCODIGO es una carpeta local con micromemorias capturadas con
-# GOW_VU1_CAPTURA. Sin ella (o vacía) el juego usa el intérprete. Ver docs\RENDIMIENTO.md.
+# GOW_VU1_CAPTURA. Sin ella (o vacía) el juego usa el intérprete. Ver manual\reference\performance-research.md.
 $vu1Micro = if ($env:GOW_VU1_MICROCODIGO) { (Resolve-Path -LiteralPath $env:GOW_VU1_MICROCODIGO).Path -replace '\\', '/' } else { '' }
 $vu1Gen = if ($vu1Micro) { (Join-Path $RepoRoot 'tools\vu1\generar_vu1.cpp') -replace '\\', '/' } else { '' }
 # GOW-Port: generador de la VU1 nativa (adaptado de Waffle565/God-Of-War-Native-Port); se activa con GOW_VU1_NATIVE=1.

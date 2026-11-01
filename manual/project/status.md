@@ -19,10 +19,10 @@ toggle, render scales, and the released AppImage's first-run setup from a clean 
 
 ## Library-level map
 
-The per-library and per-component status map of the Sony SDK functions is generated from `docs/estado/datos.toml`:
-[`detalle.en.md`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/docs/estado/detalle.en.md).
+The per-library and per-component status map of the Sony SDK functions is generated from
+`manual/status-map/datos.toml`: see the [status map](../status-map/detalle.en.md).
 
 ## Research log
 
-The detailed investigation record is upstream's `docs/ESTADO.md` (Spanish, about 7,900 lines), kept as the source for
-this manual. See the [upstream docs map](upstream-map.md) for what has been ported.
+The detailed investigation record (about 7,900 lines, translated from upstream's Spanish log) is in the
+[research log](../reference/research-log.md).
