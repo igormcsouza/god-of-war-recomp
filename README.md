@@ -2,8 +2,6 @@
 
 # God of War — PS2 Static Recompilation
 
-**English** · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md)
-
 **A native PC port of *God of War* (PS2, NTSC-U `SCUS-97399`) built by statically recompiling MIPS R5900 code to C++.**
 
 ![Platform](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20Linux%20x64-0078D6)
