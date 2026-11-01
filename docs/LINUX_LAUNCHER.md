@@ -46,12 +46,11 @@ The header check reads only the ISO sectors that describe the root directory and
 | Start in fullscreen | Exports `GOW_PANTALLA_COMPLETA=1` (borderless fullscreen at start) or `0` (windowed, the default). Always exported, because the runtime itself starts fullscreen. F11 toggles in game. |
 | Scaling | Sharp (default, exports nothing) / Bilinear: exports `GOW_SCALER=bilinear`. Saved as `scaling`; older labels (Nearest, Sharp bilinear) load as Sharp. |
 | Show FPS counter | `GOW_FPS=1`: on-screen counter ("60 FPS game  60 shown  (display 60 Hz)"); F2 toggles it in game. |
-| GPU | Auto (default) or Integrated. Auto opens the window on the NVIDIA GPU when its driver is loaded (`__NV_PRIME_RENDER_OFFLOAD=1`, `__GLX_VENDOR_LIBRARY_NAME=nvidia`). On hybrid laptops the window otherwise lands on the integrated GPU and every frame crosses through RAM: measured on an RTX 5050 laptop, upload time per 5 s fell from 581 to 12 ms and the average from 51 to 56 FPS. |
 | Mute audio | `GOW_AUDIO=0`: audio output is disabled, the SPU2 is still emulated. Unchecked leaves `GOW_AUDIO` unset. |
 | Skip movies (FMV, workaround) | `GOW_SKIP_FMV=1`: skips the pre-rendered movies. Use it while movie audio and the screen after a cutscene are still being fixed. |
 | Cheats (debug) | One checkbox per cheat, all off by default: God mode -> `god`, No enemies -> `noenemies`. The ticked ones are exported as `GOW_CHEAT=<comma list>` (overriding an exported `GOW_CHEAT`; nothing is set when none is ticked). New cheats are one entry in `CHEATS` in `gow_launcher.py`. See `docs/CONTROLES.md`. |
 
-Older settings keys with no effect on this runtime (`resolution_scale`, `raster_threads`, `pad_index`, `debug_ui`) are still
+Older settings keys with no effect on this runtime (`resolution_scale`, `raster_threads`, `pad_index`, `debug_ui`, `gpu`) are still
 read and kept in `settings.json` but have no row in the window. Controllers are autodetected; pads without an SDL mapping
 (for example a GameSir dongle) get a generic Xbox-like layout, `GOW_PAD_MAPPINGS=<gamecontrollerdb.txt>` overrides it and
 `GOW_PAD_DIAG=1` logs what the game reads once a second.

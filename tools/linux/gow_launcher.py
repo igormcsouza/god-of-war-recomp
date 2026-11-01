@@ -333,8 +333,6 @@ def load_settings(path: Path | None = None) -> dict:
                 result[key] = value
     if result["scaling"] not in SCALING_ENV:
         result["scaling"] = "Sharp"
-    if result["gpu"] not in GPU_CHOICES:  # device names from the Vulkan-era launcher
-        result["gpu"] = GPU_CHOICES[0]
     if result["resolution_scale"] not in (1, 2, 3):
         result["resolution_scale"] = 1
     result["raster_threads"] = max(0, min(result["raster_threads"], 256))
@@ -369,28 +367,16 @@ def remember_iso(iso: Path, path: Path | None = None) -> None:
         print(f"Warning: could not save the ISO path: {exc}", file=sys.stderr)
 
 
-GPU_CHOICES = ["Auto", "Integrated"]  # Auto: the NVIDIA GPU when its driver is loaded, else the system default
-
-
-def nvidia_present() -> bool:
-    return Path("/proc/driver/nvidia/version").exists()
-
-
 def settings_to_env(settings: dict) -> dict[str, str]:
     """Environment variables for the runner. Only options the runtime reads are mapped: the window starts
     borderless fullscreen unless GOW_PANTALLA_COMPLETA=0, so the choice is always exported. F1 shows the debug
     panel and F11 toggles fullscreen in game. Stored-only keys (resolution_scale, raster_threads,
-    pad_index, debug_ui) are kept in settings.json for older launchers but have no effect."""
+    pad_index, debug_ui, gpu) are kept in settings.json for older launchers but have no effect."""
     env: dict[str, str] = {"GOW_PANTALLA_COMPLETA": "1" if settings.get("fullscreen") else "0"}
     if settings.get("show_fps"):
         env["GOW_FPS"] = "1"  # F2 toggles the overlay in game
     if SCALING_ENV.get(settings.get("scaling")):
         env["GOW_SCALER"] = SCALING_ENV[settings["scaling"]]
-    # Hybrid laptops open the window on the integrated GPU while the GS renders on the NVIDIA one, and every frame
-    # crosses through RAM (measured: upload 581 -> 12 ms per 5 s, avg 51 -> 56 FPS with the window on NVIDIA).
-    if settings.get("gpu") in GPU_CHOICES[:1] and nvidia_present():
-        env["__NV_PRIME_RENDER_OFFLOAD"] = "1"
-        env["__GLX_VENDOR_LIBRARY_NAME"] = "nvidia"
     if settings.get("mute_audio"):
         env["GOW_AUDIO"] = "0"
     if settings.get("skip_movies"):
@@ -518,7 +504,6 @@ def settings_window(settings: dict) -> dict | None:
     fps = tkinter.BooleanVar(value=settings["show_fps"])
     mute = tkinter.BooleanVar(value=settings["mute_audio"])
     skip = tkinter.BooleanVar(value=settings["skip_movies"])
-    gpu = tkinter.StringVar(value=settings["gpu"] if settings["gpu"] in GPU_CHOICES else GPU_CHOICES[0])
     scaling = tkinter.StringVar(value=settings["scaling"])
     cheat_vars = {key: tkinter.BooleanVar(value=settings[f"cheat_{key}"]) for key, _ in CHEATS}
     error = tkinter.StringVar()
@@ -533,8 +518,6 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Checkbutton(frame, text="Show FPS counter (F2 toggles in game)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Skip movies (FMV, workaround)", variable=skip).grid(row=11, column=0, columnspan=3, sticky="w")
-    ttk.Label(frame, text="GPU (Auto = NVIDIA if present)").grid(row=9, column=0, sticky="w")
-    ttk.Combobox(frame, textvariable=gpu, values=GPU_CHOICES, state="readonly", width=16).grid(row=9, column=1, columnspan=2, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=scaling, values=list(SCALING_ENV), state="readonly", width=16).grid(row=10, column=1, columnspan=2, sticky="w")
     cheat_frame = ttk.LabelFrame(frame, text="Cheats (debug)", padding=6)
@@ -549,7 +532,7 @@ def settings_window(settings: dict) -> dict | None:
         if message:
             return
         # Stored-only keys (no effect with this runtime) are carried over unchanged.
-        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(), "gpu": gpu.get(),
+        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
                   "mute_audio": mute.get(), "skip_movies": skip.get(),
                   "scaling": scaling.get(), **{f"cheat_{k}": v.get() for k, v in cheat_vars.items()}}
         root.destroy()
