@@ -182,7 +182,8 @@ class SettingsTest(unittest.TestCase):
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/cfg"}):
             self.assertEqual(launcher.settings_path(), Path("/cfg/gow-one-recomp/settings.json"))
 
-    def test_env_mapping(self) -> None:
+    @patch.object(launcher, "nvidia_present", return_value=False)
+    def test_env_mapping(self, _nvidia) -> None:
         # The runtime starts fullscreen unless told otherwise, so the choice is always exported.
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, show_fps=False)),
                          {"GOW_PANTALLA_COMPLETA": "0"})
@@ -203,6 +204,16 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
             path.write_text('{"scaling": "Nearest"}')  # label from the Vulkan-era launcher
             self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
+
+    def test_gpu_env_mapping(self) -> None:
+        offload = {"__NV_PRIME_RENDER_OFFLOAD": "1", "__GLX_VENDOR_LIBRARY_NAME": "nvidia"}
+        with patch.object(launcher, "nvidia_present", return_value=True):
+            env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS))
+            self.assertEqual({k: env.get(k) for k in offload}, offload)
+            env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, gpu="Integrated"))
+            self.assertFalse(set(offload) & set(env))
+        with patch.object(launcher, "nvidia_present", return_value=False):
+            self.assertFalse(set(offload) & set(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS))))
 
     def test_mute_audio_env_mapping(self) -> None:
         self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
