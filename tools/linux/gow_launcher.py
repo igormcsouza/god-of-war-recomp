@@ -387,29 +387,6 @@ def settings_to_env(settings: dict) -> dict[str, str]:
     return env
 
 
-def detect_gpus() -> list[str]:
-    """Vulkan device names from `vulkaninfo --summary` (best effort: [] if it is missing or fails)."""
-    try:
-        text = subprocess.run(["vulkaninfo", "--summary"], capture_output=True, text=True, timeout=10).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [m.strip() for m in re.findall(r"deviceName\s*=\s*(.+)", text)]
-
-
-def detect_pads() -> list[str]:
-    """Names of connected joysticks, from /proc/bus/input/devices (best effort)."""
-    try:
-        text = Path("/proc/bus/input/devices").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-    pads = []
-    for block in text.split("\n\n"):
-        if re.search(r"Handlers=.*\bjs\d+", block):
-            match = re.search(r'Name="([^"]*)"', block)
-            pads.append(match.group(1) if match else "Unknown gamepad")
-    return pads
-
-
 def validate_iso(path: str) -> str:
     """Return '' if the ISO is a supported SCUS-97399, else the error text."""
     try:

@@ -29,6 +29,7 @@
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
 - [Building and running](#building-and-running)
+- [Linux](#linux)
 - [How it works](#how-it-works)
 - [Documentation](#documentation)
 - [Credits and license](#credits-and-license)
@@ -204,6 +205,24 @@ set PS2X_IOP_DUMP_MODULES=
 set GOW_IOP_MODULOS=%CD%\logs\iop_modulos
 scripts\2_compilar.cmd
 ```
+
+## Linux
+
+This fork is Linux-first. Needs GCC/Clang, CMake, Ninja, Git, Python 3 with Tk, and an OpenGL 4.x GPU. Full guide:
+[`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md).
+
+```sh
+python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # build (slow first time)
+python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"  # once, unattended, ~5 min
+python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # rebuild with full-speed VU1/IOP
+python3 tools/linux/gow_launcher.py                                     # settings window and Play
+```
+
+The capture step saves the game's VU1 microprograms and IRX modules from your own ISO, so the build can compile them
+(without it the VU1 is interpreted, about 10 FPS). Measured on an RTX 5050 laptop: about 55 FPS average in
+gameplay, 60 in menus and movies. The launcher sets fullscreen or windowed, the FPS counter, scaler, mute, skip
+movies and debug cheats; see [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md). Pads without an SDL mapping (for
+example a GameSir dongle) get a generic Xbox-like layout; `GOW_PAD_DIAG=1` shows what the game reads.
 
 ## How it works
 

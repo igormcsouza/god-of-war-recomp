@@ -29,6 +29,7 @@
 - [Estructura del repositorio](#estructura-del-repositorio)
 - [Requisitos](#requisitos)
 - [Compilar y ejecutar](#compilar-y-ejecutar)
+- [Linux](#linux)
 - [Cómo funciona](#cómo-funciona)
 - [Documentación](#documentación)
 - [Créditos y licencia](#créditos-y-licencia)
@@ -205,6 +206,25 @@ set PS2X_IOP_DUMP_MODULES=
 set GOW_IOP_MODULOS=%CD%\logs\iop_modulos
 scripts\2_compilar.cmd
 ```
+
+## Linux
+
+Este fork prioriza Linux. Necesita GCC/Clang, CMake, Ninja, Git, Python 3 con Tk y una GPU con OpenGL 4.x. Guía
+completa: [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md).
+
+```sh
+python3 scripts/compilar_linux.py --elf /ruta/a/SCUS_973.99            # compilar (lento la primera vez)
+python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"  # una vez, sin intervención, ~5 min
+python3 scripts/compilar_linux.py --elf /ruta/a/SCUS_973.99            # recompilar con VU1/IOP a toda velocidad
+python3 tools/linux/gow_launcher.py                                     # ventana de ajustes y Jugar
+```
+
+La captura guarda los microprogramas de la VU1 y los módulos IRX de tu propia ISO para que la compilación los
+convierta en código (sin ella la VU1 se interpreta, unos 10 FPS). Medido en un portátil con RTX 5050: unos 55 FPS de
+media en juego, 60 en menús y vídeos. El lanzador elige pantalla completa o ventana, el contador de FPS, el
+escalador, silenciar, saltar vídeos y trucos de depuración; véase [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md).
+Los mandos sin mapeo SDL (por ejemplo un dongle GameSir) reciben una disposición genérica tipo Xbox; `GOW_PAD_DIAG=1`
+muestra lo que lee el juego.
 
 ## Cómo funciona
 
