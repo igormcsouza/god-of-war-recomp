@@ -81,7 +81,7 @@ not distributed). The manifest would need:
 - Runtime `org.freedesktop.Platform` + `org.freedesktop.Sdk` (build tools stay in the
   sandbox, so the Sdk and its extensions must be installed at runtime, which is heavy,
   roughly 1-2 GB with CMake/Ninja/a C++ compiler and the generated sources).
-- Python with Tk (`python3-tk` equivalent module) for the window; SDL2, Vulkan/GL, ALSA/PulseAudio libs.
+- Python with Tk (`python3-tk` equivalent module) for the window; SDL2, OpenGL, ALSA/PulseAudio libs.
 - Finish-args: `--device=dri`, `--socket=x11`/`wayland`, `--socket=pulseaudio`,
   `--device=all` (or `input` on newer Flatpak) for gamepads, and `--filesystem` access
   to the ISO (or the portal file chooser).
