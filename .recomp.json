@@ -9,25 +9,25 @@
   },
   "project": "God of War — PS2 Static Recompilation",
   "status": "in-progress",
-  "targets": ["Windows"],
+  "targets": ["Linux", "Windows"],
   "toolchain": "Ps2recomp",
   "approach": "Static recompilation of MIPS R5900 code to C++20, with a PS2Recomp-based runtime and God of War-specific overrides.",
   "maintainers": [
     {
-      "name": "KIexster",
-      "link": "https://github.com/KIexster"
+      "name": "igormcsouza",
+      "link": "https://github.com/igormcsouza"
     }
   ],
   "links": [
     {
       "label": "Project status",
-      "url": "https://github.com/KIexster/god-of-war-recomp/blob/main/docs/ESTADO.md"
+      "url": "https://github.com/igormcsouza/god-of-war-recomp/blob/main/docs/ESTADO.md"
     }
   ],
   "help": [
-    "VIF/VU/GIF synchronization and 3D rendering",
-    "MPEG FMV playback",
-    "SPU2 audio and SIO2 memory cards"
+    "Other game pads on Linux",
+    "A Windows build with the native runtime",
+    "A full playthrough"
   ],
-  "notes": "Boots to the main menu with keyboard/controller input and difficulty selection. With FMVs skipped, the initial level reaches the gameplay state, but its framebuffer remains black. Text rendering, FMVs, audio and memory cards are still incomplete. Not yet playable."
+  "notes": "Linux-first fork of KIexster/god-of-war-recomp. Playable on Linux: menus, gameplay, audio, movies with sound, save and load, about 55-59 fps average at 1080p render scale. Released as a builder AppImage that builds the runtime from your own ISO. Full playthrough not yet verified."
 }

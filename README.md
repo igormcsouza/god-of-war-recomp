@@ -11,7 +11,7 @@
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-8A2BE2)
 ![Status](https://img.shields.io/badge/status-experimental-orange)
-[![Tests](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/KIexster/god-of-war-recomp/actions/workflows/pruebas.yml)
+[![Tests](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml)
 [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/337-god-of-war/)
 
 </div>
@@ -25,6 +25,7 @@
 ## Contents
 
 - [What is this?](#what-is-this)
+- [This fork](#this-fork)
 - [Current status](#current-status)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
@@ -64,6 +65,25 @@ This repository contains everything specific to God of War:
 | **Build scripts** | Complete, reproducible pipeline on Windows (`scripts/`) |
 | **Tools** | Disc extractor, native VU1 and IOP generators, CI and status map (`tools/`) |
 
+## This fork
+
+This is a Linux-first fork of [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp) that adopts
+Waffle565's native runtime and turns it into something you can download and play on Linux. What it adds:
+
+| Achievement | Result |
+|---|---|
+| Native runtime (OpenGL render-target GS, native VU1 and IOP) replacing the earlier Vulkan renderer | about 55-59 FPS in gameplay on an RTX 5050 laptop, was about 21 |
+| Render scale option, 1080p by default | no measurable cost up to 4x |
+| FPS overlay in English with the 1% low of the last 5 minutes of gameplay (menus, movies and loading excluded) | unit-tested |
+| Launcher: fullscreen or windowed, FPS counter, scaler, render scale, mute, skip movies, cheats | [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md) |
+| Generic pad mapping for pads without an SDL mapping (for example a GameSir dongle) | controls verified |
+| **AppImage builder**: no game data inside, it builds the runtime from your own ISO on first run and installs the missing build packages itself | [releases](https://github.com/igormcsouza/god-of-war-recomp/releases), [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md) |
+| Automated release: pushing a `vX.Y.Z` tag builds and publishes the AppImage | [`release.yml`](.github/workflows/release.yml) |
+
+Verified here on Linux: menus, new game, combat, audio, movies with sound, save and load, and the released AppImage
+from a clean home. Not verified: other pads, Windows with this runtime, a full playthrough. Details and numbers in
+[`docs/ESTADO.md`](docs/ESTADO.md); version history in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## Current status
 
 <a href="docs/estado/detalle.en.md"><img src="docs/estado/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
@@ -86,15 +106,14 @@ Native Windows build on a Ryzen 7 5800XT with an RX 5700 XT (GS captures at 1024
 | Native IOP: the 8 IRX compiled (gameplay at ~21 s instead of ~34 s) | ✅ |
 | Exact game speed (1.00) | ✅ |
 | Runtime test suite on Windows (MSVC) and Linux (GCC) | ✅ |
-| 60 fps on the ship with the camera still: median ~53–56 `vid::Flip` calls per second | 🔧 in progress |
-| Saved zones, save/load and movies with sound: verified by Waffle565, to be repeated here | 🔧 in progress |
+| Linux: about 55-59 fps average in gameplay (RTX 5050 laptop), 1080p render scale | ✅ |
+| Saved zones, save/load and movies with sound: verified on Linux | ✅ |
 | Full playthrough | ⏳ pending |
-| PAL languages and launcher with a selector | ⏳ on hold |
+| PAL languages | ⏳ on hold |
 
-The game plays like Waffle565's port: it boots, loads its data from the extracted disc and reaches gameplay with
-keyboard or controller. Performance in heavy scenes does not reach 60 on this machine yet; the critical path of each
-frame is the VU1 and GS work (~11–13 ms). An intermittent hang of the window thread (the game keeps running) is
-being investigated. See [`docs/ESTADO.md`](docs/ESTADO.md) for the measurements and their limits.
+The game boots, loads its data from the extracted disc and reaches gameplay with keyboard or controller. On Linux it
+averages about 55-59 fps in gameplay with dips to the mid 40s in heavy scenes. One freeze was seen once when picking
+up orbs and did not come back in over 10 minutes of play. See [`docs/ESTADO.md`](docs/ESTADO.md) for the measurements and their limits.
 
 ## Repository layout
 
@@ -253,11 +272,14 @@ The technical documentation is currently written in Spanish:
 - [`docs/CONTROLES.md`](docs/CONTROLES.md) — controls and menu/input tests
 - [`docs/RENDERIZADO.md`](docs/RENDERIZADO.md) — optional CPU/threaded CPU/OpenGL renderers and comparisons
 - [`docs/RENDIMIENTO.md`](docs/RENDIMIENTO.md) — performance measurements, optional threads and VU1 optimizations
+- [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md), [`docs/LINUX_LAUNCHER.md`](docs/LINUX_LAUNCHER.md), [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md) — the Linux AppImage, launcher and build (English)
+- [`CHANGELOG.md`](CHANGELOG.md) — version history
 - [`AGENTS.md`](AGENTS.md) — project conventions for contributors and coding agents
 - [`docs/ESTADO.md`](docs/ESTADO.md) — current status, investigation log, known issues and next steps
 
 ## Credits and license
 
+- [**KIexster/god-of-war-recomp**](https://github.com/KIexster/god-of-war-recomp) — the original project this fork continues; its recompiler configuration, function map, overrides and documentation are the foundation.
 - [**PS2Recomp**](https://github.com/ran-j/PS2Recomp) by ran-j and contributors — recompiler and runtime (GPL-3.0).
 - [**God-Of-War-Native-Port**](https://github.com/Waffle565/God-Of-War-Native-Port) by Waffle565 — native runtime (GS, VU1, IOP, sound, DMA, disc), overrides and tools that are the base of the port since October 2026; their port in turn started from this repository.
 - [**PCSX2**](https://github.com/PCSX2/pcsx2) contributors — original GS used by the optional DX11 diagnostic module, and the EE interpreter and VU operations of the runtime (`ee_ref/`, `vu_pcsx2/`, brought in with Waffle565's runtime) (GPL-3.0+).
