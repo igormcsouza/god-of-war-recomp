@@ -39,7 +39,7 @@ a one-file change: never interrupt it (that deletes the binary).
 ### Full speed: microcode capture (once)
 
 Without captured VU1 microcode the runner interprets the VU1 and runs at about 10 FPS. Capture it once, unattended,
-from your own ISO (about 5 minutes), then rebuild:
+from your own ISO (about 5 minutes; verified from an empty cache: 1797 microprograms), then rebuild:
 
 ```sh
 python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"

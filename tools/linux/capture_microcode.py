@@ -42,7 +42,7 @@ def main() -> int:
                GOW_VU1_CAPTURA=str(vu1), PS2X_IOP_DUMP_MODULES=str(iop))
     print(f"Capturing for {opts.seconds}s into {cache} (a game window opens; do not touch the controller)")
     subprocess.call(["timeout", str(opts.seconds), str(runner), str(elf)], cwd=elf.parent, env=env,
-                    stderr=subprocess.DEVNULL)
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     images = len(list(vu1.glob("*.bin")))
     print(f"VU1 microcode images: {images}; IOP modules: {'yes' if (iop / 'modules.txt').exists() else 'NO'}")
     if images < 500 or not (iop / "modules.txt").exists():
