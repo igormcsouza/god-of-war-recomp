@@ -142,6 +142,10 @@ def main() -> int:
     parser.add_argument("--jobs", type=int, default=os.cpu_count() or 2, help="Number of parallel build jobs")
     parser.add_argument("--runtime-only", action="store_true", help="Configure the runtime and build ps2x_tests without an ELF")
     parser.add_argument("--traces", action="store_true", help="Enable runtime tracing")
+    parser.add_argument("--out-dir", type=Path, default=ROOT / "build-linux",
+                        help="Folder for the generated C++ and the recompiler config (default: ./build-linux; use a writable "
+                             "folder when this script runs from a read-only AppImage)")
+    parser.add_argument("--install", type=Path, help="Copy the finished runner to this path")
     opts = parser.parse_args()
     checkout = opts.work_dir.resolve()
     try:
@@ -165,7 +169,7 @@ def main() -> int:
             return 0
 
         elf = find_elf(opts.elf)
-        work = ROOT / "build-linux"
+        work = opts.out_dir.resolve()
         generated = work / "generado"
         if generated.exists():
             shutil.rmtree(generated)
@@ -199,6 +203,11 @@ def main() -> int:
         prefer_shared_ffmpeg(build)
         run(["cmake", "--build", str(build), "--target", "ps2EntryRunner", "--parallel", str(opts.jobs)])
         print(f"Runner built in {build}")
+        if opts.install:
+            built = build / "ps2xRuntime" / "ps2EntryRunner"
+            opts.install.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(built, opts.install)
+            print(f"Runner installed to {opts.install}")
         return 0
     except (OSError, subprocess.CalledProcessError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
