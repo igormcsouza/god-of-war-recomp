@@ -1,0 +1,40 @@
+diff --git a/ps2xRuntime/src/lib/ps2_runtime.cpp b/ps2xRuntime/src/lib/ps2_runtime.cpp
+index d5003c5..d421b2e 100644
+--- a/ps2xRuntime/src/lib/ps2_runtime.cpp
++++ b/ps2xRuntime/src/lib/ps2_runtime.cpp
+@@ -835,6 +835,17 @@ static bool gowUsePcsx2Vu1()
+     return enabled;
+ }
+ 
++// GOW-Port: Linux uses real fullscreen: raylib's borderless window leaves the desktop panel (GNOME/Wayland)
++// on top of the image. Windows keeps the borderless window, which covers the taskbar.
++static void gowToggleFullscreen()
++{
++#ifdef __linux__
++    ToggleFullscreen();
++#else
++    ToggleBorderlessWindowed();
++#endif
++}
++
+ bool PS2Runtime::initialize(const char *title)
+ {
+     try
+@@ -874,7 +885,7 @@ bool PS2Runtime::initialize(const char *title)
+                 // alterna. GOW_PANTALLA_COMPLETA=0, o un tamaño pedido con GOW_WINDOW, empiezan en ventana.
+                 const char *full = std::getenv("GOW_PANTALLA_COMPLETA");
+                 if (full ? full[0] == '1' : std::getenv("GOW_WINDOW") == nullptr)
+-                    ToggleBorderlessWindowed();
++                    gowToggleFullscreen();
+             }
+         }
+ #endif
+@@ -2826,7 +2837,7 @@ void PS2Runtime::run()
+             fpsMeter.frame(*this);
+             // GOW-Port: F11 alterna pantalla completa sin bordes y ventana (Alt+Enter no: Enter es Start).
+             if (IsKeyPressed(KEY_F11))
+-                ToggleBorderlessWindowed();
++                gowToggleFullscreen();
+         });
+         if (ps2_perf::countFrames()) ps2_perf::hostFrames.fetch_add(1, std::memory_order_relaxed);
+         ps2_perf::report();

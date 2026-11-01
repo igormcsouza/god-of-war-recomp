@@ -106,6 +106,8 @@ $vu1nHeadsPatch = Join-Path $RepoRoot 'patches\ps2recomp-vu1n-heads.patch'
 $padMappingsLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-pad-mappings-linux.patch'
 # GOW-Port: texto del contador de FPS en ingles y mas pequeno; claves del registro [gow-fps] en ingles (game, shown, display).
 $fpsOverlayEnglishPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-overlay-english.patch'
+# GOW-Port: pantalla completa real en Linux (la ventana sin bordes deja el panel del escritorio encima de la imagen).
+$fullscreenLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-fullscreen-linux.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -185,6 +187,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1ClipSinSaltosPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $vu1MaddSaturadoPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsLinuxPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayEnglishPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $fullscreenLinuxPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
