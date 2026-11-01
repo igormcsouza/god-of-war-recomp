@@ -298,10 +298,11 @@ def _choose_iso() -> Path:
 # Launcher label -> GOW_SCALER value (the runtime default is the sharp scaler, so it exports nothing).
 SCALING_ENV = {"Sharp": None, "Bilinear": "bilinear"}
 
-# Launcher label -> PS2X_GS_HW_SCALE: internal render scale of the OpenGL GS (2 is the runtime default, so it exports
-# nothing). "1080p" renders exactly 1080 lines. Measured on an RTX 5050 laptop: 2 and 1080p both 56.0 FPS, 3x 55.2,
-# 4x 53.9 (upload and GS time grow with the scale).
-RENDER_SCALES = {"2x (default)": None, "1080p": "2.41", "3x": "3", "4x": "4"}
+# Launcher label -> PS2X_GS_HW_SCALE: internal render scale of the OpenGL GS (the runtime's own default is 2, which
+# exports nothing). "1080p" renders exactly 1080 lines and is the launcher default. Measured on an RTX 5050 laptop:
+# 2x and 1080p both 56.0 FPS, 3x 55.2, 4x 53.9 (upload and GS time grow with the scale).
+RENDER_SCALES = {"1080p (default)": "2.41", "2x": None, "3x": "3", "4x": "4"}
+DEFAULT_RENDER_SCALE = "1080p (default)"
 
 # Debug cheats (GOW_CHEAT): (key, label). Adding a cheat is one entry here; its setting is "cheat_<key>".
 CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemies (enemies die on spawn)")]
@@ -309,7 +310,7 @@ CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemie
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
     "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "skip_movies": False, "gpu": "Auto",
-    "scaling": "Sharp", "render_scale": "2x (default)",
+    "scaling": "Sharp", "render_scale": DEFAULT_RENDER_SCALE,
     **{f"cheat_{key}": False for key, _ in CHEATS},
 }
 
@@ -337,7 +338,7 @@ def load_settings(path: Path | None = None) -> dict:
             if ok:
                 result[key] = value
     if result["render_scale"] not in RENDER_SCALES:
-        result["render_scale"] = "2x (default)"
+        result["render_scale"] = DEFAULT_RENDER_SCALE
     if result["scaling"] not in SCALING_ENV:
         result["scaling"] = "Sharp"
     if result["resolution_scale"] not in (1, 2, 3):

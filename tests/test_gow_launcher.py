@@ -185,11 +185,11 @@ class SettingsTest(unittest.TestCase):
     def test_env_mapping(self) -> None:
         # The runtime starts fullscreen unless told otherwise, so the choice is always exported.
         self.assertEqual(launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, show_fps=False)),
-                         {"GOW_PANTALLA_COMPLETA": "0"})
+                         {"GOW_PANTALLA_COMPLETA": "0", "PS2X_GS_HW_SCALE": "2.41"})
         self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS)["GOW_FPS"], "1")
         env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, fullscreen=True, debug_ui=True,
                                             pad_index=0, raster_threads=3, resolution_scale=3, gpu="NVIDIA"))
-        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1", "GOW_FPS": "1"})  # stored-only keys export nothing
+        self.assertEqual(env, {"GOW_PANTALLA_COMPLETA": "1", "GOW_FPS": "1", "PS2X_GS_HW_SCALE": "2.41"})  # stored-only keys export nothing
 
     def test_scaling_env_mapping_roundtrip_and_old_files(self) -> None:
         self.assertNotIn("GOW_SCALER", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
@@ -205,14 +205,15 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(launcher.load_settings(path)["scaling"], "Sharp")
 
     def test_render_scale_env_mapping(self) -> None:
-        self.assertNotIn("PS2X_GS_HW_SCALE", launcher.settings_to_env(launcher.DEFAULT_SETTINGS))
-        for label, value in (("1080p", "2.41"), ("3x", "3"), ("4x", "4")):
+        self.assertEqual(launcher.settings_to_env(launcher.DEFAULT_SETTINGS)["PS2X_GS_HW_SCALE"], "2.41")
+        self.assertNotIn("PS2X_GS_HW_SCALE", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, render_scale="2x")))
+        for label, value in (("3x", "3"), ("4x", "4")):
             env = launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, render_scale=label))
             self.assertEqual(env["PS2X_GS_HW_SCALE"], value)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             path.write_text('{"render_scale": "9x"}')
-            self.assertEqual(launcher.load_settings(path)["render_scale"], "2x (default)")
+            self.assertEqual(launcher.load_settings(path)["render_scale"], launcher.DEFAULT_RENDER_SCALE)
 
     def test_mute_audio_env_mapping(self) -> None:
         self.assertNotIn("GOW_AUDIO", launcher.settings_to_env(dict(launcher.DEFAULT_SETTINGS, mute_audio=False)))
