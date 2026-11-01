@@ -298,13 +298,19 @@ def _choose_iso() -> Path:
 # Launcher label -> GOW_SCALER value (the runtime default is the sharp scaler, so it exports nothing).
 SCALING_ENV = {"Sharp": None, "Bilinear": "bilinear"}
 
+# Launcher label -> PS2X_GS_HW_SCALE: internal render scale of the OpenGL GS (the runtime's own default is 2, which
+# exports nothing). "1080p" renders exactly 1080 lines and is the launcher default. Measured on an RTX 5050 laptop:
+# 2x and 1080p both 56.0 FPS, 3x 55.2, 4x 53.9 (upload and GS time grow with the scale).
+RENDER_SCALES = {"1080p (default)": "2.41", "2x": None, "3x": "3", "4x": "4"}
+DEFAULT_RENDER_SCALE = "1080p (default)"
+
 # Debug cheats (GOW_CHEAT): (key, label). Adding a cheat is one entry here; its setting is "cheat_<key>".
 CHEATS = [("god", "God mode (Kratos takes no damage)"), ("noenemies", "No enemies (enemies die on spawn)")]
 
 DEFAULT_SETTINGS = {
     "iso": "", "fullscreen": False, "show_fps": True, "resolution_scale": 1,
     "raster_threads": 0, "pad_index": None, "debug_ui": False, "mute_audio": False, "skip_movies": False, "gpu": "Auto",
-    "scaling": "Sharp",
+    "scaling": "Sharp", "render_scale": DEFAULT_RENDER_SCALE,
     **{f"cheat_{key}": False for key, _ in CHEATS},
 }
 
@@ -331,6 +337,8 @@ def load_settings(path: Path | None = None) -> dict:
                 ok = type(value) is type(default)
             if ok:
                 result[key] = value
+    if result["render_scale"] not in RENDER_SCALES:
+        result["render_scale"] = DEFAULT_RENDER_SCALE
     if result["scaling"] not in SCALING_ENV:
         result["scaling"] = "Sharp"
     if result["resolution_scale"] not in (1, 2, 3):
@@ -377,6 +385,8 @@ def settings_to_env(settings: dict) -> dict[str, str]:
         env["GOW_FPS"] = "1"  # F2 toggles the overlay in game
     if SCALING_ENV.get(settings.get("scaling")):
         env["GOW_SCALER"] = SCALING_ENV[settings["scaling"]]
+    if RENDER_SCALES.get(settings.get("render_scale")):
+        env["PS2X_GS_HW_SCALE"] = RENDER_SCALES[settings["render_scale"]]
     if settings.get("mute_audio"):
         env["GOW_AUDIO"] = "0"
     if settings.get("skip_movies"):
@@ -504,6 +514,7 @@ def settings_window(settings: dict) -> dict | None:
     fps = tkinter.BooleanVar(value=settings["show_fps"])
     mute = tkinter.BooleanVar(value=settings["mute_audio"])
     skip = tkinter.BooleanVar(value=settings["skip_movies"])
+    render_scale = tkinter.StringVar(value=settings["render_scale"])
     scaling = tkinter.StringVar(value=settings["scaling"])
     cheat_vars = {key: tkinter.BooleanVar(value=settings[f"cheat_{key}"]) for key, _ in CHEATS}
     error = tkinter.StringVar()
@@ -518,6 +529,8 @@ def settings_window(settings: dict) -> dict | None:
     ttk.Checkbutton(frame, text="Show FPS counter (F2 toggles in game)", variable=fps).grid(row=3, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Mute audio", variable=mute).grid(row=8, column=0, columnspan=3, sticky="w")
     ttk.Checkbutton(frame, text="Skip movies (FMV, workaround)", variable=skip).grid(row=11, column=0, columnspan=3, sticky="w")
+    ttk.Label(frame, text="Render scale (higher = sharper, slower)").grid(row=9, column=0, sticky="w")
+    ttk.Combobox(frame, textvariable=render_scale, values=list(RENDER_SCALES), state="readonly", width=16).grid(row=9, column=1, columnspan=2, sticky="w")
     ttk.Label(frame, text="Scaling").grid(row=10, column=0, sticky="w")
     ttk.Combobox(frame, textvariable=scaling, values=list(SCALING_ENV), state="readonly", width=16).grid(row=10, column=1, columnspan=2, sticky="w")
     cheat_frame = ttk.LabelFrame(frame, text="Cheats (debug)", padding=6)
@@ -532,7 +545,7 @@ def settings_window(settings: dict) -> dict | None:
         if message:
             return
         # Stored-only keys (no effect with this runtime) are carried over unchanged.
-        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(),
+        result = {**settings, "iso": iso.get(), "fullscreen": full.get(), "show_fps": fps.get(), "render_scale": render_scale.get(),
                   "mute_audio": mute.get(), "skip_movies": skip.get(),
                   "scaling": scaling.get(), **{f"cheat_{k}": v.get() for k, v in cheat_vars.items()}}
         root.destroy()

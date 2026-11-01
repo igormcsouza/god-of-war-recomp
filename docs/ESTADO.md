@@ -7857,3 +7857,24 @@ necesiten historial) o rehacer el backend con análisis estático de flags por p
 - Hilo del EE en combate a 120 Hz: ~23 % durmiendo en `EeScheduler::processDueDeadlines` (esperas de la VU1 y del
   VBlank), la lógica del juego en paralelo con la VU1 (8,5 ms por cuadro) y ~1,7 ms por cuadro en serie entre el fin
   del trabajo y el siguiente lanzamiento.
+
+### Linux: escala de render y GPU de la ventana (2026-10-31)
+
+Portátil híbrido (Intel + RTX 5050), recorrido guionizado por las zonas de barco (`ATHN01B;ATHN04B`, `GOW_WARP`), VU1 nativa,
+84 muestras de 1 s tras los primeros 30 s, ventana a pantalla completa. `PS2X_GS_HW_SCALE` fija la escala interna del GS en OpenGL.
+
+| Escala | Líneas | FPS del juego (media) | Mínimo | gs_ms / 5 s | upload_ms / 5 s |
+|---|---|---|---|---|---|
+| 2 (por defecto) | 896 | 56,0 | 44,0 | 1242 | 606 |
+| 2,41 | 1080 | 56,0 | 46,0 | 1308 | 766 |
+| 3 | 1344 | 55,2 | 43,5 | 1382 | 1043 |
+| 4 | 1792 | 53,9 | 39,4 | 1638 | 1694 |
+
+Dibujar a 1080 líneas exactas no cuesta nada medible. Calidad de imagen: el autor jugó con las cuatro escalas y todas se ven bien, también la 4.
+
+**Hallazgo (corrige una medida previa):** con `__NV_PRIME_RENDER_OFFLOAD=1` y `__GLX_VENDOR_LIBRARY_NAME=nvidia` el registro dice
+`[gs-hw] GL unavailable: OpenGL 4.x core context unavailable (EGL error 12288)` y el runtime cae en silencio al renderizador de CPU, así que
+una comparación "ventana en NVIDIA" medía dos renderizadores distintos (51 frente a 56 FPS no vale). `DRI_PRIME=1` mantiene el GS en
+OpenGL pero no redujo el coste de subida (977 frente a 625 ms por 5 s, una ejecución cada uno). Con la ventana en la Intel el GS de OpenGL
+(en la NVIDIA) devuelve cada imagen por RAM: `upload_ms` de 600 a 1700 según la escala. Coste real de ese viaje, sin medir aislado.
+Comprobar siempre que el registro muestre `[gs-hw] render-target renderer ready` antes de fiarse de una medida.
