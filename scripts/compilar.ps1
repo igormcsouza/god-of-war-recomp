@@ -110,6 +110,8 @@ $fpsOverlayEnglishPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-overlay-eng
 $fullscreenLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-fullscreen-linux.patch'
 # GOW-Port: contador de FPS con el 1% bajo de los ultimos 5 minutos de partida (sin menus, peliculas ni cargas).
 $fpsLowPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-low.patch'
+# GOW-Port: un paquete GIF sin cola llega al GS en el sitio, sin copiarlo a la cola del arbitro (de Waffle565 615b046, sin la parte que ya teniamos).
+$gifInplacePatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-inplace.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -191,6 +193,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $padMappingsLinuxPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayEnglishPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fullscreenLinuxPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsLowPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gifInplacePatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner

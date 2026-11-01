@@ -7865,3 +7865,28 @@ a "window on NVIDIA" comparison was measuring two different renderers (51 versus
 OpenGL but did not reduce the upload cost (977 versus 625 ms per 5 s, one run each). With the window on the Intel the OpenGL GS
 (on the NVIDIA) returns each image through RAM: `upload_ms` from 600 to 1700 depending on the scale. Real cost of that trip, not measured in isolation.
 Always check that the log shows `[gs-hw] render-target renderer ready` before trusting a measurement.
+
+## Waffle565 sync review (2026-11-01)
+
+KIexster's tip (2d3c91d) was already in our tree; Waffle565's repository had newer commits (10-16 and 10-18) we lacked.
+Checked against our patched tree by distinctive identifiers:
+
+| Waffle565 commit | Status here |
+|---|---|
+| `615b046` pooled DMA buffers, no per-packet heap copies | the DMA buffer pool was already ours (KIexster); `deque`→`vector` is MSVC-only; the in-place GIF submit was missing and is now `patches/ps2recomp-gif-inplace.patch` |
+| `ecd6cb5` VIF1 UNPACK fast path, native slots invalidated only where micro memory changed | not ported yet (next candidate) |
+| `d6de6e6`, `664d93e` MPEG pacing and audio buzz | not ported (movie sync, not FPS) |
+| `906b684`, `ba16c8d` language and text disc overlays | not ported (could unblock PAL languages) |
+| `c8a2c59` Windows release polish | not needed on Linux |
+
+**In-place GIF submit, measured** (4-zone scripted run `ATHN01B;ATHN04B;SEWR02;DEST00`, 280 s per run, `[gow-fps]` game average
+from t=40 s, RTX 5050, same microcode and build tree, runs alternated, `[gs-hw] render-target renderer ready` confirmed in each log):
+
+| | run 1 | run 2 | run 3 | run 4 | mean |
+|---|---|---|---|---|---|
+| baseline | 56.4 | 57.5 | 58.0 | 58.1 | 57.5 |
+| in-place submit | 57.6 | 58.3 | 58.8 | 58.3 | 58.3 |
+
+The patched build is ahead in all four pairs, by +0.75 FPS on average (about 1%). Run-to-run spread is about 1.5 FPS, so this is
+small and not statistically conclusive with four runs; it is kept because the change removes a copy per XGKICK, is covered by a
+test and has no downside seen. The first run of a series also pays a cold-cache cost.

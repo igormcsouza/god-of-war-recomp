@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Performance: a GIF packet with nothing queued reaches the GS in place instead of being copied into the arbiter queue (from Waffle565 `615b046`). About +0.75 FPS on the 4-zone run (see the research log); small but consistent.
+
 - The first-run setup installs the missing build packages itself (apt, dnf, pacman or zypper; the system asks for your
   password) instead of only printing the command. It also checks the GL/X11/ALSA headers, not just the tools.
 - Setup time is described as "30+ minutes, depends on your CPU" (the earlier "30-60" was an estimate).
