@@ -102,7 +102,8 @@ Lo que la CI no puede comprobar: hace falta el ELF, los IRX y la ISO (ver README
 - Si un componente o librería cambia de estado (funciona / parcial / pendiente), actualiza
   `docs/estado/datos.toml` y ejecuta `python tools/estado/generar.py` (la acción "Mapa de estado" lo hace
   también al subir a `main`).
-- Los tres README (`README.md`, `README.es.md`, `README.pt-BR.md`) deben decir lo mismo.
+- Este fork solo mantiene `README.md` (inglés); los README en español y portugués se eliminaron. Si al fusionar upstream
+  reaparecen o chocan, bórralos (`git rm`).
 - Documentación y comentarios en español; los commits pueden ir en español o en inglés.
 
 ## Versiones

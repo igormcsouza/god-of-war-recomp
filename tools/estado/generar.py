@@ -29,7 +29,8 @@ SALIDA = RAIZ / "docs" / "estado"
 ESTADOS = ("ok", "parcial", "pendiente")
 
 # clave interna -> (sufijo de archivo, clave en datos.toml)
-IDIOMAS = {"es": ("es", "es"), "en": ("en", "en"), "pt-BR": ("pt-BR", "pt")}
+# GOW-Port: solo inglés en este fork; los textos es y pt-BR siguen en TEXTOS para no chocar al fusionar upstream.
+IDIOMAS = {"en": ("en", "en")}
 
 TEXTOS = {
     "es": {
