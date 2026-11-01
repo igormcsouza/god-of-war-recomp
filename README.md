@@ -264,7 +264,7 @@ More details in [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
 ## Documentation
 
-The technical documentation is currently written in Spanish:
+The English manual (install, usage, evolution, architecture) is in [`manual/`](manual/) and built with MkDocs (`mkdocs serve`); it is published at https://igormcsouza.github.io/god-of-war-recomp/ once GitHub Pages is on. The older technical research logs are still in Spanish:
 
 - [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md) — pipeline, overrides, runtime patches and CI
 - [`docs/CONTROLES.md`](docs/CONTROLES.md) — controls and menu/input tests
