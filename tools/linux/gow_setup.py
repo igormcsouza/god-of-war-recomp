@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-time setup: build the native runner from your own ISO and install it for the launcher.
 
-Steps (about 30-60 minutes, mostly compiling): check the build tools, prepare the disc from your ISO, build a first
+Steps (30+ minutes depending on the CPU, mostly compiling): check the build tools (installing missing packages), prepare the disc from your ISO, build a first
 runner, capture the VU1 microcode and IOP modules in an unattended run, rebuild with them, and install the runner in
 ~/.local/share/gow-one-recomp/<version>/bin. Nothing from the game is ever uploaded or shipped: the runner is
 generated here, on your machine, from your own copy.
@@ -22,7 +22,42 @@ import gow_launcher as launcher  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ["git", "cmake", "ninja", "c++", "python3"]
-APT_HINT = "sudo apt install build-essential cmake ninja-build git python3-tk libgl-dev libegl-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libasound2-dev libpulse-dev"
+# Package names per package manager: compiler, cmake, ninja, git, Tk and the window/audio headers the runtime needs.
+PACKAGES = {
+    "apt-get": ("apt-get install -y", "build-essential cmake ninja-build git python3-tk libgl-dev libegl-dev libx11-dev "
+                "libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libasound2-dev libpulse-dev"),
+    "dnf": ("dnf install -y", "gcc-c++ make cmake ninja-build git python3-tkinter mesa-libGL-devel mesa-libEGL-devel "
+            "libX11-devel libXrandr-devel libXi-devel libXcursor-devel libXinerama-devel alsa-lib-devel "
+            "pulseaudio-libs-devel"),
+    "pacman": ("pacman -S --needed --noconfirm", "base-devel cmake ninja git tk mesa libx11 libxrandr libxi libxcursor "
+               "libxinerama alsa-lib libpulse"),
+    "zypper": ("zypper --non-interactive install", "gcc-c++ make cmake ninja git python3-tk Mesa-libGL-devel "
+               "Mesa-libEGL-devel libX11-devel libXrandr-devel libXi-devel libXcursor-devel libXinerama-devel "
+               "alsa-devel libpulse-devel"),
+}
+HEADERS = ["GL/gl.h", "EGL/egl.h", "X11/Xlib.h", "X11/extensions/Xrandr.h", "X11/Xcursor/Xcursor.h",
+           "X11/extensions/Xinerama.h", "alsa/asoundlib.h", "pulse/pulseaudio.h"]
+INCLUDE_DIRS = [Path("/usr/include"), Path("/usr/include/x86_64-linux-gnu"), Path("/usr/local/include")]
+
+
+def package_manager() -> str | None:
+    return next((name for name in PACKAGES if shutil.which(name)), None)
+
+
+def install_command() -> list[str] | None:
+    """The root command that installs everything, or None on a distro we do not know."""
+    manager = package_manager()
+    if manager is None:
+        return None
+    command, packages = PACKAGES[manager]
+    gui = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+    elevate = "pkexec" if gui and shutil.which("pkexec") else "sudo"
+    return [elevate, *command.split(), *packages.split()]
+
+
+def install_hint() -> str:
+    command = install_command()
+    return " ".join(["sudo", *command[1:]]) if command else "install: a C++ compiler, cmake, ninja, git, python3-tk, GL/EGL/X11/ALSA/Pulse headers"
 
 
 def version() -> str:
@@ -42,7 +77,25 @@ def installed_runner() -> Path:
 
 
 def missing_tools() -> list[str]:
-    return [tool for tool in TOOLS if shutil.which(tool) is None]
+    missing = [tool for tool in TOOLS if shutil.which(tool) is None]
+    if any(not any((d / header).exists() for d in INCLUDE_DIRS) for header in HEADERS):
+        missing.append("development headers")
+    return missing
+
+
+def install_missing(log) -> bool:
+    """Install the missing packages as root (the system asks for the password). True when nothing is missing after."""
+    command = install_command()
+    if command is None:
+        return False
+    log(f"Installing the missing build packages ({package_manager()}); you will be asked for your password:\n"
+        f"  {' '.join(command)}\n")
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    assert process.stdout is not None
+    for line in process.stdout:
+        log(line)
+    process.wait()
+    return not missing_tools()
 
 
 def steps(iso: Path) -> list[tuple[str, list[str]]]:
@@ -63,8 +116,10 @@ def steps(iso: Path) -> list[tuple[str, list[str]]]:
 def run_steps(iso: Path, log) -> int:
     missing = missing_tools()
     if missing:
-        log(f"Missing tools: {', '.join(missing)}\nOn Debian/Ubuntu: {APT_HINT}\n")
-        return 2
+        log(f"Missing: {', '.join(missing)}\n")
+        if not install_missing(log):
+            log(f"Could not install them automatically. Run this, then start the setup again:\n  {install_hint()}\n")
+            return 2
     try:
         plan = steps(iso)
     except launcher.IsoError as exc:
@@ -93,7 +148,7 @@ def gui(iso_hint: Path | None) -> int:
     root = tkinter.Tk()
     root.title(f"God of War (recomp) setup {version()}")
     iso = tkinter.StringVar(value=str(iso_hint or ""))
-    status = tkinter.StringVar(value="The runtime is built on your machine from your own ISO (one time, 30-60 min).")
+    status = tkinter.StringVar(value="The runtime is built on your machine from your own ISO (one time, 30+ min).")
     result = {"rc": 1}
     lines: queue.Queue[str] = queue.Queue()
     frame = ttk.Frame(root, padding=10)
@@ -145,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     args, _ignored = parser.parse_known_args(argv)  # launcher options may be passed through by gow_app.py
     if args.check:
         missing = missing_tools()
-        print("Build tools OK" if not missing else f"Missing: {', '.join(missing)}\n{APT_HINT}")
+        print("Build tools OK" if not missing else f"Missing: {', '.join(missing)}\n{install_hint()}")
         return 1 if missing else 0
     display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
     if args.no_gui or not display:

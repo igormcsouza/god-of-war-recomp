@@ -212,7 +212,7 @@ scripts\2_compilar.cmd
 Este fork prioriza Linux. Necesita GCC/Clang, CMake, Ninja, Git, Python 3 con Tk y una GPU con OpenGL 4.x. Guía
 completa: [`docs/LINUX_COMPILACION.md`](docs/LINUX_COMPILACION.md).
 
-**Lo más fácil:** descarga el `.AppImage` de las [versiones](../../releases) y ejecútalo. La primera vez construye el runtime a partir de tu propia ISO (30-60 min) y luego abre el lanzador; véase [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md). Desde el código fuente:
+**Lo más fácil:** descarga el `.AppImage` de las [versiones](../../releases) y ejecútalo. La primera vez construye el runtime a partir de tu propia ISO (30+ min, depends on your CPU) y luego abre el lanzador; véase [`docs/LINUX_APPIMAGE.md`](docs/LINUX_APPIMAGE.md). Desde el código fuente:
 
 ```sh
 python3 scripts/compilar_linux.py --elf /ruta/a/SCUS_973.99            # compilar (lento la primera vez)
