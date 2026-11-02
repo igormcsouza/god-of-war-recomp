@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Fix: grid lines in the desert haze at render scale above 1 (strip seams opened on sprites that sample a render target).
 - Fix: faint grid lines and a pale outline around characters, strongest in fog, at night and with particles. They came from
@@ -13,7 +13,6 @@
 - Docs: README rewritten for Linux, new screenshots page with how to take your own, scripted pad and reproducible scene
   recipe.
 - Performance: a GIF packet with nothing queued reaches the GS in place instead of being copied into the arbiter queue (from Waffle565 `615b046`). About +0.75 FPS on the 4-zone run (see the research log); small but consistent.
-
 - The first-run setup installs the missing build packages itself (apt, dnf, pacman or zypper; the system asks for your
   password) instead of only printing the command. It also checks the GL/X11/ALSA headers, not just the tools.
 - Setup time is described as "30+ minutes, depends on your CPU" (the earlier "30-60" was an estimate).

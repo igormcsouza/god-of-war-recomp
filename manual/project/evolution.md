@@ -13,7 +13,7 @@ A short history of the Linux port, from the first commit to the first playable r
 | 2026-11-01 | English FPS overlay, fullscreen toggle, render scale (1080p default), 1% low overlay |
 | 2026-11-01 | **AppImage builder** and automated release on a version tag; **v0.1.0**, then **v0.1.1** (fixes a first-run crash) |
 | 2026-11-01 | Setup installs missing build packages itself; English-only READMEs; this manual |
-| 2026-11-02 | **Grid lines and the halo around characters fixed** (desert haze, then the fog/DOF pass: high-resolution depth read, self-copy for feedback passes, extended copy clamp); repository cleanup: Linux and English only |
+| 2026-11-02 | **v0.2.0**: grid lines and the halo around characters fixed (desert haze, then the fog/DOF pass: high-resolution depth read, self-copy for feedback passes, extended copy clamp); repository cleanup: Linux and English only |
 
 [`v0.0.1`](https://github.com/igormcsouza/god-of-war-recomp/releases/tag/v0.0.1) is a source snapshot of the
 Vulkan era, kept for history.
