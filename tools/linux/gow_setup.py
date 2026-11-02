@@ -103,7 +103,7 @@ def steps(iso: Path) -> list[tuple[str, list[str]]]:
     out = data_dir() / "build"
     runner_path = work / "build" / "ps2xRuntime" / "ps2EntryRunner"
     elf = launcher.prepare(iso)
-    build = [sys.executable, str(ROOT / "scripts/compilar_linux.py"), "--elf", str(elf), "--work-dir", str(work),
+    build = [sys.executable, str(ROOT / "scripts/build_linux.py"), "--elf", str(elf), "--work-dir", str(work),
              "--out-dir", str(out)]
     return [
         ("Build 1/2: recompile the game and build a first runner (slow)", build),

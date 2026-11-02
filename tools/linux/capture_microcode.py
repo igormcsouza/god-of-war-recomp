@@ -3,10 +3,10 @@
 
 Runs the runner once with the built-in pad script: it enters gameplay, then warps through a few zones while
 GOW_VU1_CAPTURA saves every VU1 microprogram it sees and PS2X_IOP_DUMP_MODULES saves the IRX modules. The
-folders land in ~/.cache/gow-one-recomp/{vu1cap,iopdump}, which scripts/compilar_linux.py picks up by default.
+folders land in ~/.cache/gow-one-recomp/{vu1cap,iopdump}, which scripts/build_linux.py picks up by default.
 
     python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"    # about 5 minutes
-    python3 scripts/compilar_linux.py --elf <ELF>                            # rebuild with them
+    python3 scripts/build_linux.py --elf <ELF>                            # rebuild with them
 
 The captured files come from your own copy of the game: never commit them.
 """
@@ -48,7 +48,7 @@ def main() -> int:
     if images < 500 or not (iop / "modules.txt").exists():
         print("Few images captured: re-run, or play for a while with GOW_VU1_CAPTURA set.", file=sys.stderr)
         return 1
-    print("Now rebuild: python3 scripts/compilar_linux.py --elf", elf)
+    print("Now rebuild: python3 scripts/build_linux.py --elf", elf)
     return 0
 
 

@@ -3,8 +3,8 @@
 A native port of *God of War* (PS2, NTSC-U `SCUS-97399`) made by **statically recompiling** the game's MIPS code to C++
 with [PS2Recomp](https://github.com/ran-j/PS2Recomp). No emulator runs the game: every PS2 chip is replaced by native code.
 
-This fork is **Linux first**. It continues [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp)
-on top of [Waffle565's native runtime](https://github.com/Waffle565/God-Of-War-Native-Port).
+This project is **Linux only**. It started from [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp)
+and runs on [Waffle565's native runtime](https://github.com/Waffle565/God-Of-War-Native-Port).
 
 ## What you get
 
@@ -19,7 +19,8 @@ on top of [Waffle565's native runtime](https://github.com/Waffle565/God-Of-War-N
 
 1. [Install with the AppImage](install/appimage.md) (or [build from source](install/from-source.md)).
 2. [Use the launcher](usage/launcher.md) and learn the [controls](usage/controls.md).
-3. Curious how it got here? Read [how it evolved](project/evolution.md) and the [architecture](project/architecture.md).
+3. See it running in the [screenshots](usage/screenshots.md).
+4. Curious how it got here? Read [how it evolved](project/evolution.md) and the [architecture](project/architecture.md).
 
 !!! warning "You need your own copy of the game"
     This project contains **no game files and no code generated from them**. You supply your own legal

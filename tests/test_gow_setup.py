@@ -73,7 +73,7 @@ class SetupTest(unittest.TestCase):
             plan = setup.steps(Path("/x.iso"))
         titles = [title for title, _ in plan]
         self.assertEqual(len(plan), 3)
-        self.assertIn("compilar_linux.py", plan[0][1][1])
+        self.assertIn("build_linux.py", plan[0][1][1])
         self.assertIn("capture_microcode.py", plan[1][1][1])
         self.assertIn("--install", plan[2][1])
         self.assertNotIn("--install", plan[0][1])

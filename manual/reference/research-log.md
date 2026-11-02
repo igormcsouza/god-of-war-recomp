@@ -540,7 +540,7 @@ adapt the GS backend and generic improvements in independent patches, with tests
 It adapts `GSGpuBackend`, `GSThreadedBackend`, shaders, the WGL context and the VRAM addressing
 tables from commit `ac9efa070638ad3b3accd284de6f898d5ab271d1` by Taylor N. Albarnaz / LightVelox,
 under GPL-3.0. The imported files carry the `GOW-Port` comment and their provenance.
-Selection, credits, tests and limits: [`rendering.md`](rendering.md).
+Selection, credits, tests and limits: `rendering.md`.
 
 The original CPU renderer is kept as the default and as the reference. The GPU runs
 on the GS thread; it falls back to CPU if the context or shaders fail to initialize. Reads and FINISH
@@ -720,7 +720,7 @@ do not appear as a payload origin in the eight sampled DMA chains. The sample
 is limited; their selection and sending still have to be identified before linking them
 with an output packet. No buffer change is forced and no positions are written.
 
-The new inspector, `tools/gs/inspeccionar_paquetes.py`, validates tag and
+The new inspector, `tools/gs/inspect_packets.py`, validates tag and
 payload limits and counts XYZ, ADC/XYZ3 and coordinate ranges. Both PATH1 captures give
 **2,654 vertices: 337 with kick and 2,317 without kick**, in 256 packets; 220 contain no XYZ.
 A kick requests drawing, but is not by itself equivalent to a valid triangle. Packets
@@ -739,7 +739,7 @@ the initial value Q=2 observed before DIV does not prove that perspective is sta
 
 The inspector includes eight synthetic tests of PACKED/REGLIST/A+D layout,
 ADC versus fog/XYZ3, PRE, NREG=0, IMAGE, padding and truncation; they are also run
-in CI. It includes no game data. Usage and scope: [`rendering.md`](rendering.md).
+in CI. It includes no game data. Usage and scope: `rendering.md`.
 The next step is to correlate a discarded non-degenerate packet with its transformation/CLIP
 inputs and follow the sending of the updated buffers. No behavior fix is published
 with this investigation and a complete 3D scene is not demonstrated.
@@ -795,7 +795,7 @@ The suite with real OpenGL passes **489/489**. The **19 patches** apply and thei
 audited match the local runtime. Configuration and handlers without errors (four
 known warnings), GIF inspector 8/8 and PowerShell scripts without syntax errors.
 
-Scope, primary reference, credit and optional diagnostic: [`rendering.md`](rendering.md).
+Scope, primary reference, credit and optional diagnostic: `rendering.md`.
 The full rebuild regenerates the **6,418 units** and finishes correctly. After it,
 the native suite again passes **489/489**, including the two GPU tests. Libpad2 also passes.
 A **175 s** game run, with `GOW_SKIP_FMV=1`, `GOW_FAST_BOOT=1` and `GOW_VIF_DIAG=1`,
@@ -854,7 +854,7 @@ The two regressions test all the permutations of DIRECTHL/DIRECT/IMAGE and of
 DIRECTHL/setup/IMAGE. They fail before (**487/489**, normal suite) and pass after. The suite
 with the two real OpenGL tests passes **491/491**. The **20 patches** apply in order
 and their **68 sources** audited match the local runtime. Scope and reference:
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 The CI of context diagnostic `f8a851a` also passes:
 [run 37458210600](https://github.com/KIexster/god-of-war-recomp/actions/runs/37458210600).
@@ -895,7 +895,7 @@ The first three regressions fail before (**489/492**, normal suite). After those
 the new IMAGE upload regression still fails (**492/493**), before fixing that
 shortcut. They cover both paths, empty tags with and without PRE between vertices, Q, modes that
 ignore PRE and non-empty controls. Scope and primary reference:
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 Review of the two earlier local captures of 256 PATH1 packets finds in
 each **205 empty tags, 90 with PRE=1 and PRIM=0x5C**, with no packet truncations.
@@ -938,7 +938,7 @@ and the discarding of models, preserving the original execution.
 `GOW_MODEL_DIAG=1` is added as an optional observation of `0x159C58`. The recompilation of
 `src/` finishes correctly and PowerShell passes without errors. The probe preserves the
 checkpoints and always calls the original; it writes no registers or game memory.
-The profile removes the variable. Scope: [`rendering.md`](rendering.md).
+The profile removes the variable. Scope: `rendering.md`.
 
 A **175 s** run with OpenGL, SKIP_FMV, FAST_BOOT and the context/animation probes
 logs **64 samples in state 3 and 64 in state 11**. All observe server
@@ -964,7 +964,7 @@ lists of `0x159878` and the calls to `0x157A60`. The retail map leaves the last 
 as unnamed functions; their structure matches `renModelServerContext::ProcessServer`
 and `ProcessModel` respectively in the GoW 2 reference.
 The offsets of the filters are checked in the retail MIPS, without copying its generated
-code. Scope and limits: [`rendering.md`](rendering.md).
+code. Scope and limits: `rendering.md`.
 
 The first **175 s** test confirms that the master is shared by several
 servers. Each context is then limited separately so that other servers
@@ -1043,7 +1043,7 @@ are added in total, with checks for reset, interleaved PATH, NREG=0 and rejected
 chain. The native suite passes **515/515**, including two tests with real OpenGL.
 The expectation of an old IMAGE wrapper and four priority fixtures
 that used empty images are adjusted; the reasons are detailed in
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 The audit applies **25 patches** on the pinned commit and compares **71 sources**,
 without differences with respect to the tested tree, also after the full build
@@ -1099,7 +1099,7 @@ drawn only once. The previous CPU shifted the sample by half a pixel, truncated
 the offset and accepted both sides of an edge. Three regressions reproduce those
 failures; OpenGL compute/hardware already passed them. Now **523/523 tests** pass,
 including five with real OpenGL. Three old fixtures are adjusted for the reasons
-documented in [`rendering.md`](rendering.md).
+documented in `rendering.md`.
 
 The independent comparison of full VRAM in **48 cases** of flat/IIP triangles,
 four Z test modes and Z32 values `7`, `0x80000001` and `0xffffff01`, on both
@@ -1135,7 +1135,7 @@ Eight old fixtures that drew empty sprites are adjusted: they now use a
 1×1 rectangle while keeping their CT32 alias, CLUT, alpha and scissor checks.
 The new test verifies that zero width/height changes no VRAM byte. The
 reasons and provenance are detailed in
-[`rendering.md`](rendering.md).
+`rendering.md`.
 The full build finishes with **6,418 generated units** and code zero;
 the **528/528 tests** are repeated with real OpenGL. The audit reproduces **28 patches
 and 74 sources** exactly. The **175 s game control with the CPU renderer**
@@ -1740,7 +1740,7 @@ freeze and replays the GIF commands with exact final VRAM in the three cases.
 The exported `.gs` files are identical by SHA256 to those used in the isolated
 reference, with no BIOS or game data. The comparison with PCSX2 software is
 exact for nearest and, after the fix, for bilinear with disjoint source.
-Details and sources are in [rendering.md](rendering.md).
+Details and sources are in rendering.md.
 
 On RX 5700 XT, hardware ×12 is still exact and stable for disjoint source and nearest.
 Bilinear feedback still returns 1 and varies: the last two passes differ in
@@ -1859,7 +1859,7 @@ after (576/576, fourteen real OpenGL controls). They use the external RGBA finge
 without repeating the filter formula in the test, for sprites/triangles, Q=1/2
 and four SSE modes. Hardware has to rasterize at least one matrix without
 compute tiles. The public generator now also exports the bilinear
-STQ control; the details and the reference are in [rendering.md](rendering.md).
+STQ control; the details and the reference are in rendering.md.
 
 The full build regenerates the 6418 units and finishes with code 0.
 The audit confirms 49 patches/84 sources and the later suite passes 576/576.
@@ -1905,7 +1905,7 @@ synchronizations and require effective hardware without compute tiles.
 There are 1184 combinations between both paths. The new batch regressions
 fail before; the isolated controls with the machine free rule out the shader
 timeouts exhausted during a first run alongside Claude's
-build. The details are in [rendering.md](rendering.md).
+build. The details are in rendering.md.
 
 The full build finishes with code 0; 50 patches/84 sources match
 and the final suite passes 580/580, with eighteen OpenGL controls. The seven
@@ -2387,7 +2387,7 @@ the local tools could not start processes during this work.
 GitHub rejected creating the blob and the branch with 403 on the first attempt.
 The state of the components is not changed nor are new FPS certified.
 Details and limits of temporal attribution:
-[GPU profile without waits during render](gpu-profile.md).
+GPU profile without waits during render.
 
 On retrying, execution outside the sandbox works. The log identifies
 a lock by `node_repl.exe` when updating its permissions (Windows error 32).
@@ -2418,7 +2418,7 @@ The raylib host's calls to the context capture and to the shared-texture
 consumer are missing; setting `PS2X_GS_DIRECT_PRESENT=1` is not enough.
 The tests do exercise a real share group explicitly. This difference is kept
 so as not to confuse the capability of the backend with its real use.
-Details: [profiler verification](gpu-profile.md).
+Details: profiler verification.
 
 A separate patch is prepared to prevent overwriting chunks of the persistent
 ring whose fence has not been signaled and to release its 64 MiB even if
@@ -2428,7 +2428,7 @@ The review also discovers that the streaming fallback could shrink
 `dataBuffer`, leaving a stale capacity; it is fixed and its
 regression is prepared. The official build of the final patch is pending
 that control. EE/FPU/IOP nor Opus's work is altered.
-Details: [upload ring protection](render-upload-ring.md).
+Details: upload ring protection.
 
 ### OpenGL ring validated with the joint version (October 9)
 
@@ -2456,7 +2456,7 @@ and RAM as reference/fallback. The shared latch stops forcing the
 host wait; explicit reads and FINISH keep their barriers.
 The diagnostic captures compose current VRAM with the latch's CRTC,
 with per-generation cache: they are not historical snapshots of the acquired frame.
-Details: [shared presentation](shared-presentation.md).
+Details: shared presentation.
 
 The base incorporates the already merged PRs #31/#32; their VU1
 patches and EE/FPU/IOP/FMV are not modified. The rebuilt native suite passes **623/623**, with
@@ -2980,7 +2980,7 @@ Four changes, all exact:
 - **The `vu1c_gen::run` dispatcher was unoptimized.** It was a single `switch` with thousands of cases and MSVC does not
   optimize functions that large: it compiled it as with `/Od` (`pc()` as a call, variables on the stack).
   It occupied 8–9 % of the VU1 thread. Now each address has a small function and `run` uses a table
-  (`tools/vu1/generar_vu1.cpp`): 8.7 → 2.3 % on the bench.
+  (`tools/vu1/generate_vu1.cpp`): 8.7 → 2.3 % on the bench.
 - **Impossible waits.** Each pair in a block advances at least one cycle. If the last writer of a
   register that is read is an earlier pair of the same block at a distance >= its latency, that read cannot
   stall the pair: the generator removes it from `readyCycleT` (struct R, identical to pair K except for the reads).
@@ -3034,7 +3034,7 @@ operands with DAZ/FTZ, and blocks with static timing.
 the caller chains of the chosen functions (several separated by `|`). With that, the costs of the VU1
 thread outside the blocks were located. All the changes are exact:
 
-- **Dispatch by last variant** (`tools/vu1/generar_vu1.cpp`). An address can have up to 13
+- **Dispatch by last variant** (`tools/vu1/generate_vu1.cpp`). An address can have up to 13
   block variants, one per microcode, and they were tried in order: for the hottest block of the
   docks, four failed calls before the good one. Now each address remembers the last variant that
   matched and tries it first. Bench: −5 % / −7 %.
@@ -3466,7 +3466,7 @@ CI. [Run 38115429132](https://github.com/KIexster/god-of-war-recomp/actions/runs
 compiles correctly and passes 591 of 593 tests: exactly
 `display copy compares FRAME pages with TEX0 blocks` and
 `presentation source without TBW compares physical addresses` fail. No
-exceptions are added to `fallos_conocidos.txt`. The CI of the fix is still pending.
+exceptions are added to `known_failures.txt`. The CI of the fix is still pending.
 
 The branch's own chain contains 96 patches: all pass check/application from the
 pinned upstream in a fresh private tree. The #51 diagnostic also
@@ -3757,7 +3757,7 @@ regressions; the negative control must get to run the suite.
 The corrected negative control `d496189` compiles and runs the suite in
 [CI 38137285316](https://github.com/KIexster/god-of-war-recomp/actions/runs/38137285316):
 591/595 pass; only the four new Count regressions fail.
-No exceptions are added to `fallos_conocidos.txt`. The fix is published
+No exceptions are added to `known_failures.txt`. The fix is published
 afterwards: global Count lazily updated by EE cycles, minimum of one
 in consecutive reads of the same block, 32-bit wrap, write/reset
 of its base and MFC0/MTC0 emission through the runtime. MFC0 to $zero explicitly
@@ -4095,7 +4095,7 @@ full SMODE2 in a truly acquired and retained texture; fields and
 progressive keep a comparison of all rows against CPU. In frame
 mode the CPU/GPU dimension is logged and only texture/metadata are validated,
 with its equivalence explicitly left pending. The case is kept,
-without adding exceptions to `fallos_conocidos.txt` nor hiding the initial result.
+without adding exceptions to `known_failures.txt` nor hiding the initial result.
 The corrected patch applies on an independent base of 99. It requires another
 full build, suite/meaningful negative and game controls;
 #51 stays a draft. The height difference is a separate investigation.
@@ -4432,7 +4432,7 @@ Procedural script/packet tests and skinning window correct on
 Windows/MSVC /W4 /WX; C++20 syntax of the override correct and configuration
 with 0 errors/4 existing warnings. Quick build and analog control
 with the game are still pending. The proposed Persona 4 reference is also reviewed:
-[scope and useful material](persona4-reference.md), without importing
+scope and useful material, without importing
 its code nor attributing a fix to it.
 
 The src/ update from `73588d2` finishes with code 0 in 19.97 s
@@ -4719,8 +4719,8 @@ treats it as a constant destination and the regression also checks that VI desti
 other than zero keep writing.
 
 Both patches were compiled with MSVC 19.44 and Ninja 1.12.1; `ps2x_tests` passed
-622/622 with zero known failures. `tools/ci/parches.py`,
-`tools/ci/validar_config.py` and the clean application of the two patches in order also pass.
+622/622 with zero known failures. `tools/ci/patch_series.py`,
+`tools/ci/validate_config.py` and the clean application of the two patches in order also pass.
 
 Review of the VF0 filter (2026-10-14): the search for the generated string
 `ctx->vu0_vf[0] =` and the deletion up to the next semicolon were removed. The
@@ -4796,7 +4796,7 @@ PCSX2 `2954ebe`. Windows procedural tests and syntax with its real
 headers correct; CI added for both. It does not change runtime/patches or the default
 backend. It does not yet create a real GS nor draw the game: extraction of the
 DX11 module, registers, FIFO/VRAM and coverage of native paths pending.
-Architecture, conditions and limits in [PCSX2_GS.md](pcsx2-gs.md).
+Architecture, conditions and limits in PCSX2_GS.md.
 
 Later review: the first connection compiled but PATH1 used the legacy index
 0. GSState cuts that index at EOP and clears an incomplete nloop at the end of
@@ -4814,7 +4814,7 @@ PATH1 retention when splitting tag/payload, two EOPs per batch, PATH2/3 fragment
 and independent cursors, exact RGBAQ. The subclass counts drawing without
 rasterizing; the test requires zero draws and zero window requests.
 It is not a replacement renderer. Original libraries/services and private-host
-reproduction limits detailed in [PCSX2_GS.md](pcsx2-gs.md).
+reproduction limits detailed in PCSX2_GS.md.
 
 PATH1 index 0 negative: compiles and fails on the pending nloop; restored
 index 3 correct. SHA-256 of the restored procedural executable
@@ -4835,7 +4835,7 @@ Restored SHA-256 `2be054f554e71ebdafc234998b84d4e7b53542f26a40c2f58403fcbead66db
 
 [Full CI of `6139073` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38200847766).
 The new DX11 control was native and private, not a CI GPU run. Host,
-dependencies, scope and pending items in [PCSX2_GS.md](pcsx2-gs.md). Still missing: sending
+dependencies, scope and pending items in PCSX2_GS.md. Still missing: sending
 GIF to the full rasterizer/cache, VRAM/FIFO/IRQ and connecting the game.
 It does not change the current renderer nor vouch for an FPS improvement.
 
@@ -4852,7 +4852,7 @@ compiles and fails on the first pixel; restored passes all three PATHs. SHA-256
 [Full CI of `72e4f55` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38238566117).
 This GPU control remains native and private. Absent optional services
 abort if used; VSync, window or reopening is not requested. The SW
-objects are kept, with no validation of that path. Limits in [PCSX2_GS.md](pcsx2-gs.md).
+objects are kept, with no validation of that path. Limits in PCSX2_GS.md.
 Still missing: public reproduction of the module, IMAGE/textures, presentation and connection
 to the runtime. No God of War rendering nor FPS improvement is attributed.
 
@@ -4875,7 +4875,7 @@ and the game runtime remain intact.
 
 The local recipe runs the four fixtures without a DXC DLL; it does not vouch for other
 APIs or performance. [Instructions](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md),
-limits and next steps in [PCSX2_GS.md](pcsx2-gs.md). The CI of `4addf7b`
+limits and next steps in PCSX2_GS.md. The CI of `4addf7b`
 complete and passed; the new native job is pending for the HEAD that publishes it.
 
 ## PCSX2 GS: procedural VSync/PCRTC output (2026-10-12)
@@ -4922,7 +4922,7 @@ It keeps the semantics relevant to #55, without attributing FPS or a game fault.
 Review confirms two DMA shortcuts that bypass the generic arbiter/frontend.
 The native upload normalizes data/registers and loses part of the original tags;
 the future hook cannot be limited to processGIFPacket. Proposal and pending items
-documented in [PCSX2_GS.md](pcsx2-gs.md), without modifying the runtime for now.
+documented in PCSX2_GS.md, without modifying the runtime for now.
 [Full CI of `ada5c5e` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38246271325).
 
 ## PCSX2 GS: DLL ABI and independent consumer (2026-10-12)
@@ -4939,7 +4939,7 @@ must be built from real PS2 registers; do not copy its GSRegisters struct.
 [Full CI of `1f87036` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38248274550).
 New DLL contract pending for the HEAD that publishes it. GPU local, no FPS
 measurement; IRQ/FINISH, FIFO/VRAM, recovery and hook pending. Scope in
-[PCSX2_GS.md](pcsx2-gs.md) and [module README](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md).
+PCSX2_GS.md and [module README](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md).
 
 ## PCSX2 GS: explicit privileged mirror (2026-10-12)
 
@@ -4962,7 +4962,7 @@ Build of the Windows module/client correct. Parser keeps cursor and Q
 with direct register, GPU DLL two cycles/2,048 exact RGBA, reset and rejection
 of invalid address correct. Config 0 errors/4 existing warnings; 24 PS1
 without errors. The suite of the new runtime and the full build of 103 are still
-pending. Variables/protocol and limits in [PCSX2_GS.md](pcsx2-gs.md).
+pending. Variables/protocol and limits in PCSX2_GS.md.
 
 ## Pause requested after full build 103 (2026-10-12)
 
@@ -5035,7 +5035,7 @@ by themselves. Exit 1 corresponds to the termination of our own process at the l
 normal closing of the game is not verified. It does not measure FPS.
 
 Recent changes of Tobiichi-Port are reviewed at the user's request:
-[comparison, candidates and limits](review-tobiichi.md). The global
+comparison, candidates and limits. The global
 mailbox or the fence control are not copied without their regressions. Equivalent
 asynchronous shared control in progress; the build is not changed during the game.
 
@@ -5093,7 +5093,7 @@ The mirror forces generic DMA paths; stability of shortcuts and threads pending.
 
 ## PCSX2 GS: field convention reviewed with Urban Reign (2026-10-12)
 
-The author publishes their integration; [review and references](review-urban-reign.md).
+The author publishes their integration; review and references.
 It is confirmed in the original MTGS that GSvsync receives `CSR.FIELD ? 0 : 1`. The earlier
 mirror passed the parity of the EE counter directly, inverted with respect to
 that convention. The client is adjusted to the same CSR snapshot sent to the
@@ -5183,7 +5183,7 @@ with the original PCSX2. No captures, dumps or game data have been published.
 ## Urban Reign: SDK and FOG reference (2026-10-12)
 
 Their SDK map of 983 linked functions, metadata and HLE bindings is reviewed:
-[scope, candidate services and credits](review-urban-reign.md).
+scope, candidate services and credits.
 Many libraries keep original recompiled code; reuse common services,
 without transferring addresses or game assumptions. Their CD/DVD seek alias
 ignores the layer on a single-layer disc: it requires its own control for GoW.
@@ -7139,7 +7139,7 @@ of the video player (13 entries from Waffle, private); diagnostics `GOW_SAMPLER`
 - Sampling (`muestrear`, 30 s, ship with a still camera, `bin\waffle2`): in the worker thread (VIF1 + VU1)
   `PS2Memory::processVIF1Data` was 18.5 % of the samples, more than the native VU1 (`runNative` 11.3 %). Waffle's
   runtime unpacks each vector through the generic path.
-- `patches/ps2recomp-vif1-unpack-rapido.patch` ports the fast paths of the previous base (one loop per unmasked
+- `patches/ps2recomp-vif1-unpack-fast.patch` ports the fast paths of the previous base (one loop per unmasked
   format and the SSE path with mask or STMOD 1-3). Difference from the previous version: STMOD 3 also stores the
   data in ROW, like Waffle's generic path (and PCSX2), so without a mask only STMOD 0 goes through the simple loop.
 - Test `VIF1 UNPACK fast paths match the generic path`: compares the two paths (switch
@@ -7266,9 +7266,9 @@ of the video player (13 entries from Waffle, private); diagnostics `GOW_SAMPLER`
 - Cause: the game's pacing is irregular (frames of 10 to 22 ms; the VBlanks it receives arrive every 10.8–23.3 ms) and
   `GSSharedPresent::Acquire` always took the most recent frame: if two frames fell within the same window
   refresh, the first one was not seen.
-- `patches/ps2recomp-present-orden.patch`: the next frame not yet shown is displayed; it only jumps to the most
+- `patches/ps2recomp-present-order.patch`: the next frame not yet shown is displayed; it only jumps to the most
   recent one with 3 or more pending. `PS2X_GS_PRESENT_LATEST=1` restores the previous behavior.
-  `patches/ps2recomp-fps-imagenes.patch`: the meter (F2) and the `[gow-fps]` line also count the images.
+  `patches/ps2recomp-fps-images.patch`: the meter (F2) and the `[gow-fps]` line also count the images.
 - Alternating A/B, 6 rounds of 130 s with continuous combat (the default script), seconds 40-130:
   images per second (median) 55.0 / 55.9 / 58.0 / 54.9 / 56.0 / 54.9 before, 59.9 / 59.4 / 58.9 / 59.6 / 59.9 /
   59.9 with the change; lost images 413 / 293 / 277 / 359 / 208 / 455 → 102 / 34 / 58 / 169 / 58 / 166.
@@ -7283,7 +7283,7 @@ frame of ~7.5 ms; the VU1 takes ~88 % (~930 calls per job) and passing the packe
 was seen between games is scene load: the slow games make up to 50 % more VU1 calls with the
 same cost per cycle (3.8-4.0 ns).
 
-`ps2recomp-gs-stage-lotes.patch`: the worker accumulates the packets (16-byte header with route and size, data
+`ps2recomp-gs-stage-batches.patch`: the worker accumulates the packets (16-byte header with route and size, data
 aligned to 16) and delivers them to the stage every `PS2X_GS_STAGE_BATCH` bytes (16384 by default; 0 = one by one), at the
 end of each job and before waiting for the stage from the producer thread itself. Test: "GS stage batches packets
 and delivers them in order with exact sizes".
@@ -7300,7 +7300,7 @@ waits ~44 % of the time; the EE thread is busy ~88 %, and ~30 % of it is checkpo
 `advanceEeTimers` 2.5 %, `advanceIopEeCycles` 2.2 %, `eeCheckpointDue` 2.2 %, `IopSubsystem::accrueEeCycles` 1.7 %.
 The IOP only does something every batch of 512 of its own cycles (4096 of the EE).
 
-`ps2recomp-iop-acumulado.patch`: `PS2Runtime::advanceIopEeCycles` (now inline) adds the cycles and calls the IOP only
+`ps2recomp-iop-accumulated.patch`: `PS2Runtime::advanceIopEeCycles` (now inline) adds the cycles and calls the IOP only
 when its batch is due, which the IOP reports with `eeCyclesUntilBatch()`: same batches at the same checkpoint as
 before. Test: "IOP batches are due exactly after eeCyclesUntilBatch EE cycles" (it also compares with
 step-by-step accumulation over ~30 batches).
@@ -7322,7 +7322,7 @@ the EE clock run up to a point ahead of the real one (1/16 of a field, ~1 ms), a
 has to sleep that lead before sending the next frame. It does not exist on the PS2: it is an artifact of
 the emulation.
 
-`ps2recomp-ritmo-fino.patch`: 64 points per field (maximum lead ~0.26 ms). Test: "EE clock never runs more
+`ps2recomp-fine-pacing.patch`: 64 points per field (maximum lead ~0.26 ms). Test: "EE clock never runs more
 than 1/64 field ahead of the host clock" (a guest function that only spends cycles; fails with 16 points).
 
 A/B in combat, 3 rounds (median period / p90 / % of frames <= 17 ms), 16 → 64: 16.91/18.45/55 → 16.73/18.09/59;
@@ -7344,7 +7344,7 @@ VU1 work: 12-14 ms goes from 17.0 to 16.6 ms per frame and 14-16 ms from 18.1 to
 difference (16.70/16.68/16.66 versus 16.66/16.75/16.68). Game time step (`[gow-animation] delta`)
 ~0.01667-0.01669 s in all cases: speed does not change.
 
-`ps2recomp-ciclos-mitad.patch`: `kGeneratedCheckpointCycles` 32 -> 16, `kGuestDispatchCycles` 8 -> 4 (and the default value
+`ps2recomp-half-cycles.patch`: `kGeneratedCheckpointCycles` 32 -> 16, `kGuestDispatchCycles` 8 -> 4 (and the default value
 of `PS2Runtime::eeCheckpointDue`). Test: "generated checkpoints charge 16 EE cycles each". With the final
 build, 2 rounds versus the previous one: 17.03/18.59/49 -> 16.67/17.63/70; 16.98/18.40/52 -> 16.72/18.00/63.
 
@@ -7353,7 +7353,7 @@ build, 2 rounds versus the previous one: 17.03/18.59/49 -> 16.67/17.63/70; 16.98
 Per-address profile (`muestrear4` with `MUESTREO_DIRS`) of `VU1Interpreter::runNative` in combat: the hottest jump is the read of `sl.known` (cache miss: 2048 slots of 128 bytes = 256 KB) and, after each block, the
 read of `cyc[pairs - 1]` from its timing table and the history writes.
 
-`ps2recomp-vu1-ranura64.patch`: the per-predecessor memo fields move from the slot to `BlockTiming` (only used by
+`ps2recomp-vu1-slot64.patch`: the per-predecessor memo fields move from the slot to `BlockTiming` (only used by
 blocks that read input flags) and the slot stores `idleLast` (= idle[pairs - 1]): it fits in one cache line
 (static_assert) and the end of a block with an idle table does not read the table. When replacing an entry of the timing
 cache it no longer walks the 2048 slots. Deterministic replay (4000 combat executions x 19): 0 differences;
@@ -7370,7 +7370,7 @@ The game calls the VU1 ~110,000 times per second (~1900 per frame), always throu
 rounding with `fegetround` + `fesetround` twice: ~77 ns versus ~8 ns with `_mm_getcsr`/`_mm_setcsr`
 (microbenchmark, MSVC /O2).
 
-`ps2recomp-vu-redondeo.patch`: on x86-64 only the MXCSR is changed (all float arithmetic goes through SSE); on other
+`ps2recomp-vu-rounding.patch`: on x86-64 only the MXCSR is changed (all float arithmetic goes through SSE); on other
 architectures `fesetround` continues. Test: "VU1 runs round toward zero and restore the host rounding mode".
 Replay: 0 differences. Combat, 2 rounds: median work 12.69 -> 12.44 and 13.68 -> 13.36 ms.
 
@@ -7384,7 +7384,7 @@ Temporary counters in combat: ~550,000 entries to `runNative`, ~4200 changes of 
 change invalidated the 2048 slots, including those of the resident code (entries 0x0000/0x0018/0x0030 and common
 routines).
 
-`ps2recomp-vu1-invalidacion-rango.patch`: `PS2Memory` records the range written by each generation (VIF1 MPG; the
+`ps2recomp-vu1-range-invalidation.patch`: `PS2Memory` records the range written by each generation (VIF1 MPG; the
 other writes, the whole memory) in a 64-entry log (`vu1CodeWritesSince`), and `runNative` only discards
 the slots whose block reads that range ([pc, pc + (pairs + 1) * 8)); if the log does not cover all the generations,
 it discards everything as before. Test: "VIF MPG logs the VU1 code range of each generation".
@@ -7406,7 +7406,7 @@ The video validation with the 17th version first gave 0 of 67, for two causes:
    the halved cycles on, all fail. In long stretches of EE work (leaving a video) the EE clock
    ran behind the real one, the IOP (which advances with the EE cycles) too, and the audio buffer ran empty.
 
-`ps2recomp-ee-ponerse-al-dia.patch`: every 2048 checkpoints, `checkpointDue` calls `catchUpToHost` with a margin
+`ps2recomp-ee-catch-up.patch`: every 2048 checkpoints, `checkpointDue` calls `catchUpToHost` with a margin
 of one field (`slack`): if the EE clock is more than one field behind the real one, it catches up. Without a margin
 the audio problem disappeared but the combat frame period went up to 17.2-17.5 ms; with one field (and with
 50 ms) the videos A01MP01, SEMO01, P01MP01 and BONUS06 pass and combat stays at 16.66-16.70 ms (2 rounds).
@@ -7421,7 +7421,7 @@ raylib reads pads even when the window does not have focus. The input moved the 
 fell into a state without the +0xB4 method of the object `*0x29C2B8`. Without a pad, 14 of 14 correct; with a pad, 6 of 10
 frozen. The waits of 8, 20 and 30 s (`GOW_BONUS_MOVIE_DELAY`) only changed the luck.
 
-`ps2recomp-prueba-sin-mando.patch`: with `GOW_PAD_TEST=1`, `ps2_pad.cpp` uses no physical pad; only the script
+`ps2recomp-pad-less-test.patch`: with `GOW_PAD_TEST=1`, `ps2_pad.cpp` uses no physical pad; only the script
 controls the game. Note: in a normal game the game also receives the pad without having focus.
 
 ### Menu flicker in the middle of videos (2026-10-17)
@@ -7433,7 +7433,7 @@ Log of the display register writes: the player sets `DISPFB2` = 0xD0 and returns
 ~130 µs later, every 66.7 ms. The console never shows it (the CRTC does not see a value that lasts only a fraction of a
 line); the port took the snapshot of the registers from the window thread at any moment and sometimes landed inside.
 
-`ps2recomp-pantalla-latch.patch`: `GS::latchDisplayField()` captures the display registers at the start of each VBlank
+`ps2recomp-screen-latch.patch`: `GS::latchDisplayField()` captures the display registers at the start of each VBlank
 (called by the EE scheduler before publishing `vsyncTick`) and the presentation uses that snapshot. Test: "presentation
 uses the display state latched at VBlank, not a transient write". Result in A01MP01: 1579 presentations of the
 video, all of FBP 0x68 and none with old content.
@@ -7474,7 +7474,7 @@ With the same test (new game and replaced intro) and the sound muted, the RPC ca
 of 989snd exhausted its instruction budget: the loop at 0x2D49C waits for its alarm handler (0x2D664) to
 set the counter at 0x44360 to 2, with `DelayThread(33 ms)` between polls. The RPC server runs with no current thread and
 `DelayThread` returned immediately without the IOP clock advancing, so the alarm never arrived.
-`ps2recomp-iop-delay-fuera.patch`: outside a thread, `DelayThread` uses the same wait as `WaitSema` and
+`ps2recomp-iop-delay-out.patch`: outside a thread, `DelayThread` uses the same wait as `WaitSema` and
 `WaitEventFlag` (the emulator lets the rest of the IOP run) until the delay has passed. Test: "DelayThread outside a
 thread lets the IOP run for the delay". In combat on the ship none of these waits occurs; the replaced intro
 no longer exhausts the budget.
@@ -7491,7 +7491,7 @@ video pending, and only sends the rest and returns when the demultiplexing retur
 whole block as consumed, so the game read again, received 0 bytes and repeated forever. In other videos the end
 fell with more than 0x2000 bytes pending and it went unnoticed. P04MP05.PSW has 741 images; before, 739 were served.
 
-`ps2recomp-mpeg-fin-programa.patch`: neither 0x1B9 nor what follows it count as consumed, and an input that starts
+`ps2recomp-mpeg-end-of-program.patch`: neither 0x1B9 nor what follows it count as consumed, and an input that starts
 with it returns 0. Test: "sceMpegDemuxPssRing stops at the program end code". Verified with the replaced intro:
 P04MP05 serves the 741 images, ends (`ended=1`) and the game starts at 60.2 s. A01MP02 still ends
 the same way (998 images, game at 66.9 s).
@@ -7530,7 +7530,7 @@ calls `eeCheckpointDue` every 16 EE cycles and each call delivered the cycles to
 checked deadline, time slice and catch-up with the real clock. The worker thread (VIF1/VU1) and the GS ones
 waited ~50 % of the time.
 
-`ps2recomp-ee-via-rapida.patch`: `checkpointDue` (inline) only adds the cycles as long as `m_fastLimitCycle` is not reached
+`ps2recomp-ee-fast-path.patch`: `checkpointDue` (inline) only adds the cycles as long as `m_fastLimitCycle` is not reached
 (the minimum of: next event of a timer, next IOP batch, end of the time slice and next catch-up with the real clock, now every
 2048 × 16 cycles instead of every 2048 calls) nor the next
 deadline (`m_nextDeadlineCycle`, which other threads can bring forward) and nothing is pending. On that cycle
@@ -7554,7 +7554,7 @@ With the game above 60 frames per second (120 Hz experiment, see the next entry)
 would show 2-8 images per second in stretches of several seconds. The main thread stacks during the
 drop: `GSHostPresentation::prepare` → `GS::latchHostPresentationFrame`, waiting for `m_stateMutex`. The GS stage takes
 and releases it once per packet, thousands of times per frame; the mutex is not fair and the thread that releases it takes
-it again before the one that is waiting. `ps2recomp-gs-prioridad-presentacion.patch`: the presentation registers a priority
+it again before the one that is waiting. `ps2recomp-gs-present-priority.patch`: the presentation registers a priority
 wait (`ps2_gs_stage::priorityWaitBegin/End`) while it takes the lock, and the stage, between packets and without any
 lock, yields while there is one. With 120 Hz, the images shown go to 59.8-60.6 per second throughout the combat.
 Test: "GS stage yields between packets while a priority waiter is registered". Suite 455/455.
@@ -7587,7 +7587,7 @@ of the fog/DOF that copy the depth as PSMCT24 to `fbp 320`. `overwrittenByDepth`
 target of that page (an old video), but then GS memory that never held the
 GPU's depth was decoded on the CPU, and any upload in the half VRAM covering the texture invalidated it again.
 
-`ps2recomp-gs-z-como-color.patch`: if a texture falls in the Z buffer of a target and that Z is the last thing written
+`ps2recomp-gs-z-as-color.patch`: if a texture falls in the Z buffer of a target and that Z is the last thing written
 there, it is read with the reinterpretation on the GPU (`reinterpretTexel`). The owner is the depth texture, its
 Z format (inverse tables of 0x30/0x31/0x32/0x3A) and the word is the Z value (`zpsm` of the target).
 `GOW_GS_HW_ZCOLOR=0` goes back to CPU decoding, for comparison.
@@ -7623,7 +7623,7 @@ Speed measured with `GOW_FPS=1` in the menu: ~6 game frames/s with the VU1 and I
 native VU1 (1,156 micro-memories) and the native IOP. After a hand-played session the capture rose to 6,448
 micro-memories; that build has not been measured yet.
 
-`ps2recomp-vu1-captura-nativa.patch`: `GOW_VU1_CAPTURA` only saved micro-memories when the VU1 ran on the exact
+`ps2recomp-vu1-native-capture.patch`: `GOW_VU1_CAPTURA` only saved micro-memories when the VU1 ran on the exact
 engine, that is, with `GOW_VU1_NATIVE_OFF=1` and the game at ~6 frames/s. Now it also saves with the native VU1 active,
 so what is still missing can be captured by playing at normal speed. It is a diagnostic enabled by the variable; without
 it nothing changes.
@@ -7632,7 +7632,7 @@ it nothing changes.
 
 Volume passes with modular blending (`COLCLAMP=0`) read the destination in the shader. The backend split them into one
 call per triangle and placed a barrier between all the calls, some 3,000 per frame on the ship. The patch
-`ps2recomp-gs-volumenes-agrupados.patch` keeps together only consecutive triangles whose areas do not overlap;
+`ps2recomp-gs-grouped-volumes.patch` keeps together only consecutive triangles whose areas do not overlap;
 when two triangles may touch the same pixel, it keeps their order and the preceding barrier. The analysis is limited to
 groups of 64 to keep its cost bounded. `GOW_GS_HW_VOLGROUP=0` restores the one-call-per-triangle path.
 
@@ -7675,7 +7675,7 @@ GitHub's `ubuntu-latest` image moved to ubuntu-26.04 and the test "EE FPU div/sq
 round-toward-zero MXCSR" started failing on `main` too (re-run of #138: fails the same). Locally
 (WSL, earlier GCC) and on Windows it passes. `ps2FpuDivideNearest`/`ps2FpuSqrtNearest` set the MXCSR to round to
 nearest, operate and restore it; without `-frounding-math`, GCC and Clang assume the default rounding and may move the
-operation out of that stretch (the game on Linux would round toward zero). `ps2recomp-fpu-barrera.patch`:
+operation out of that stretch (the game on Linux would round toward zero). `ps2recomp-fpu-barrier.patch`:
 `PS2_FP_PIN` (an empty `asm volatile` with the value in an SSE register) pins operands and result between the two
 `_mm_setcsr`; on MSVC it does nothing. The test uses the same for its control division.
 
@@ -7688,7 +7688,7 @@ with `PS2X_GS_HW_SCALE=3` (≈1440p) the game gives 60.0 frames per second and t
 `EndDrawing` → `SwapBuffers`, waiting inside the driver. The backend kept sending frames to a GPU slower
 than the game, the driver queue grew and the window waited behind it.
 
-`ps2recomp-gs-cuadros-en-vuelo.patch`: when presenting, the backend waits (100 ms at most) for the GPU to finish the
+`ps2recomp-gs-frames-in-flight.patch`: when presenting, the backend waits (100 ms at most) for the GPU to finish the
 frame presented two frames earlier (`PS2X_GS_FRAMES_IN_FLIGHT`, 2 by default, 0 = no limit). With 4x: game 49.9
 and window 48.5 images per second (GPU 95 %). With 2x: 59.9 and 59.2, same as before. With `GOW_HZ=120`: 69.9
 frames per second with the limit and 70.4 without it (within the noise). No test in `ps2xTest` (OpenGL backend);
@@ -7724,7 +7724,7 @@ to speed up the execution itself (blocks, dispatch, timing).
 
 Line profile of the hottest blocks in combat: in `b0d00_53ba0530`, `clipVal` was 15 % of the
 samples. It dropped the two vectors to memory and made six scalar comparisons with a branch; with clipping data the
-processor mispredicts a lot. `ps2recomp-vu1-clip-sinsaltos.patch`: `vu1n::clipBits` gives the six judgements with
+processor mispredicts a lot. `ps2recomp-vu1-clip-no-jumps.patch`: `vu1n::clipBits` gives the six judgements with
 two SSE comparisons (`v > |w|`, `v < -|w|`), `movemask` and a table that interleaves the bits. With NaN the ordered SSE
 comparisons give false like the scalar ones, and `-|w|` as a sign change gives the same with ±0. Test: "VU1 native CLIP
 without branches matches the scalar judgements" (1,331 combinations of ±0, ±1, ±2.5, ±FLT_MAX, ±inf and NaN).
@@ -7787,7 +7787,7 @@ finite values gives neither Inf nor NaN (overflow stays at FLT_MAX). The only ex
 (`maddWide`, in double precision), which returned +-inf on purpose.
 
 - `tools/vu1/vu1n_gen.py`: only emits `clampv` in `add`/`sub`/`mul` with I or Q as an operand (they are read without normalization).
-- `patches/ps2recomp-vu1-madd-saturado.patch`: `maddWide` returns its result already passed through `clampv`. `macVal`
+- `patches/ps2recomp-vu1-madd-saturated.patch`: `maddWide` returns its result already passed through `clampv`. `macVal`
   counts 0x7F7FFFFF as overflow, so the MAC flags are the same as with infinity. Test: "VU1
   native madd returns overflows clamped with the same MAC flags".
 - Counters in combat at 120 Hz (`GOW_VU1N_DIAG`, temporary): 22.5 M native blocks per second, 8.5 pairs on
@@ -7835,7 +7835,7 @@ do not need history) or redoing the backend with static per-program flag analysi
 - 60 Hz, ship combat (`ab_traza.sh`, `bin\wsat` = `main` with #147): 2396 frames; period between flips from 13 to
   19 ms (median 16.67) and none above 25 ms, that is, no lost frames. Median VU1+VIF+GS work
   8.9 ms (p90 12.0, max 15.8). The 31 % of periods between 17 and 19 ms is variation around the VBlank, not lost
-  frames. VIF1/VU1 note in `docs/estado/datos.toml` updated.
+  frames. VIF1/VU1 note in `docs/estado/data.toml` updated.
 - 120 Hz (`GOW_HZ=120`), tour by zones with `GOW_WARP`: ATHN04B 112.4 on average, SEWR02 118.3, DEST00 117.0
   (game frames per second); ship combat ~75. With the monitor at 120 Hz ~6 fewer images per second than frames are
   shown: temporary counters in `PublishSharedTexture`/`Acquire` (113 publications per second, no

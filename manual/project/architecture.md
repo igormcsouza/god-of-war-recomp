@@ -34,7 +34,7 @@ flowchart LR
 ## The build pipeline
 
 1. **PS2Recomp** is cloned at a pinned commit.
-2. **Patches** in `patches/` are applied in the order listed in `scripts/compilar.ps1` (read by `tools/ci/parches.py`).
+2. **Patches** in `patches/` are applied in the order listed in `patches/series` (checked by `tools/ci/patch_series.py`).
    One patch per topic. The base is Waffle565's runtime; ours go on top (pad mappings, English overlay, fullscreen, 1% low).
 3. **Recompiler config**: `config/recomp.template.toml` lists stubs (Sony library functions the runtime implements
    natively), skips and instruction patches; `config/funcmap.csv` defines the 6,414 function boundaries.

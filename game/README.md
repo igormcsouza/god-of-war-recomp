@@ -1,10 +1,10 @@
 # game/
 
-Coloca aquí el ejecutable de **tu propia copia** de God of War (NTSC-U, `SCUS-97399`):
+Put the executable from **your own copy** of God of War (NTSC-U, `SCUS-97399`) here:
 
 ```
 game/SCUS_973.99
 ```
 
-Este archivo está en `.gitignore` y nunca se sube al repositorio.
-También puedes indicar otra ruta con la variable de entorno `GOW_ELF`.
+This file is in `.gitignore` and is never committed. You can also point `GOW_ELF` at another path.
+Normally you do not need this folder: the launcher and the AppImage read the ELF from your ISO.

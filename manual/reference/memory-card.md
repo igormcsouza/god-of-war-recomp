@@ -44,15 +44,13 @@ New regression tests in `ps2xTest/src/ps2_iop_tests.cpp` (one per bug); the suit
 
 ## How it was tested
 
-`GOW_PAD_GUION` (see `controls-and-menu-tests.md`) drives the menu without a controller. With `GOW_SKIP_FMV=1`, load and save
-in the same run:
+`GOW_PAD_GUION` (see [scripted pad](controls-and-menu-tests.md)) drives the menu without a controller. With
+`GOW_SKIP_FMV=1`, load and save in the same run:
 
-```powershell
-$env:GOW_MC0 = 'C:\path\copy_of_Mcd001.ps2'
-$env:GOW_PAD_GUION = '5:start,13:abajo,20:x,62:x,75:x,90:x,230:r2,250:x,270:x,295:arriba,310:x'
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\probar_menu.ps1 -Segundos 420
+```sh
+GOW_MC0=/path/to/copy_of_Mcd001.ps2 GOW_SKIP_FMV=1 GOW_PAD_TEST=1 \
+GOW_PAD_GUION='5:start,13:abajo,20:x,62:x,75:x,90:x,230:r2,250:x,270:x,295:arriba,310:x' \
+python3 tools/linux/gow_launcher.py --no-gui
 ```
 
-The timings depend on the emulation speed (gameplay runs at ~2-3 frames per second). Still to be
-checked: that PCSX2 opens the card written by the port, and creating a save on an empty card
-(formatting).
+The timings depend on the machine's speed. Still to be checked: creating a save on an empty card (formatting).

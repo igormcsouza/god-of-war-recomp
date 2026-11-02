@@ -30,6 +30,7 @@ nav:
       - Launcher: usage/launcher.md
       - Controls: usage/controls.md
       - Environment variables: usage/env-vars.md
+      - Screenshots: usage/screenshots.md
   - Project:
       - How it evolved: project/evolution.md
       - Performance: project/performance.md
@@ -37,28 +38,13 @@ nav:
       - Status: project/status.md
       - Credits and legal: project/credits.md
       - Contributing: project/contributing.md
-      - Upstream docs: project/upstream-map.md
   - Reference:
       - Research log: reference/research-log.md
       - Architecture details: reference/architecture-details.md
-      - Controls and menu tests: reference/controls-and-menu-tests.md
-      - Rendering: reference/rendering.md
-      - Performance research: reference/performance-research.md
-      - GPU profile: reference/gpu-profile.md
-      - Presentation performance: reference/presentation-performance.md
-      - PCSX2 GS: reference/pcsx2-gs.md
-      - PCSX2 comparison: reference/pcsx2-comparison.md
-      - Fragment discard: reference/render-fragment-discard.md
-      - Shared presentation: reference/shared-presentation.md
-      - Upload ring: reference/render-upload-ring.md
-      - Minimum bilinear feedback: reference/minimum-bilinear-feedback.md
+      - Scripted pad and diagnostics: reference/controls-and-menu-tests.md
       - Movies and audio: reference/movies-and-audio.md
       - Memory card: reference/memory-card.md
-      - Shared transition: reference/shared-transition.md
-      - Tobiichi review: reference/review-tobiichi.md
-      - Urban Reign review: reference/review-urban-reign.md
-      - Persona 4 reference: reference/persona4-reference.md
       - Linux launcher details: reference/linux-launcher-details.md
       - Linux build details: reference/linux-build-details.md
       - Linux ISO: reference/linux-iso.md
-      - Status map: status-map/detalle.en.md
+      - Status map: status-map/detail.en.md
