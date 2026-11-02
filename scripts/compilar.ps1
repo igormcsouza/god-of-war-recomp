@@ -197,6 +197,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $fullscreenLinuxPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsLowPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gifInplacePatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gsSeamTargetsPatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsFogHiresPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
