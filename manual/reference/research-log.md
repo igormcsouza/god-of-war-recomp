@@ -7919,3 +7919,21 @@ fans (`GOW_GS_HW_SKIPVERTS=1488,1560,1752`) or the textured haze (`GOW_GS_HW_SKI
 seams, those fans or that texture. Per-draw render-target dumps were stale across batches in this build and could not isolate the
 draw. Next: bisect by draw signature with a vertex dump of the full-screen and shadow passes. Also checked with the fix: scale 3 has
 no vertical lines, menu and logo screens are visually unchanged (flame animation aside).
+
+### Grid lines through the whole game: what is ruled out (2026-11-02)
+
+Report: faint grid lines in every zone, a "plane that follows the character", clearly visible in fog, at night and with
+particles / sword glow. Reproduced without playing: `GOW_PAD_GUION='8:x,16:x,24:x,32:x,40:x,48:x'` with `GOW_PAD_TEST=1
+GOW_PAD_SOLO_GUION=1 GOW_SKIP_FMV=1` reaches the rainy deck fight (steady scene after ~35 s). Window grabs
+(`import -window`) are lossless; `GOW_GS_HW_DISPDUMP=<n>` dumps the internal render target.
+
+Measured: the lines are already in the internal render target (not the window scaling). In the dump (scale 4, 512x447)
+the column / row energy has a periodic peak at a 128 px pitch = 32 game px: columns at x = 128k + (127..3), rows at
+y = 128k + (4..5), i.e. on the 32 px tile borders of the post passes (tiles at x = 32k + 0.25). Score = max residue of
+the mean second difference over the median, about 1.6-1.9 for columns and 2.0-2.3 for rows in the deck scene.
+
+Ruled out (peak unchanged, ~1.8): `GOW_GS_HW_SEAMMODE=1`, the render-target and depth-target seam rules (PR 34 fixed only the
+desert haze; PR 35 closed), `GOW_GS_HW_SKIPTBP` of the post-pass sources 0xD00 / 0x1A00 / 0x2800, the window scaling,
+render scale 1 vs 2, and dropping the UV clamp of every sprite that samples a render target (the band only moves a few
+pixels: columns 2/127 -> 125/126). Next: dump the vertex data (positions, UVs, alpha, blend) of the strip draws by
+signature and look for a per-tile offset or an overlap/gap at the borders; check the blend of the alpha-76 passes.
