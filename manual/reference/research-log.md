@@ -7937,3 +7937,18 @@ desert haze; PR 35 closed), `GOW_GS_HW_SKIPTBP` of the post-pass sources 0xD00 /
 render scale 1 vs 2, and dropping the UV clamp of every sprite that samples a render target (the band only moves a few
 pixels: columns 2/127 -> 125/126). Next: dump the vertex data (positions, UVs, alpha, blend) of the strip draws by
 signature and look for a per-tile offset or an overlap/gap at the borders; check the blend of the alpha-76 passes.
+
+Vertex dumps of the post passes (`GOW_GS_HW_VERTDUMPSIG=<verts>:<fbp>:<tme>:<tbp hex>:<seconds>:<count>`, deck scene, scale 4):
+
+- Fog/DOF pass: 16 pairs of draws into fbp 320 (256 px wide). The textured ones are two 32 px sprites each (x = 0.125..32.125 and
+  32.125..64.125 in game px at scale 4, `u` = 0.5..32.5 and 32.5..64.5), reading the Z buffer (tbp `d00`, PSMCT24) 64 columns
+  further right on every draw; each sprite's UV clamp is `[first sample, last sample]` = `0.5..31.5` / `32.5..63.5`.
+  At scale 4 the last two host pixels of every 32 px tile have `u` = 32.0 and 32.25, are clamped to 31.5 and so read Z texel 31
+  instead of texel 32: a 2 host-pixel band at every tile border in a map whose value (depth) drives the fog. That fits "worse in
+  fog, at the 32 px tile borders". The unclamped read (`GOW_GS_HW_NOCLAMPRT=1`, experiment only) moves the band
+  (columns 125/126 instead of 2/127) but does not remove the periodic peak: more than one pass contributes.
+- Copy passes: 16 strips of 32 px each (fbp 208 and fbp 0 both sample tbp 0, the main buffer, as a 1:1 copy with colour 128;
+  clamps `0..31`, `32..63`, ...).
+
+Next: find which of the remaining passes still produces a peak with the clamp dropped (dump fbp 320 and 208 per pass and score each),
+then fix the sampling in `reinterpretTexel` / the clamp range for the Z read.
