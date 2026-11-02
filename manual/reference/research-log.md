@@ -7919,3 +7919,34 @@ fans (`GOW_GS_HW_SKIPVERTS=1488,1560,1752`) or the textured haze (`GOW_GS_HW_SKI
 seams, those fans or that texture. Per-draw render-target dumps were stale across batches in this build and could not isolate the
 draw. Next: bisect by draw signature with a vertex dump of the full-screen and shadow passes. Also checked with the fix: scale 3 has
 no vertical lines, menu and logo screens are visually unchanged (flame animation aside).
+
+### Grid lines and the halo around characters: the fog/DOF pass (2026-11-02)
+
+Symptoms reported through the whole game, strongest in fog, at night and with particles / sword glow: a faint grid ("a plane in
+front of the character that follows me") and a pale stair-stepped outline around characters; both vanish when the fog is removed.
+
+Method: window grabs (`import -window`) are lossless; `GOW_GS_HW_DISPDUMP=<n>` dumps the internal render target; a scripted pad
+(`GOW_PAD_TEST=1 GOW_PAD_SOLO_GUION=1 GOW_PAD_GUION='8:x,16:x,24:x,32:x,40:x,48:x' GOW_SKIP_FMV=1`) reaches the rainy deck fight without
+playing; `GOW_GS_HW_VERTDUMPSIG=<verts>:<fbp>:<tme>:<tbp>:<s>:<n>` dumps the vertices of a draw by signature (the batch number is not stable).
+A high-pass view (image minus a Gaussian blur, times 14) shows the lines; in a dark smooth scene they are 2 px wide (window), bright, every
+120 window px (= 128 host px at scale 4 = one 32 px game strip), present on about half to two thirds of the rows.
+
+Bisect by skipping draws (`GOW_GS_HW_SKIPSIG`, local debug): skipping the fog/DOF draws (16 pairs into fbp 320: a Z-buffer read as PSMCT24 in
+32 px sprites, then a Z-tested fill) removes fog, halo and grid; skipping either half leaves part of the grid. Seam opening
+(`SEAMMODE=1`), the render-target seam rules (PR 34 fixed only the desert haze) and the UV clamp of the colour copies are not the main cause.
+
+Causes found:
+
+- The depth read samples one game texel per fragment (the centre of the texel), so the mask is blocky at the internal scale (the halo) and
+  has a seam at every strip border (the grid). It is now read at the fragment's own host position (`uZSub`, default offset 0.375).
+- A pass that samples the render target it draws into (the strip copies) raced with the strip drawn before it at the strip border:
+  it now samples a copy of the target taken before the draw (`GOW_GS_HW_SELFCOPY=0` for the old path).
+- The colour-copy sprites' UV clamp ended at the start of the last GS pixel, a flat plateau of `scale` host pixels at every strip border
+  (4 identical pixels in 100% of the rows against 22% elsewhere at scale 4): extended to the last host pixel (`GOW_GS_HW_RTCLAMPEXT=0` for the old clamp).
+
+Result (same scripted scene and capture times; strongest horizontal line row as a share of the width, three frames): before 0.23 / 0.27 / 0.18,
+depth read only 0.16 / 0.17 / 0.15, all three 0.10 / 0.13 / 0.13 (the noise floor of the scene is 0.09-0.10); the pale outline around the
+characters is gone in the crops. Not verified in normal play by the reporter yet (an earlier PR that only removed the Z-read clamp, and one
+that only extended the copy clamp, showed no difference in play, so the depth read is the part that matters). Tried and not enough: dropping
+the clamp of colour copies (moves the band), extending the clamp alone. Left: the faint vertical dashes seen in dark corridors were not
+measurable in the deck scene; they need a corridor capture.

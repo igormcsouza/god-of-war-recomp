@@ -113,6 +113,7 @@ $fpsLowPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-low.patch'
 # GOW-Port: un paquete GIF sin cola llega al GS en el sitio, sin copiarlo a la cola del arbitro (de Waffle565 615b046, sin la parte que ya teniamos).
 $gifInplacePatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-inplace.patch'
 $gsSeamTargetsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-seam-targets.patch'
+$gsFogHiresPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-fog-hires.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
