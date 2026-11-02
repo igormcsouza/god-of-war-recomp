@@ -8,13 +8,12 @@
 
 ## Credits
 
-- [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp): the original project this fork continues.
+- [KIexster/god-of-war-recomp](https://github.com/KIexster/god-of-war-recomp): the original project this one started from (recompiler configuration, function map, first overrides).
 - [PS2Recomp](https://github.com/ran-j/PS2Recomp) by ran-j and contributors: recompiler and runtime (GPL-3.0).
 - [Waffle565/God-Of-War-Native-Port](https://github.com/Waffle565/God-Of-War-Native-Port): the native runtime (GS, VU1, IOP,
   sound, DMA, disc) that is the base since October 2026.
 - [PCSX2](https://github.com/PCSX2/pcsx2) contributors: EE interpreter and VU operations in the runtime (GPL-3.0+).
 - [LightVelox / Taylor N. Albarnaz](https://github.com/LightVelox/PS2Recomp): OpenGL GS backend and EE fixes (GPL-3.0).
-- [Urban Reign recomp](https://github.com/thiagordsfx/urban-reign-recomp) by thiagordsfx: GS integration reference.
 
 ## License
 

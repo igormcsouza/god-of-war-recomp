@@ -21,8 +21,10 @@ The launcher sets most of these for you. They are read by the runner.
 | `GOW_PERF_DIAG` | `1` prints a per-window performance profile |
 | `GOW_VU1_MICROCODIGO` / `GOW_IOP_MODULOS` | folders with the captured VU1 microcode / IOP modules (build time) |
 | `GOW_VU1_CAPTURA` | folder where a run saves VU1 microprograms |
+| `GOW_HOST_SHOT` / `GOW_GS_HW_DISPDUMP` | write the window picture / the internal render target at a given frame (see [capturing frames](../reference/controls-and-menu-tests.md)) |
+| `GOW_PAD_GUION` / `GOW_PAD_TEST` / `GOW_PAD_SOLO_GUION` | scripted pad (see [scripted pad](../reference/controls-and-menu-tests.md)) |
 | `GOW_WARP` | jump to a zone for capture and tests (`ZONE;ZONE`) |
 | `GOW_THREAD_WATCH` | seconds between thread dumps when hunting a freeze |
 
 !!! note
-    Names keep their original Spanish form (`PANTALLA_COMPLETA`, `MICROCODIGO`) so they stay compatible with upstream.
+    Names keep their original Spanish form (`PANTALLA_COMPLETA`, `MICROCODIGO`) so existing settings keep working.

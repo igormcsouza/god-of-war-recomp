@@ -21,11 +21,10 @@ def run(args: list[str], *, cwd: Path | None = None) -> None:
 
 
 def pinned_commit() -> str:
-    source = (ROOT / "scripts/common.ps1").read_text(encoding="utf-8-sig")
-    match = re.search(r"PS2RecompCommit\s*=\s*'([0-9a-f]{40})'", source, re.I)
-    if not match:
-        raise RuntimeError("PS2RecompCommit was not found in scripts/common.ps1")
-    return match.group(1)
+    commit = (ROOT / "patches/PS2RECOMP_COMMIT").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise RuntimeError("patches/PS2RECOMP_COMMIT does not hold a 40-digit commit hash")
+    return commit
 
 
 def prepare_checkout(checkout: Path) -> None:
@@ -89,7 +88,7 @@ def find_elf(explicit: Path | None) -> Path:
     env_elf = os.environ.get("GOW_ELF")
     if env_elf:
         candidates.append(Path(env_elf))
-    candidates.extend([ROOT / "game/SCUS_973.99", ROOT.parent / "GOW ISO extraida/SCUS_973.99"])
+    candidates.append(ROOT / "game/SCUS_973.99")
     for candidate in candidates:
         if candidate and candidate.is_file():
             return candidate.resolve()
@@ -114,7 +113,7 @@ def vu1_cmake_args() -> list[str]:
     """Compiled and native VU1: GOW_VU1_MICROCODIGO (default ~/.cache/gow-one-recomp/vu1cap) is a local folder of
     microprogram dumps (*.bin) captured at run time with GOW_VU1_CAPTURA=<folder>. The C++ is generated at
     build time and never committed. Without it the runner only has the VU1 interpreter (about 10 FPS).
-    Same contract as scripts/compilar.ps1; the two VU1N overrides point upstream's CMake at this repo's tools/."""
+    Prepares the recompiler config and builds; the two VU1N overrides point upstream's CMake at this repo's tools/."""
     path = local_dir("GOW_VU1_MICROCODIGO", CACHE / "vu1cap", "*.bin")
     if path is None:
         print("No VU1 microcode folder: building with the VU1 interpreter (slow). See manual/install/from-source.md.")

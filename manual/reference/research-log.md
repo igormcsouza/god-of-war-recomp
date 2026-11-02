@@ -540,7 +540,7 @@ adapt the GS backend and generic improvements in independent patches, with tests
 It adapts `GSGpuBackend`, `GSThreadedBackend`, shaders, the WGL context and the VRAM addressing
 tables from commit `ac9efa070638ad3b3accd284de6f898d5ab271d1` by Taylor N. Albarnaz / LightVelox,
 under GPL-3.0. The imported files carry the `GOW-Port` comment and their provenance.
-Selection, credits, tests and limits: [`rendering.md`](rendering.md).
+Selection, credits, tests and limits: `rendering.md`.
 
 The original CPU renderer is kept as the default and as the reference. The GPU runs
 on the GS thread; it falls back to CPU if the context or shaders fail to initialize. Reads and FINISH
@@ -739,7 +739,7 @@ the initial value Q=2 observed before DIV does not prove that perspective is sta
 
 The inspector includes eight synthetic tests of PACKED/REGLIST/A+D layout,
 ADC versus fog/XYZ3, PRE, NREG=0, IMAGE, padding and truncation; they are also run
-in CI. It includes no game data. Usage and scope: [`rendering.md`](rendering.md).
+in CI. It includes no game data. Usage and scope: `rendering.md`.
 The next step is to correlate a discarded non-degenerate packet with its transformation/CLIP
 inputs and follow the sending of the updated buffers. No behavior fix is published
 with this investigation and a complete 3D scene is not demonstrated.
@@ -795,7 +795,7 @@ The suite with real OpenGL passes **489/489**. The **19 patches** apply and thei
 audited match the local runtime. Configuration and handlers without errors (four
 known warnings), GIF inspector 8/8 and PowerShell scripts without syntax errors.
 
-Scope, primary reference, credit and optional diagnostic: [`rendering.md`](rendering.md).
+Scope, primary reference, credit and optional diagnostic: `rendering.md`.
 The full rebuild regenerates the **6,418 units** and finishes correctly. After it,
 the native suite again passes **489/489**, including the two GPU tests. Libpad2 also passes.
 A **175 s** game run, with `GOW_SKIP_FMV=1`, `GOW_FAST_BOOT=1` and `GOW_VIF_DIAG=1`,
@@ -854,7 +854,7 @@ The two regressions test all the permutations of DIRECTHL/DIRECT/IMAGE and of
 DIRECTHL/setup/IMAGE. They fail before (**487/489**, normal suite) and pass after. The suite
 with the two real OpenGL tests passes **491/491**. The **20 patches** apply in order
 and their **68 sources** audited match the local runtime. Scope and reference:
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 The CI of context diagnostic `f8a851a` also passes:
 [run 37458210600](https://github.com/KIexster/god-of-war-recomp/actions/runs/37458210600).
@@ -895,7 +895,7 @@ The first three regressions fail before (**489/492**, normal suite). After those
 the new IMAGE upload regression still fails (**492/493**), before fixing that
 shortcut. They cover both paths, empty tags with and without PRE between vertices, Q, modes that
 ignore PRE and non-empty controls. Scope and primary reference:
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 Review of the two earlier local captures of 256 PATH1 packets finds in
 each **205 empty tags, 90 with PRE=1 and PRIM=0x5C**, with no packet truncations.
@@ -938,7 +938,7 @@ and the discarding of models, preserving the original execution.
 `GOW_MODEL_DIAG=1` is added as an optional observation of `0x159C58`. The recompilation of
 `src/` finishes correctly and PowerShell passes without errors. The probe preserves the
 checkpoints and always calls the original; it writes no registers or game memory.
-The profile removes the variable. Scope: [`rendering.md`](rendering.md).
+The profile removes the variable. Scope: `rendering.md`.
 
 A **175 s** run with OpenGL, SKIP_FMV, FAST_BOOT and the context/animation probes
 logs **64 samples in state 3 and 64 in state 11**. All observe server
@@ -964,7 +964,7 @@ lists of `0x159878` and the calls to `0x157A60`. The retail map leaves the last 
 as unnamed functions; their structure matches `renModelServerContext::ProcessServer`
 and `ProcessModel` respectively in the GoW 2 reference.
 The offsets of the filters are checked in the retail MIPS, without copying its generated
-code. Scope and limits: [`rendering.md`](rendering.md).
+code. Scope and limits: `rendering.md`.
 
 The first **175 s** test confirms that the master is shared by several
 servers. Each context is then limited separately so that other servers
@@ -1043,7 +1043,7 @@ are added in total, with checks for reset, interleaved PATH, NREG=0 and rejected
 chain. The native suite passes **515/515**, including two tests with real OpenGL.
 The expectation of an old IMAGE wrapper and four priority fixtures
 that used empty images are adjusted; the reasons are detailed in
-[`rendering.md`](rendering.md).
+`rendering.md`.
 
 The audit applies **25 patches** on the pinned commit and compares **71 sources**,
 without differences with respect to the tested tree, also after the full build
@@ -1099,7 +1099,7 @@ drawn only once. The previous CPU shifted the sample by half a pixel, truncated
 the offset and accepted both sides of an edge. Three regressions reproduce those
 failures; OpenGL compute/hardware already passed them. Now **523/523 tests** pass,
 including five with real OpenGL. Three old fixtures are adjusted for the reasons
-documented in [`rendering.md`](rendering.md).
+documented in `rendering.md`.
 
 The independent comparison of full VRAM in **48 cases** of flat/IIP triangles,
 four Z test modes and Z32 values `7`, `0x80000001` and `0xffffff01`, on both
@@ -1135,7 +1135,7 @@ Eight old fixtures that drew empty sprites are adjusted: they now use a
 1×1 rectangle while keeping their CT32 alias, CLUT, alpha and scissor checks.
 The new test verifies that zero width/height changes no VRAM byte. The
 reasons and provenance are detailed in
-[`rendering.md`](rendering.md).
+`rendering.md`.
 The full build finishes with **6,418 generated units** and code zero;
 the **528/528 tests** are repeated with real OpenGL. The audit reproduces **28 patches
 and 74 sources** exactly. The **175 s game control with the CPU renderer**
@@ -1740,7 +1740,7 @@ freeze and replays the GIF commands with exact final VRAM in the three cases.
 The exported `.gs` files are identical by SHA256 to those used in the isolated
 reference, with no BIOS or game data. The comparison with PCSX2 software is
 exact for nearest and, after the fix, for bilinear with disjoint source.
-Details and sources are in [rendering.md](rendering.md).
+Details and sources are in rendering.md.
 
 On RX 5700 XT, hardware ×12 is still exact and stable for disjoint source and nearest.
 Bilinear feedback still returns 1 and varies: the last two passes differ in
@@ -1859,7 +1859,7 @@ after (576/576, fourteen real OpenGL controls). They use the external RGBA finge
 without repeating the filter formula in the test, for sprites/triangles, Q=1/2
 and four SSE modes. Hardware has to rasterize at least one matrix without
 compute tiles. The public generator now also exports the bilinear
-STQ control; the details and the reference are in [rendering.md](rendering.md).
+STQ control; the details and the reference are in rendering.md.
 
 The full build regenerates the 6418 units and finishes with code 0.
 The audit confirms 49 patches/84 sources and the later suite passes 576/576.
@@ -1905,7 +1905,7 @@ synchronizations and require effective hardware without compute tiles.
 There are 1184 combinations between both paths. The new batch regressions
 fail before; the isolated controls with the machine free rule out the shader
 timeouts exhausted during a first run alongside Claude's
-build. The details are in [rendering.md](rendering.md).
+build. The details are in rendering.md.
 
 The full build finishes with code 0; 50 patches/84 sources match
 and the final suite passes 580/580, with eighteen OpenGL controls. The seven
@@ -2387,7 +2387,7 @@ the local tools could not start processes during this work.
 GitHub rejected creating the blob and the branch with 403 on the first attempt.
 The state of the components is not changed nor are new FPS certified.
 Details and limits of temporal attribution:
-[GPU profile without waits during render](gpu-profile.md).
+GPU profile without waits during render.
 
 On retrying, execution outside the sandbox works. The log identifies
 a lock by `node_repl.exe` when updating its permissions (Windows error 32).
@@ -2418,7 +2418,7 @@ The raylib host's calls to the context capture and to the shared-texture
 consumer are missing; setting `PS2X_GS_DIRECT_PRESENT=1` is not enough.
 The tests do exercise a real share group explicitly. This difference is kept
 so as not to confuse the capability of the backend with its real use.
-Details: [profiler verification](gpu-profile.md).
+Details: profiler verification.
 
 A separate patch is prepared to prevent overwriting chunks of the persistent
 ring whose fence has not been signaled and to release its 64 MiB even if
@@ -2428,7 +2428,7 @@ The review also discovers that the streaming fallback could shrink
 `dataBuffer`, leaving a stale capacity; it is fixed and its
 regression is prepared. The official build of the final patch is pending
 that control. EE/FPU/IOP nor Opus's work is altered.
-Details: [upload ring protection](render-upload-ring.md).
+Details: upload ring protection.
 
 ### OpenGL ring validated with the joint version (October 9)
 
@@ -2456,7 +2456,7 @@ and RAM as reference/fallback. The shared latch stops forcing the
 host wait; explicit reads and FINISH keep their barriers.
 The diagnostic captures compose current VRAM with the latch's CRTC,
 with per-generation cache: they are not historical snapshots of the acquired frame.
-Details: [shared presentation](shared-presentation.md).
+Details: shared presentation.
 
 The base incorporates the already merged PRs #31/#32; their VU1
 patches and EE/FPU/IOP/FMV are not modified. The rebuilt native suite passes **623/623**, with
@@ -4432,7 +4432,7 @@ Procedural script/packet tests and skinning window correct on
 Windows/MSVC /W4 /WX; C++20 syntax of the override correct and configuration
 with 0 errors/4 existing warnings. Quick build and analog control
 with the game are still pending. The proposed Persona 4 reference is also reviewed:
-[scope and useful material](persona4-reference.md), without importing
+scope and useful material, without importing
 its code nor attributing a fix to it.
 
 The src/ update from `73588d2` finishes with code 0 in 19.97 s
@@ -4796,7 +4796,7 @@ PCSX2 `2954ebe`. Windows procedural tests and syntax with its real
 headers correct; CI added for both. It does not change runtime/patches or the default
 backend. It does not yet create a real GS nor draw the game: extraction of the
 DX11 module, registers, FIFO/VRAM and coverage of native paths pending.
-Architecture, conditions and limits in [PCSX2_GS.md](pcsx2-gs.md).
+Architecture, conditions and limits in PCSX2_GS.md.
 
 Later review: the first connection compiled but PATH1 used the legacy index
 0. GSState cuts that index at EOP and clears an incomplete nloop at the end of
@@ -4814,7 +4814,7 @@ PATH1 retention when splitting tag/payload, two EOPs per batch, PATH2/3 fragment
 and independent cursors, exact RGBAQ. The subclass counts drawing without
 rasterizing; the test requires zero draws and zero window requests.
 It is not a replacement renderer. Original libraries/services and private-host
-reproduction limits detailed in [PCSX2_GS.md](pcsx2-gs.md).
+reproduction limits detailed in PCSX2_GS.md.
 
 PATH1 index 0 negative: compiles and fails on the pending nloop; restored
 index 3 correct. SHA-256 of the restored procedural executable
@@ -4835,7 +4835,7 @@ Restored SHA-256 `2be054f554e71ebdafc234998b84d4e7b53542f26a40c2f58403fcbead66db
 
 [Full CI of `6139073` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38200847766).
 The new DX11 control was native and private, not a CI GPU run. Host,
-dependencies, scope and pending items in [PCSX2_GS.md](pcsx2-gs.md). Still missing: sending
+dependencies, scope and pending items in PCSX2_GS.md. Still missing: sending
 GIF to the full rasterizer/cache, VRAM/FIFO/IRQ and connecting the game.
 It does not change the current renderer nor vouch for an FPS improvement.
 
@@ -4852,7 +4852,7 @@ compiles and fails on the first pixel; restored passes all three PATHs. SHA-256
 [Full CI of `72e4f55` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38238566117).
 This GPU control remains native and private. Absent optional services
 abort if used; VSync, window or reopening is not requested. The SW
-objects are kept, with no validation of that path. Limits in [PCSX2_GS.md](pcsx2-gs.md).
+objects are kept, with no validation of that path. Limits in PCSX2_GS.md.
 Still missing: public reproduction of the module, IMAGE/textures, presentation and connection
 to the runtime. No God of War rendering nor FPS improvement is attributed.
 
@@ -4875,7 +4875,7 @@ and the game runtime remain intact.
 
 The local recipe runs the four fixtures without a DXC DLL; it does not vouch for other
 APIs or performance. [Instructions](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md),
-limits and next steps in [PCSX2_GS.md](pcsx2-gs.md). The CI of `4addf7b`
+limits and next steps in PCSX2_GS.md. The CI of `4addf7b`
 complete and passed; the new native job is pending for the HEAD that publishes it.
 
 ## PCSX2 GS: procedural VSync/PCRTC output (2026-10-12)
@@ -4922,7 +4922,7 @@ It keeps the semantics relevant to #55, without attributing FPS or a game fault.
 Review confirms two DMA shortcuts that bypass the generic arbiter/frontend.
 The native upload normalizes data/registers and loses part of the original tags;
 the future hook cannot be limited to processGIFPacket. Proposal and pending items
-documented in [PCSX2_GS.md](pcsx2-gs.md), without modifying the runtime for now.
+documented in PCSX2_GS.md, without modifying the runtime for now.
 [Full CI of `ada5c5e` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38246271325).
 
 ## PCSX2 GS: DLL ABI and independent consumer (2026-10-12)
@@ -4939,7 +4939,7 @@ must be built from real PS2 registers; do not copy its GSRegisters struct.
 [Full CI of `1f87036` passed](https://github.com/KIexster/god-of-war-recomp/actions/runs/38248274550).
 New DLL contract pending for the HEAD that publishes it. GPU local, no FPS
 measurement; IRQ/FINISH, FIFO/VRAM, recovery and hook pending. Scope in
-[PCSX2_GS.md](pcsx2-gs.md) and [module README](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md).
+PCSX2_GS.md and [module README](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/render/pcsx2_probe/README.md).
 
 ## PCSX2 GS: explicit privileged mirror (2026-10-12)
 
@@ -4962,7 +4962,7 @@ Build of the Windows module/client correct. Parser keeps cursor and Q
 with direct register, GPU DLL two cycles/2,048 exact RGBA, reset and rejection
 of invalid address correct. Config 0 errors/4 existing warnings; 24 PS1
 without errors. The suite of the new runtime and the full build of 103 are still
-pending. Variables/protocol and limits in [PCSX2_GS.md](pcsx2-gs.md).
+pending. Variables/protocol and limits in PCSX2_GS.md.
 
 ## Pause requested after full build 103 (2026-10-12)
 
@@ -5035,7 +5035,7 @@ by themselves. Exit 1 corresponds to the termination of our own process at the l
 normal closing of the game is not verified. It does not measure FPS.
 
 Recent changes of Tobiichi-Port are reviewed at the user's request:
-[comparison, candidates and limits](review-tobiichi.md). The global
+comparison, candidates and limits. The global
 mailbox or the fence control are not copied without their regressions. Equivalent
 asynchronous shared control in progress; the build is not changed during the game.
 
@@ -5093,7 +5093,7 @@ The mirror forces generic DMA paths; stability of shortcuts and threads pending.
 
 ## PCSX2 GS: field convention reviewed with Urban Reign (2026-10-12)
 
-The author publishes their integration; [review and references](review-urban-reign.md).
+The author publishes their integration; review and references.
 It is confirmed in the original MTGS that GSvsync receives `CSR.FIELD ? 0 : 1`. The earlier
 mirror passed the parity of the EE counter directly, inverted with respect to
 that convention. The client is adjusted to the same CSR snapshot sent to the
@@ -5183,7 +5183,7 @@ with the original PCSX2. No captures, dumps or game data have been published.
 ## Urban Reign: SDK and FOG reference (2026-10-12)
 
 Their SDK map of 983 linked functions, metadata and HLE bindings is reviewed:
-[scope, candidate services and credits](review-urban-reign.md).
+scope, candidate services and credits.
 Many libraries keep original recompiled code; reuse common services,
 without transferring addresses or game assumptions. Their CD/DVD seek alias
 ignores the layer on a single-layer disc: it requires its own control for GoW.

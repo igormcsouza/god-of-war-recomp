@@ -5,7 +5,7 @@ The conventions live in [`AGENTS.md`](https://github.com/igormcsouza/god-of-war-
 | Change | Where |
 |---|---|
 | Game function replacements and diagnostics | `src/gow_overrides.cpp` |
-| Runtime changes | one patch per topic in `patches/`, added to `scripts/compilar.ps1` |
+| Runtime changes | one patch per topic in `patches/`, listed in `patches/series` |
 | Recompiler stubs and entry points | `config/recomp.template.toml`, `config/funcmap.csv` |
 | Launcher, setup, AppImage | `tools/linux/`, `tools/appimage/`, `.github/workflows/release.yml` |
 | Tests | `tests/` (runtime tests live inside the patch, in `ps2xTest/`) |
@@ -19,11 +19,12 @@ A change of runtime behaviour needs a regression test in `ps2xTest/` that fails 
 Raise `VERSION`, update `CHANGELOG.md`, merge, then `git tag vX.Y.Z && git push origin vX.Y.Z`; the workflow builds and
 publishes the AppImage.
 
-## Syncing upstream
+## Updating the runtime base
 
-Upstream's tip is merged into this fork on purpose, not continuously. Every merge must also **port upstream's new
-documentation** into this manual (translate it to English, delete the Spanish original). The steps are in `AGENTS.md`,
-"When you merge upstream".
+The runtime comes from PS2Recomp at the commit in `patches/PS2RECOMP_COMMIT` plus Waffle565's runtime patch. This project
+is independent: changes from other forks are picked on purpose, one topic at a time, as a new patch with a regression
+test. To move to a newer PS2Recomp commit, change the pin, rebase the patches in order (see `AGENTS.md`) and run the CI
+checks.
 
 ## Building this manual
 

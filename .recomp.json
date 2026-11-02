@@ -9,7 +9,7 @@
   },
   "project": "God of War — PS2 Static Recompilation",
   "status": "in-progress",
-  "targets": ["Linux", "Windows"],
+  "targets": ["Linux"],
   "toolchain": "Ps2recomp",
   "approach": "Static recompilation of MIPS R5900 code to C++20, with a PS2Recomp-based runtime and God of War-specific overrides.",
   "maintainers": [

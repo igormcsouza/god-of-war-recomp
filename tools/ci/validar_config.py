@@ -87,7 +87,7 @@ def main() -> int:
     texto = PLANTILLA.read_text(encoding="utf-8")
     for marca in ("@ELF@", "@MAP@", "@OUT@"):
         if marca not in texto:
-            errores.append(f"recomp.template.toml: falta el marcador {marca} que rellena compilar.ps1")
+            errores.append(f"recomp.template.toml: falta el marcador {marca} que rellena scripts/compilar_linux.py")
     try:
         config = tomllib.loads(texto)
     except tomllib.TOMLDecodeError as e:

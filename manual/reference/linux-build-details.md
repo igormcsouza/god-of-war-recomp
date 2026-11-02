@@ -1,7 +1,7 @@
 # Linux build
 
 The [`scripts/compilar_linux.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/scripts/compilar_linux.py) helper prepares PS2Recomp at the commit pinned
-in `scripts/common.ps1`, applies the ordered patch list from `scripts/compilar.ps1`, and builds the recompiler
+in `patches/PS2RECOMP_COMMIT`, applies the ordered patch list from `patches/series`, and builds the recompiler
 and runner.
 
 ## Dependencies
@@ -48,7 +48,7 @@ python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99
 
 The capture stores the VU1 microprograms and the IRX modules in `~/.cache/gow-one-recomp/{vu1cap,iopdump}`;
 `compilar_linux.py` uses those folders by default (override with `GOW_VU1_MICROCODIGO` and `GOW_IOP_MODULOS`). It
-generates the native VU1 and native IOP code and passes the VU1N overrides that upstream's CMake needs. These
+generates the native VU1 and native IOP code and passes the VU1N overrides that PS2Recomp's CMake needs. These
 captures come from your copy of the game: never commit them.
 
 `--traces` enables runtime tracing, and `--work-dir` selects another

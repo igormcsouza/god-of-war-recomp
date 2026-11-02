@@ -11,7 +11,7 @@ toggle, render scales, and the released AppImage's first-run setup from a clean 
 |---|---|
 | Full playthrough | not done |
 | Other game pads | only a GameSir dongle was tested |
-| Windows with this runtime | the Windows scripts exist but were not run with the adopted runtime |
+| Windows | not supported: this project is Linux only |
 | Orb-pickup freeze | seen once, did not come back in over 10 minutes of play; `GOW_THREAD_WATCH=5` is the diagnostic if it does |
 | Microcode capture coverage | varies per run (1178-1797 programs); accumulating or longer capture planned |
 | FPS dips (44-50) | EE and guest wait, not analysed |
@@ -24,5 +24,5 @@ The per-library and per-component status map of the Sony SDK functions is genera
 
 ## Research log
 
-The detailed investigation record (about 7,900 lines, translated from upstream's Spanish log) is in the
+The detailed investigation record (about 8,000 lines) is in the
 [research log](../reference/research-log.md).
