@@ -7890,3 +7890,24 @@ from t=40 s, RTX 5050, same microcode and build tree, runs alternated, `[gs-hw] 
 The patched build is ahead in all four pairs, by +0.75 FPS on average (about 1%). Run-to-run spread is about 1.5 FPS, so this is
 small and not statistically conclusive with four runs; it is kept because the change removes a copy per XGKICK, is covered by a
 test and has no downside seen. The first run of a series also pays a cold-cache cost.
+
+## Grid lines in the desert haze (2026-11-01)
+
+**Symptom.** Thin orange vertical and horizontal hairlines in the far sand and sky of `DEST00` (also seen in the last playtest).
+Reproduced muted (`GOW_AUDIO=0`) with the scripted warp (`GOW_PAD_TEST=1 GOW_WARP=DEST00`) and the presented-frame captures.
+
+**Narrowing.** Absent at render scale 1, present at 2 and 3, so the GL render-target backend adds them. Not the haze triangle fans
+or the textured haze (skipping them with `GOW_GS_HW_SKIPVERTS` / `GOW_GS_HW_SKIPTBP` left the lines), not sliver triangles (a cull
+removed about 4 million triangles and the lines stayed). Per-draw render-target dumps (`GOW_GS_HW_RTDUMPAT`, `RTDUMPRANGE`) show
+the scene target clean, then lines after the game's full-screen glow/haze passes: 16 sprites of 32 px at x = 32k + 0.25 that copy
+the screen onto itself with alpha. The observed lines sit on those seams (host x about 385 and 510 = 2 * 192.25 and 2 * 256.25).
+`GOW_GS_HW_SEAMMODE=1` (never open seams) removed them; opening every clamp did not.
+
+**Cause and fix.** `openSharedSide` leaves the clamp open on the side two consecutive strips share, so a picture drawn as strips
+continues across the seam. For a pass whose texture is a render target (a 1:1 copy at the internal scale) that left the seam
+columns different from their neighbours. `patches/ps2recomp-gs-seam-targets.patch` skips the opening when the sprite's `TBP0`
+equals a render target's `FBP * 32`. `GOW_GS_HW_SEAMFEEDBACK=1` restores the old behaviour.
+
+**Verified.** Capture comparison in `DEST00` at scale 2: the sky and sand lines are gone; `SEWR02` and `ATHN04B` look unchanged.
+**Not verified:** scale 3, menu and logo screens, a real fullscreen 1080p view; no unit test (the backend needs a GL context).
+A faint horizontal hairline across the dark ground at the shadow edge predates the fix and is still open.

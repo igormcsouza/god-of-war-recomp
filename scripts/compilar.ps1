@@ -112,6 +112,7 @@ $fullscreenLinuxPatch = Join-Path $RepoRoot 'patches\ps2recomp-fullscreen-linux.
 $fpsLowPatch = Join-Path $RepoRoot 'patches\ps2recomp-fps-low.patch'
 # GOW-Port: un paquete GIF sin cola llega al GS en el sitio, sin copiarlo a la cola del arbitro (de Waffle565 615b046, sin la parte que ya teniamos).
 $gifInplacePatch = Join-Path $RepoRoot 'patches\ps2recomp-gif-inplace.patch'
+$gsSeamTargetsPatch = Join-Path $RepoRoot 'patches\ps2recomp-gs-seam-targets.patch'
 $overrides = Join-Path $RepoRoot 'src\gow_overrides.cpp'
 
 $git = 'git'
@@ -194,6 +195,7 @@ Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsOverlayEnglishPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fullscreenLinuxPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $fpsLowPatch)
 Run $git @('apply', '--ignore-whitespace', '--verbose', $gifInplacePatch)
+Run $git @('apply', '--ignore-whitespace', '--verbose', $gsSeamTargetsPatch)
 Pop-Location
 
 # El codigo generado incluye <ps2_recompiled_functions.h> desde src/runner
