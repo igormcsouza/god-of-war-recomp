@@ -7919,3 +7919,14 @@ fans (`GOW_GS_HW_SKIPVERTS=1488,1560,1752`) or the textured haze (`GOW_GS_HW_SKI
 seams, those fans or that texture. Per-draw render-target dumps were stale across batches in this build and could not isolate the
 draw. Next: bisect by draw signature with a vertex dump of the full-screen and shadow passes. Also checked with the fix: scale 3 has
 no vertical lines, menu and logo screens are visually unchanged (flame animation aside).
+
+### Grid lines in the ship corridor: fog/DOF strips read the Z buffer (2026-11-02)
+
+A lossless capture of the first ship corridor (muted, window grab) at scale 1 and 2 showed dashed vertical and horizontal
+hairlines. They are present at scale 1 too, and the player reports they vanish when leaving the fog. The fog/DOF strips
+sample the gameplay Z buffer as a PSMCT24 texture (`findDepthReinterpretSource`, `zbp == tbp0`). The seam rule of the
+desert fix only recognised colour targets (`fbp * 32 == tbp0`), so these strips still had their shared sides opened.
+
+Change: the rule now also treats a depth target (`t.depth && t.zbp * 32 == tbp0`) as a render-target source.
+**Not verified in-game yet** (the GPU was not available): rebuild the runner, run the corridor, compare with
+`GOW_GS_HW_SEAMFEEDBACK=1`. If the lines remain, the next candidate is the strips' UV/clamp rounding at scale 1.
