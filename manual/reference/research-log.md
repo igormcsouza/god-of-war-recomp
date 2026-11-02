@@ -7911,3 +7911,11 @@ equals a render target's `FBP * 32`. `GOW_GS_HW_SEAMFEEDBACK=1` restores the old
 **Verified.** Capture comparison in `DEST00` at scale 2: the sky and sand lines are gone; `SEWR02` and `ATHN04B` look unchanged.
 **Not verified:** scale 3, menu and logo screens, a real fullscreen 1080p view; no unit test (the backend needs a GL context).
 A faint horizontal hairline across the dark ground at the shadow edge predates the fix and is still open.
+
+**Update: remaining horizontal hairlines (not fixed).** At scale 2 and 3 a few very faint horizontal lines remain, in the sand
+(three at scale 3) and across the dark ground at the shadow edge (two, about 6 host pixels apart, host y 654 and 660 at scale 2,
+x about 640 to 950). They are absent at scale 1. They do **not** change with `GOW_GS_HW_SEAMMODE=1` or `2`, nor when the haze
+fans (`GOW_GS_HW_SKIPVERTS=1488,1560,1752`) or the textured haze (`GOW_GS_HW_SKIPTBP=36f0`) are skipped, so they are not the strip
+seams, those fans or that texture. Per-draw render-target dumps were stale across batches in this build and could not isolate the
+draw. Next: bisect by draw signature with a vertex dump of the full-screen and shadow passes. Also checked with the fix: scale 3 has
+no vertical lines, menu and logo screens are visually unchanged (flame animation aside).
