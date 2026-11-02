@@ -11,6 +11,7 @@ The launcher sets most of these for you. They are read by the runner.
 | `GOW_FPS` | `1` shows the FPS counter from the start |
 | `GOW_FPS_LOW_SECS` | window for the 1% low (default 300 s) |
 | `GOW_GS_HW_SEAMFEEDBACK` | `1` restores the old strip-seam handling for sprites that sample a render target (debug: the grid lines in the haze passes come back at render scale above 1) |
+| `GOW_GS_HW_DEPTHCLAMP` | `1` restores the UV clamp on the sprites that read a Z buffer as a texture (debug: the fog/DOF grid lines come back) |
 | `GOW_AUDIO` | `0` mutes |
 | `GOW_SKIP_FMV` | `1` skips movies |
 | `GOW_CHEAT` | comma list: `god`, `noenemies` |

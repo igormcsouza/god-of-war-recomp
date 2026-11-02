@@ -1,0 +1,21 @@
+--- a/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
++++ b/ps2xRuntime/src/lib/gs/gpu/gs_hw_backend.cpp
+@@ -1760,6 +1760,18 @@
+                         fromTarget = true;
+             if (!fromTarget && lastSprite.batch == batchSerial && lastSprite.end == pending.size() && lastSprite.end >= 6)
+                 openSharedSide(lastSprite.edges, cur, &pending[lastSprite.end - 6], cu0, cu1, cv0, cv1);
++            // GOW-Port: the game's fog/DOF strips read a Z buffer as a PSMCT24 texture (zbp == tbp0), in 32 px sprites. Clamping
++            // each sprite's UV to its first and last sample point made the last host pixels of every strip read the previous
++            // Z texel: a band at every strip border in the map that drives the fog (grid lines at any scale, worse in fog).
++            // The Z read is nearest, so the next strip's first texel is the right one: no clamp. GOW_GS_HW_DEPTHCLAMP=1 restores it.
++            static const bool depthClamp = std::getenv("GOW_GS_HW_DEPTHCLAMP") != nullptr;
++            if (s.prim.tme && !depthClamp)
++                for (const RenderTarget &t : targets)
++                    if (t.depth && t.zbp * 32u == s.context.tex0.tbp0)
++                    {
++                        cu0 = cv0 = -1e30f, cu1 = cv1 = 1e30f;
++                        break;
++                    }
+             const int order[6][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 0}, {1, 1}, {0, 1}};
+             for (const auto &o : order)
+             {
