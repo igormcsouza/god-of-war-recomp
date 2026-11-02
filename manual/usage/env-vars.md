@@ -11,6 +11,9 @@ The launcher sets most of these for you. They are read by the runner.
 | `GOW_FPS` | `1` shows the FPS counter from the start |
 | `GOW_FPS_LOW_SECS` | window for the 1% low (default 300 s) |
 | `GOW_GS_HW_SEAMFEEDBACK` | `1` restores the old strip-seam handling for sprites that sample a render target (debug: the grid lines in the haze passes come back at render scale above 1) |
+| `GOW_GS_HW_ZSUB` | offset of the high-resolution depth read for the fog/DOF strips (default `0.375`); `off` restores the old per-texel read (debug: the pale halo around characters and the grid lines in fog come back) |
+| `GOW_GS_HW_SELFCOPY` | `0` makes a pass that samples the render target it draws into read the target itself again instead of a copy taken before the draw (debug) |
+| `GOW_GS_HW_RTCLAMPEXT` | `0` restores the old UV clamp of sprites that copy a render target (debug: a flat one-pixel plateau at every strip border at render scale above 1) |
 | `GOW_AUDIO` | `0` mutes |
 | `GOW_SKIP_FMV` | `1` skips movies |
 | `GOW_CHEAT` | comma list: `god`, `noenemies` |
