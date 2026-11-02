@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from tools.gs.inspeccionar_paquetes import inspeccionar
+from tools.gs.inspect_packets import inspeccionar
 
 
 def tag(registros, nloop, formato=0):

@@ -1,5 +1,5 @@
 # Datos del mapa de estado (docs/estado/mapa.*.svg y docs/estado/detalle.*.md).
-# Tras editar este archivo, regenera con:  python tools/estado/generar.py
+# Tras editar este archivo, regenera con:  python tools/status/generate.py
 # (La accion de GitHub "Mapa de estado" lo hace sola al subir cambios a main.)
 #
 # Estados: "ok" (funciona), "parcial" (funciona con fallos o sin verificar), "pendiente" (no funciona / no emulado).

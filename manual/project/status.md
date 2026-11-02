@@ -20,7 +20,7 @@ toggle, render scales, and the released AppImage's first-run setup from a clean 
 ## Library-level map
 
 The per-library and per-component status map of the Sony SDK functions is generated from
-`manual/status-map/datos.toml`: see the [status map](../status-map/detalle.en.md).
+`manual/status-map/data.toml`: see the [status map](../status-map/detail.en.md).
 
 ## Research log
 

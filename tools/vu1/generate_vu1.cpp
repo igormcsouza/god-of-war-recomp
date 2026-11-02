@@ -391,7 +391,7 @@ int main(int argc, char **argv)
     }
 
     const std::string header =
-        "// Generado por tools/vu1/generar_vu1.cpp a partir del microcódigo del juego. No publicar.\n"
+        "// Generado por tools/vu1/generate_vu1.cpp a partir del microcódigo del juego. No publicar.\n"
         "#include \"runtime/ps2_vu1.h\"\n#include \"ps2_vu1_compiled.inl\"\n#include <cstdio>\n#include <cstdlib>\n#include <cstring>\n\n"
         "// Mismo modo de coma flotante que el intérprete de VU (MSVC no expande en línea entre modos distintos).\n"
         "#if defined(_MSC_VER)\n#pragma float_control(precise, on, push)\n#pragma fp_contract(off)\n#endif\n\n"

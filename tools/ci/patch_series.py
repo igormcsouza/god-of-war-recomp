@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print, in order, the patches in patches/series (the order they are applied on PS2Recomp).
 
-The Linux build (scripts/compilar_linux.py) and CI both read the list from here, so there is a single
+The Linux build (scripts/build_linux.py) and CI both read the list from here, so there is a single
 ordered list. Fails when a patches/*.patch is not listed in the series or a listed file is missing.
 """
 from __future__ import annotations

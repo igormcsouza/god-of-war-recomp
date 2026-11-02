@@ -1,19 +1,19 @@
-# Regenera el mapa de estado (manual/status-map/) cuando cambian sus datos y sube el resultado.
-name: Mapa de estado
+# Regenerates the status map (manual/status-map/) when its data changes and pushes the result.
+name: Status map
 
 on:
   push:
     branches: [main]
     paths:
-      - manual/status-map/datos.toml
+      - manual/status-map/data.toml
       - config/funcmap.csv
-      - tools/estado/**
-      - .github/workflows/estado.yml
+      - tools/status/**
+      - .github/workflows/status.yml
   pull_request:
     paths:
       - manual/status-map/**
       - config/funcmap.csv
-      - tools/estado/**
+      - tools/status/**
   workflow_dispatch:
 
 permissions:
@@ -31,12 +31,12 @@ jobs:
       # En una PR solo se avisa si los archivos generados no estan al dia
       - name: Comprobar
         if: github.event_name == 'pull_request'
-        run: python tools/estado/generar.py --comprobar
+        run: python tools/status/generate.py --comprobar
 
       - name: Generar y subir
         if: github.event_name != 'pull_request'
         run: |
-          python tools/estado/generar.py
+          python tools/status/generate.py
           if [ -n "$(git status --porcelain manual/status-map)" ]; then
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

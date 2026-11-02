@@ -563,7 +563,7 @@ def _runner_path(explicit: Path | None) -> Path:
     else:
         root = Path(__file__).resolve().parents[2]
         runner = root / "bin" / "ps2EntryRunner"
-        if not runner.is_file():  # development build from scripts/compilar_linux.py
+        if not runner.is_file():  # development build from scripts/build_linux.py
             runner = root / "PS2Recomp" / "build" / "ps2xRuntime" / "ps2EntryRunner"
     runner = runner.expanduser().resolve()
     if not runner.is_file() or not os.access(runner, os.X_OK):

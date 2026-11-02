@@ -8,7 +8,7 @@ runner=$1; elf=$2; iso=$3; secs=$4; warm=${5:-20}
 [ -e "$runner" ] && runner=$(readlink -f "$runner")
 elf=$(readlink -f "$elf"); iso=$(readlink -f "$iso")
 cd "$(dirname "$elf")" || exit 1
-log=/tmp/medir_fps_$$.log
+log=/tmp/measure_fps_$$.log
 GOW_FPS=1 GOW_ISO="$iso" GOW_AUDIO=0 GOW_SKIP_FMV=1 timeout "$secs" "$runner" "$elf" 2> "$log"
 if ! grep -q '\[gow-fps\]' "$log"; then
   echo "no samples, last 20 log lines:"

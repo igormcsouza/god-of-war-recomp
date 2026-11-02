@@ -20,7 +20,7 @@ merges only.
 | Changes to the PS2Recomp runtime/IOP | one patch per topic in `patches/`, listed in `patches/series` |
 | Recompiler functions, stubs and entry points | `config/recomp.template.toml`, `config/funcmap.csv` |
 | Game-independent tests | `tests/` (runtime tests go inside the patch, in `ps2xTest/`) |
-| Port status (the README map) | `manual/status-map/datos.toml` |
+| Port status (the README map) | `manual/status-map/data.toml` |
 | Linux launcher, setup wizard and AppImage | `tools/linux/`, `tools/appimage/`, `.github/workflows/release.yml`; tests in `tests/test_gow_launcher.py` and `tests/test_gow_setup.py` |
 | **Any documentation** | `manual/` (see "Documentation" below) |
 
@@ -28,7 +28,7 @@ merges only.
 
 - They are applied on the commit in `patches/PS2RECOMP_COMMIT`, **in the order of `patches/series`**, with
   `git apply --ignore-whitespace`. Each patch is generated against the tree with the previous ones already applied.
-  `scripts/compilar_linux.py` and CI both read the list through `tools/ci/parches.py`.
+  `scripts/build_linux.py` and CI both read the list through `tools/ci/patch_series.py`.
 - **New patch:** add the file to `patches/` and its name at the end of `patches/series`. CI fails if a
   `patches/*.patch` is not listed, a listed file is missing, or a patch does not apply.
 - Prefer a new patch per topic over growing `ps2recomp-waffle-runtime.patch`: changes from other agents collide less.
@@ -49,7 +49,7 @@ merges only.
 - Mark changes with a `// GOW-Port:` comment to tell them from the original code.
 - A runtime behaviour change comes with a regression test in `ps2xTest/` that fails without the change. If you
   deliberately change something an existing test checked, adjust the test and explain why.
-- Patch changes need a rebuild of the runner (`python3 scripts/compilar_linux.py --elf ...`, with the runtime link
+- Patch changes need a rebuild of the runner (`python3 scripts/build_linux.py --elf ...`, with the runtime link
   taking 15-25 minutes).
 
 ## Overrides (`src/gow_overrides.cpp`)
@@ -61,15 +61,15 @@ merges only.
   remove the diagnostic once the problem is solved.
 - If you use a new runtime function, it must exist in some patch: CI compiles `src/*.cpp` against the patched runtime.
 
-## Checks (CI: `.github/workflows/pruebas.yml`)
+## Checks (CI: `.github/workflows/tests.yml`)
 
 On every push to `main` and every PR, without the game. They must stay green:
 
-- `python3 tools/ci/validar_config.py`: `funcmap.csv` and `recomp.template.toml`.
-- `python3 tools/ci/parches.py`: the patch series.
+- `python3 tools/ci/validate_config.py`: `funcmap.csv` and `recomp.template.toml`.
+- `python3 tools/ci/patch_series.py`: the patch series.
 - The launcher, setup wizard and AppImage tests, `tests/pad2_packet_test.cpp` and `tests/pad_script_test.cpp`.
 - The patches apply, every stub has a handler in the runtime, `src/*.cpp` compiles against the patched runtime and
-  the whole `ps2x_tests` suite passes. `tests/fallos_conocidos.txt` is empty: do not add a test there to hide a
+  the whole `ps2x_tests` suite passes. `tests/known_failures.txt` is empty: do not add a test there to hide a
   regression, fix it.
 - `mkdocs build --strict` (workflow `manual.yml`): the manual builds with no broken links.
 
@@ -79,21 +79,21 @@ The suite can be reproduced on Linux: apply the patches as above, then
 cmake -S PS2Recomp -B PS2Recomp/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS2X_BUILD_STUDIO=OFF \
   -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2
 ninja -C PS2Recomp/build ps2x_tests
-(cd PS2Recomp && ./build/ps2xTest/ps2x_tests 2>/dev/null) | python3 tools/ci/comprobar_pruebas.py tests/fallos_conocidos.txt
+(cd PS2Recomp && ./build/ps2xTest/ps2x_tests 2>/dev/null) | python3 tools/ci/check_tests.py tests/known_failures.txt
 ```
 
 The suite runs from `PS2Recomp/`, as in CI: some tests read sources by relative path and fail when started from the
-root. (Ubuntu packages: the ones in "Instalar dependencias" in `pruebas.yml`.)
+root. (Ubuntu packages: the ones in "Install dependencies" in `tests.yml`.)
 
 ## Testing with the game
 
 What CI cannot check needs your own ISO and a built runner (see `manual/install/from-source.md`):
 
-1. Build with `python3 scripts/compilar_linux.py --elf <SCUS_973.99>` (after `tools/linux/capture_microcode.py` once).
+1. Build with `python3 scripts/build_linux.py --elf <SCUS_973.99>` (after `tools/linux/capture_microcode.py` once).
 2. Start with `python3 tools/linux/gow_launcher.py`, or reproduce a scene without touching the pad (the scripted pad in
    `manual/reference/controls-and-menu-tests.md`).
 3. Judge visual changes on **lossless window grabs** (`import -window`) and, for faint artefacts, a high-pass view; the
-   FPS overlay (F2) and `scripts/medir_fps.sh` give the numbers. A non-black capture or a clean log does not prove the
+   FPS overlay (F2) and `scripts/measure_fps.sh` give the numbers. A non-black capture or a clean log does not prove the
    game is playable: record in the research log exactly what was verified.
 
 ## Documentation
@@ -110,8 +110,8 @@ documentation files outside it are `README.md` and this `AGENTS.md` (plus `CHANG
   `https://github.com/igormcsouza/god-of-war-recomp/blob/main/<path>`. `mkdocs build --strict` must pass.
 - `manual/reference/research-log.md` is the investigation log: add what was tried, with what result, and the next
   steps. Do not delete findings; correct them if they turn out wrong. State exactly what was verified and what was not.
-- If a component or library changes state (works / partial / pending), update `manual/status-map/datos.toml` and run
-  `python3 tools/estado/generar.py` (the "Mapa de estado" action does it too when pushing to `main`).
+- If a component or library changes state (works / partial / pending), update `manual/status-map/data.toml` and run
+  `python3 tools/status/generate.py` (the "Mapa de estado" action does it too when pushing to `main`).
 - The README and the manual must agree. New screenshots go in `manual/images/` (lossless grabs saved as JPEG, no personal
   paths visible) and are listed in `manual/usage/screenshots.md`.
 - New code comments and commit messages are in English (existing Spanish comments stay as they are).

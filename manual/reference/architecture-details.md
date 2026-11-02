@@ -2,14 +2,14 @@
 
 ## Build pipeline
 
-`scripts/compilar_linux.py` runs these steps:
+`scripts/build_linux.py` runs these steps:
 
 1. **Tool check** — `git`, `cmake`, `ninja` and a C++ compiler.
 2. **PS2Recomp** — clones `ran-j/PS2Recomp`, checks out the commit in [`patches/PS2RECOMP_COMMIT`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/patches/PS2RECOMP_COMMIT)
    and initializes the submodules.
 3. **Patches** — applies the patches listed in [`patches/series`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/patches/series), in that order.
-   [`tools/ci/parches.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/ci/parches.py) prints the same list for CI and checks that no
-   file in `patches/` is missing from it. From the repository root, `python3 tools/ci/parches.py` shows the patches
+   [`tools/ci/patch_series.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/tools/ci/patch_series.py) prints the same list for CI and checks that no
+   file in `patches/` is missing from it. From the repository root, `python3 tools/ci/patch_series.py` shows the patches
    and their order; that is the reference for preparing a change on top of the pinned runtime.
 
    The base is the **Waffle565/God-Of-War-Native-Port** runtime: `ps2recomp-waffle-runtime.patch` is the
@@ -23,7 +23,7 @@
 5. **CMake** — configures the checkout in Release mode with the options the Linux build needs (unity build and
    precompiled header for the runner, no IPO, `-march=x86-64-v2`) and, when a VU1 microcode folder exists
    (`GOW_VU1_MICROCODIGO`, default `~/.cache/gow-one-recomp/vu1cap`), the native and compiled VU1 generators
-   (`tools/vu1/vu1n_gen.py`, `tools/vu1/generar_vu1.cpp`, extra entries from `tools/vu1/vu1n_heads.txt`).
+   (`tools/vu1/vu1n_gen.py`, `tools/vu1/generate_vu1.cpp`, extra entries from `tools/vu1/vu1n_heads.txt`).
 6. **Recompiler** — builds the `ps2_recomp` target.
 7. **C++ generation** — fills in `config/recomp.template.toml` (`@ELF@`, `@MAP@`, `@OUT@`) and runs `ps2_recomp` on
    `SCUS_973.99`.
@@ -71,24 +71,24 @@ The Waffle565 runtime replaces every piece of hardware the game used with native
 
 ## Continuous integration
 
-`.github/workflows/pruebas.yml` runs on every push to `main` and on every PR, without needing the game:
+`.github/workflows/tests.yml` runs on every push to `main` and on every PR, without needing the game:
 
 - **Quick checks** (seconds):
-  - `tools/ci/validar_config.py` validates `config/funcmap.csv` (order, overlaps, sizes, names) and
+  - `tools/ci/validate_config.py` validates `config/funcmap.csv` (order, overlaps, sizes, names) and
     `config/recomp.template.toml` (`@ELF@/@MAP@/@OUT@` markers, `name@0xADDRESS` format, addresses
     inside some function). Stubs that do not start a function and repeated addresses are warnings.
   - The launcher, the setup wizard and the AppImage entry point (`tests/test_gow_launcher.py`,
     `tests/test_gow_setup.py`, an AppDir assembled without `appimagetool` that must hold no game files).
   - The GIF packet inspector, `tests/pad2_packet_test.cpp` and `tests/pad_script_test.cpp`.
 - **Patches and runtime suite**: downloads PS2Recomp at the commit in `patches/PS2RECOMP_COMMIT`, applies the patches in
-  the order of `patches/series` (`tools/ci/parches.py` prints them and fails if any `patches/*.patch` is not listed or
+  the order of `patches/series` (`tools/ci/patch_series.py` prints them and fails if any `patches/*.patch` is not listed or
   does not apply), checks that every stub in `recomp.template.toml` has a handler in `ps2_call_list.h`
-  (`validar_config.py --runtime`), builds `ps2x_tests` and runs the suite. It also builds `src/*.cpp` against the headers
+  (`validate_config.py --runtime`), builds `ps2x_tests` and runs the suite. It also builds `src/*.cpp` against the headers
   of the already-patched runtime (declaring the `sub_*` they use), so an override that uses a runtime function that no
-  patch defines fails here. `tools/ci/comprobar_pruebas.py` only fails on tests that are not in
-  `tests/fallos_conocidos.txt` (empty today: the whole suite passes). CI includes `tools/ci/pruebas_gs.cmake` and
-  `tools/ci/pruebas_vu1.cmake` in its temporary checkout of PS2Recomp to build and run the GS FINISH checks and the
+  patch defines fails here. `tools/ci/check_tests.py` only fails on tests that are not in
+  `tests/known_failures.txt` (empty today: the whole suite passes). CI includes `tools/ci/gs_tests.cmake` and
+  `tools/ci/vu1_tests.cmake` in its temporary checkout of PS2Recomp to build and run the GS FINISH checks and the
   compiled VU1 checks (pairs, DIV, FMAC), the latter with `GOW_VU1_NATIVE_OFF=1` because the native VU1 goes first.
 
-`.github/workflows/estado.yml` regenerates the status map (`manual/status-map/`) when its data changes, and
+`.github/workflows/status.yml` regenerates the status map (`manual/status-map/`) when its data changes, and
 `.github/workflows/manual.yml` builds and publishes this manual.

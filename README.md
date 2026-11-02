@@ -9,7 +9,7 @@
 ![Build](https://img.shields.io/badge/build-CMake%20%2B%20Ninja-064F8C?logo=cmake&logoColor=white)
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-8A2BE2)
 ![Status](https://img.shields.io/badge/status-playable-brightgreen)
-[![Tests](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/pruebas.yml)
+[![Tests](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/tests.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/tests.yml)
 [![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/337-god-of-war/)
 
 <img src="manual/images/gameplay-deck.jpg" alt="God of War running natively on Linux: the fight on the ship" width="80%">
@@ -63,9 +63,9 @@ build packages itself, and then opens the launcher. See [`manual/install/appimag
 **From source.** You need GCC or Clang, CMake, Ninja, Git, Python 3 with Tk and an OpenGL 4.x GPU:
 
 ```sh
-python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # build (slow the first time)
+python3 scripts/build_linux.py --elf /path/to/SCUS_973.99           # build (slow the first time)
 python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"  # once, unattended, ~5 min
-python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # rebuild with full-speed VU1/IOP
+python3 scripts/build_linux.py --elf /path/to/SCUS_973.99           # rebuild with full-speed VU1/IOP
 python3 tools/linux/gow_launcher.py                                     # settings window and Play
 ```
 
@@ -93,10 +93,10 @@ More in the [gallery](manual/usage/screenshots.md).
 
 ## Current status
 
-<a href="manual/status-map/detalle.en.md"><img src="manual/status-map/mapa.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
+<a href="manual/status-map/detail.en.md"><img src="manual/status-map/map.en.svg" alt="Port status map: Sony SDK library functions and PS2 hardware components, colored by status" width="100%"></a>
 
-Per-library and per-component breakdown: [`manual/status-map/detalle.en.md`](manual/status-map/detalle.en.md). Regenerated from
-`manual/status-map/datos.toml` by `tools/estado/generar.py` (and automatically on push to `main`).
+Per-library and per-component breakdown: [`manual/status-map/detail.en.md`](manual/status-map/detail.en.md). Regenerated from
+`manual/status-map/data.toml` by `tools/status/generate.py` (and automatically on push to `main`).
 
 | Milestone | Status |
 |---|:---:|
@@ -116,7 +116,7 @@ Details and numbers, including what was not verified, are in
 
 ```
 .
-├── .github/workflows/            # CI: tests (pruebas.yml), status map (estado.yml), manual, release
+├── .github/workflows/            # CI: tests (tests.yml), status map (status.yml), manual, release
 ├── AGENTS.md                     # Project conventions for contributors and agents
 ├── config/
 │   ├── funcmap.csv               # Function map (name, start, end, size)
@@ -127,8 +127,8 @@ Details and numbers, including what was not verified, are in
 │   ├── series                    # The patches, in the order they are applied
 │   └── ps2recomp-*.patch         # The runtime and our fixes on top, one patch per topic
 ├── scripts/
-│   ├── compilar_linux.py         # Prepares PS2Recomp, applies the patches and builds
-│   └── medir_fps.sh              # Scripted FPS measurement
+│   ├── build_linux.py         # Prepares PS2Recomp, applies the patches and builds
+│   └── measure_fps.sh              # Scripted FPS measurement
 ├── src/
 │   ├── gow_overrides.cpp         # Game-specific overrides
 │   └── *.h                       # Tested formats and helpers (libpad2 packet, pad script, cheats, GS replay)

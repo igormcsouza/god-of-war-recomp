@@ -41,7 +41,7 @@ def prepare_checkout(checkout: Path) -> None:
     if actual != commit:
         raise RuntimeError(f"PS2Recomp is at {actual}; expected {commit}. The checkout was not reset.")
 
-    patches = subprocess.check_output([sys.executable, str(ROOT / "tools/ci/parches.py")], text=True).splitlines()
+    patches = subprocess.check_output([sys.executable, str(ROOT / "tools/ci/patch_series.py")], text=True).splitlines()
     # Later patches can change earlier context. Find the latest applied patch in reverse order and
     # continue from the next patch, which also supports a patch series that has grown.
     applied_through = -1
@@ -118,7 +118,7 @@ def vu1_cmake_args() -> list[str]:
     if path is None:
         print("No VU1 microcode folder: building with the VU1 interpreter (slow). See manual/install/from-source.md.")
         return []
-    return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generar_vu1.cpp'}",
+    return [f"-DPS2X_VU1_MICROCODE_DIR={path}", f"-DPS2X_VU1_GENERATOR_SOURCE={ROOT / 'tools/vu1/generate_vu1.cpp'}",
             f"-DPS2X_VU1N_GEN_OVERRIDE={ROOT / 'tools/vu1/vu1n_gen.py'}",
             f"-DPS2X_VU1N_HEADS_FILE={ROOT / 'tools/vu1/vu1n_heads.txt'}"]
 

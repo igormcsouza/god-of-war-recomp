@@ -1,6 +1,6 @@
 # Build from source
 
-[`scripts/compilar_linux.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/scripts/compilar_linux.py)
+[`scripts/build_linux.py`](https://github.com/igormcsouza/god-of-war-recomp/blob/main/scripts/build_linux.py)
 prepares PS2Recomp at the pinned commit, applies the ordered patch list, and builds the recompiler and the runner.
 
 ## Dependencies
@@ -11,9 +11,9 @@ libraries. `python3 tools/linux/gow_setup.py --check` lists what is missing and 
 ## Steps
 
 ```sh
-python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # build (slow the first time)
+python3 scripts/build_linux.py --elf /path/to/SCUS_973.99           # build (slow the first time)
 python3 tools/linux/capture_microcode.py --iso "God of War (USA).iso"  # once, unattended, ~5 min
-python3 scripts/compilar_linux.py --elf /path/to/SCUS_973.99           # rebuild with full-speed VU1/IOP
+python3 scripts/build_linux.py --elf /path/to/SCUS_973.99           # rebuild with full-speed VU1/IOP
 python3 tools/linux/gow_launcher.py                                     # settings window and Play
 ```
 

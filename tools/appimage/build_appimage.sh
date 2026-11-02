@@ -18,7 +18,7 @@ mkdir -p "$APP"
 
 # Only what the setup and the launcher need. Never game files, logs or build output.
 cp -r tools scripts config patches src LICENSE VERSION "$APP/"
-rm -rf "$APP/patches/anteriores" "$APP/tools/render" "$APP/tools/estado"
+rm -rf "$APP/patches/anteriores" "$APP/tools/render" "$APP/tools/status"
 find "$APP" -name '__pycache__' -type d -prune -exec rm -rf {} +
 echo "$VERSION" > "$APP/VERSION"
 

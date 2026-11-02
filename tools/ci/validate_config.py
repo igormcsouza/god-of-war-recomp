@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Valida config/funcmap.csv y config/recomp.template.toml sin necesitar el juego.
 
-Uso:  python tools/ci/validar_config.py [--runtime RUTA_A_PS2RECOMP]
+Uso:  python tools/ci/validate_config.py [--runtime RUTA_A_PS2RECOMP]
 
 Errores (codigo 1), que de otro modo solo aparecen al recompilar en Windows:
   - funcmap.csv: cabecera, direcciones hexadecimales, orden, solapes, Size != End - Start, nombres repetidos.
@@ -87,7 +87,7 @@ def main() -> int:
     texto = PLANTILLA.read_text(encoding="utf-8")
     for marca in ("@ELF@", "@MAP@", "@OUT@"):
         if marca not in texto:
-            errores.append(f"recomp.template.toml: falta el marcador {marca} que rellena scripts/compilar_linux.py")
+            errores.append(f"recomp.template.toml: falta el marcador {marca} que rellena scripts/build_linux.py")
     try:
         config = tomllib.loads(texto)
     except tomllib.TOMLDecodeError as e:

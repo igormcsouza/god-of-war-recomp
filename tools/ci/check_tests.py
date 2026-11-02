@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compara la salida de ps2x_tests con la lista de fallos conocidos.
 
-Uso:  ps2x_tests | python tools/ci/comprobar_pruebas.py tests/fallos_conocidos.txt
+Uso:  ps2x_tests | python tools/ci/check_tests.py tests/known_failures.txt
 
 Falla (codigo 1) si alguna prueba que no esta en la lista falla, o si la suite no llega a imprimir
 su resumen (se colgo o se cerro antes de tiempo). Avisa, sin fallar, cuando una prueba de la lista

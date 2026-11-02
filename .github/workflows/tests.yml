@@ -1,5 +1,5 @@
-# Comprobaciones que no necesitan el juego: pruebas de src/, parches sobre PS2Recomp y suite del runtime.
-name: Pruebas
+# Checks that do not need the game: src/ tests, the patches on PS2Recomp and the runtime suite.
+name: Tests
 
 on:
   push:
@@ -11,39 +11,39 @@ permissions:
   contents: read
 
 concurrency:
-  group: pruebas-${{ github.ref }}
+  group: tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   overrides:
-    name: Comprobaciones rapidas (config, scripts y src/)
+    name: Quick checks (config, scripts and src/)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Validar config/funcmap.csv y config/recomp.template.toml
-        run: python3 tools/ci/validar_config.py
-      - name: Probar el inspector de paquetes GIF
+      - name: Validate config/funcmap.csv and config/recomp.template.toml
+        run: python3 tools/ci/validate_config.py
+      - name: Test the GIF packet inspector
         run: python3 -m unittest discover -s tests -p test_gif_inspector.py
-      - name: Probar el asistente de instalacion y el punto de entrada del AppImage
+      - name: Test the setup wizard and the AppImage entry point
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-tk >/dev/null
           python3 -m unittest tests.test_gow_launcher tests.test_gow_setup
-      - name: Montar el AppDir del AppImage (sin appimagetool; no debe contener archivos del juego)
+      - name: Assemble the AppImage AppDir (no appimagetool; it must hold no game files)
         run: |
           APPDIR_ONLY=1 tools/appimage/build_appimage.sh ci /tmp/appimg | tee /tmp/appdir.log
           dir="$(sed -n 's/^AppDir assembled at //p' /tmp/appdir.log)"
           "$dir/AppRun" --self-test
           if find "$dir" \( -iname '*.iso' -o -iname 'SCUS_*' -o -iname '*.pak' -o -iname '*.irx' \) | grep -q .; then exit 1; fi
-      - name: Compilar y ejecutar tests/pad2_packet_test.cpp
+      - name: Build and run tests/pad2_packet_test.cpp
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror tests/pad2_packet_test.cpp -o pad2_packet_test
           ./pad2_packet_test
-      - name: Probar guion digital, stick y duraciones sin el juego
+      - name: Test the scripted pad (digital, stick, durations) without the game
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror tests/pad_script_test.cpp -o pad_script_test
           ./pad_script_test
   runtime:
-    name: Parches y suite del runtime (PS2Recomp)
+    name: Patches and runtime suite (PS2Recomp)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -52,56 +52,56 @@ jobs:
           path: gow
 
       # The pinned commit lives in patches/PS2RECOMP_COMMIT
-      - name: Leer el commit fijado de PS2Recomp
+      - name: Read the pinned PS2Recomp commit
         id: ps2recomp
         run: |
           commit=$(tr -d '[:space:]' < gow/patches/PS2RECOMP_COMMIT)
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "PS2Recomp @ $commit"
 
-      - name: Descargar PS2Recomp
+      - name: Download PS2Recomp
         run: |
           git init -q PS2Recomp
           git -C PS2Recomp fetch -q --depth 1 https://github.com/ran-j/PS2Recomp.git ${{ steps.ps2recomp.outputs.commit }}
           git -C PS2Recomp checkout -q FETCH_HEAD
 
-      # The patches in the order of patches/series (tools/ci/parches.py prints them and checks the series)
-      - name: Aplicar los parches
+      # The patches in the order of patches/series (tools/ci/patch_series.py prints them and checks the series)
+      - name: Apply the patches
         working-directory: PS2Recomp
         run: |
-          parches=$(python3 ../gow/tools/ci/parches.py)
+          parches=$(python3 ../gow/tools/ci/patch_series.py)
           for p in $parches; do
             echo "::group::$(basename "$p")"
             git apply --ignore-whitespace --verbose "$p"
             echo "::endgroup::"
           done
 
-      # Con el runtime ya parcheado: cada stub de recomp.template.toml debe tener handler
-      - name: Comprobar los handlers de los stubs
-        run: python3 gow/tools/ci/validar_config.py --runtime PS2Recomp
+      # With the patched runtime: every stub in recomp.template.toml must have a handler
+      - name: Check the stub handlers
+        run: python3 gow/tools/ci/validate_config.py --runtime PS2Recomp
 
-      - name: Instalar dependencias
+      - name: Install dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ninja-build libx11-dev libxext-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
             libgl1-mesa-dev libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev
 
-      # -march=x86-64-v2: el runtime usa intrinsecos SSE4.1 que GCC solo acepta con ese objetivo
-      - name: Compilar ps2x_tests y los controles de FINISH y VU1
+      # -march=x86-64-v2: the runtime uses SSE4.1 intrinsics that GCC only accepts with that target
+      - name: Build ps2x_tests and the FINISH and VU1 checks
         working-directory: PS2Recomp
         run: |
           cat >> CMakeLists.txt <<'CMAKE'
 
-          include("${CMAKE_SOURCE_DIR}/../gow/tools/ci/pruebas_gs.cmake")
-          include("${CMAKE_SOURCE_DIR}/../gow/tools/ci/pruebas_vu1.cmake")
+          include("${CMAKE_SOURCE_DIR}/../gow/tools/ci/gs_tests.cmake")
+          include("${CMAKE_SOURCE_DIR}/../gow/tools/ci/vu1_tests.cmake")
           CMAKE
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DPS2X_BUILD_STUDIO=OFF \
             -DCMAKE_C_FLAGS=-march=x86-64-v2 -DCMAKE_CXX_FLAGS=-march=x86-64-v2
           ninja -C build ps2x_tests gow_gs_finish_async_test gow_vu1_compiled_test gow_vu1_fmac_test
 
-      # src/gow_overrides.cpp solo se compila de verdad junto al codigo generado del juego (Windows). Aqui se
-      # comprueba contra las cabeceras del runtime ya parcheado, declarando las sub_* que usa.
-      - name: Compilar src/ contra el runtime parcheado
+      # src/gow_overrides.cpp is only really built together with the game's generated code. Here it is checked
+      # against the headers of the patched runtime, declaring the sub_* functions it uses.
+      - name: Compile src/ against the patched runtime
         run: |
           mkdir -p generado
           {
@@ -117,27 +117,27 @@ jobs:
               -IPS2Recomp/build/_deps/raylib-src/src -Igenerado -Igow/src "$f"
           done
 
-      - name: Probar el generador VU1 y los pares compilados con microcodigo procedural
+      - name: Test the VU1 generator and the compiled pairs with procedural microcode
         run: python3 gow/tests/vu1_compiled_cli_test.py PS2Recomp/build/gow_vu1_compiled_test
 
-      - name: Probar FINISH default y opcional con lecturas sincronizadas
+      - name: Test FINISH (default and optional) with synchronized reads
         run: |
           timeout 30 PS2Recomp/build/gow_gs_finish_async_test default
           timeout 30 PS2Recomp/build/gow_gs_finish_async_test async
 
-      - name: Probar todas las FMAC de VU1 compiladas frente al interprete con valores limite
-        # GOW-Port: la VU1 nativa va primero en el runtime de Waffle565; se apaga para comparar la compilada.
+      - name: Test every compiled VU1 FMAC against the interpreter with boundary values
+        # GOW-Port: the native VU1 goes first in Waffle565's runtime; it is turned off to test the compiled one.
         run: GOW_VU1_NATIVE_OFF=1 PS2Recomp/build/gow_vu1_fmac_test 200
 
-      - name: Ejecutar la suite
+      - name: Run the suite
         working-directory: PS2Recomp
         run: |
           set +e
-          timeout 1200 ./build/ps2xTest/ps2x_tests 2> ../ps2x_tests.err | python3 ../gow/tools/ci/comprobar_pruebas.py ../gow/tests/fallos_conocidos.txt
-          estado=${PIPESTATUS[1]}
-          if [ "$estado" -ne 0 ]; then
-            echo "::group::stderr de la suite (ultimas 200 lineas)"
+          timeout 1200 ./build/ps2xTest/ps2x_tests 2> ../ps2x_tests.err | python3 ../gow/tools/ci/check_tests.py ../gow/tests/known_failures.txt
+          status=${PIPESTATUS[1]}
+          if [ "$status" -ne 0 ]; then
+            echo "::group::suite stderr (last 200 lines)"
             tail -n 200 ../ps2x_tests.err
             echo "::endgroup::"
           fi
-          exit "$estado"
+          exit "$status"

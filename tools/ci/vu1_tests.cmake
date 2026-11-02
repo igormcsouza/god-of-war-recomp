@@ -1,6 +1,6 @@
 # GOW-Port: compilar un programa procedural con el generador real; no incluye datos del juego.
 set(GOW_VU1_TEST_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../../tests/vu1_compiled_test.cpp")
-add_executable(gow_vu1_generator "${CMAKE_CURRENT_LIST_DIR}/../vu1/generar_vu1.cpp")
+add_executable(gow_vu1_generator "${CMAKE_CURRENT_LIST_DIR}/../vu1/generate_vu1.cpp")
 target_link_libraries(gow_vu1_generator PRIVATE ps2_runtime)
 add_executable(gow_vu1_fixture "${GOW_VU1_TEST_SOURCE}")
 target_link_libraries(gow_vu1_fixture PRIVATE ps2_runtime)
