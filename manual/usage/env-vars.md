@@ -10,6 +10,7 @@ The launcher sets most of these for you. They are read by the runner.
 | `PS2X_GS_HW_SCALE` | render scale: `2` (default), `2.41` (1080 lines), `3`, `4` |
 | `GOW_FPS` | `1` shows the FPS counter from the start |
 | `GOW_FPS_LOW_SECS` | window for the 1% low (default 300 s) |
+| `GOW_GS_HW_SEAMFEEDBACK` | `1` restores the old strip-seam handling for sprites that sample a render target (debug: the grid lines in the haze passes come back at render scale above 1) |
 | `GOW_AUDIO` | `0` mutes |
 | `GOW_SKIP_FMV` | `1` skips movies |
 | `GOW_CHEAT` | comma list: `god`, `noenemies` |
