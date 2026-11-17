@@ -10,7 +10,7 @@
 ![Based on](https://img.shields.io/badge/based%20on-PS2Recomp-8A2BE2)
 ![Status](https://img.shields.io/badge/status-playable-brightgreen)
 [![Tests](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/tests.yml/badge.svg)](https://github.com/igormcsouza/god-of-war-recomp/actions/workflows/tests.yml)
-[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/337-god-of-war/)
+[![Listed on PlayPorted](https://playported.com/badge.svg)](https://playported.com/ports/1119-god-of-war/)
 
 <img src="manual/images/gameplay-deck.jpg" alt="God of War running natively on Linux: the fight on the ship" width="80%">
 
